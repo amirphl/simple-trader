@@ -75,7 +75,7 @@ func (s *FourStochasticHeikinAshi) Name() string { return "Four Stochastic Heiki
 func (s *FourStochasticHeikinAshi) Symbol() string { return s.symbol }
 
 // Timeframe returns the timeframe this strategy is configured for
-func (s *FourStochasticHeikinAshi) Timeframe() string { return "5m" }
+func (s *FourStochasticHeikinAshi) Timeframe() string { return "1h" }
 
 // trimCandles ensures we don't keep too many candles in memory
 func (s *FourStochasticHeikinAshi) trimCandles() {
@@ -230,17 +230,14 @@ func (s *FourStochasticHeikinAshi) OnCandles(ctx context.Context, oneHourCandles
 		endTime := filteredCandles[0].Timestamp.Truncate(time.Hour)
 		startTime := endTime.Add(-200 * time.Hour) // 200 hours for the longest stochastic
 
-		utils.GetLogger().Printf("Strategy | [%s Four Stochastic Heikin Ashi] Fetching historical 1h candles from %s to %s\n",
-			s.symbol, startTime.Format(time.RFC3339), endTime.Format(time.RFC3339))
+		utils.GetLogger().Printf("Strategy | [%s Four Stochastic Heikin Ashi] Fetching historical %s candles from %s to %s\n",
+			s.symbol, s.Timeframe(), startTime.Format(time.RFC3339), endTime.Format(time.RFC3339))
 
 		// Fetch historical 1h candles
-		historicalCandles, err := s.Storage.GetCandles(ctx, s.symbol, "1h", "", startTime, endTime)
+		historicalCandles, err := s.Storage.GetCandles(ctx, s.symbol, s.Timeframe(), "", startTime, endTime)
 		if err != nil {
-			utils.GetLogger().Printf("Strategy | [%s Four Stochastic Heikin Ashi] Error fetching historical candles from database: %v\n", s.symbol, err)
-			// Continue with the current candles even if historical fetch fails
+			return Signal{}, err
 		} else if len(historicalCandles) > 0 {
-			utils.GetLogger().Printf("Strategy | [%s Four Stochastic Heikin Ashi] Loaded %d historical candles from database\n", s.symbol, len(historicalCandles))
-
 			// Sort historical candles by timestamp
 			sort.Slice(historicalCandles, func(i, j int) bool {
 				return historicalCandles[i].Timestamp.Before(historicalCandles[j].Timestamp)
@@ -254,28 +251,28 @@ func (s *FourStochasticHeikinAshi) OnCandles(ctx context.Context, oneHourCandles
 			// Calculate all four stochastic indicators
 			stoch20, err := indicator.CalculateStochastic(cc, 20, 3, 3)
 			if err != nil {
-				utils.GetLogger().Printf("Strategy | [%s Four Stochastic Heikin Ashi] Error calculating stochastic 20: %v\n", s.symbol, err)
+				return Signal{}, err
 			} else {
 				s.stochastic20 = stoch20
 			}
 
 			stoch40, err := indicator.CalculateStochastic(cc, 40, 3, 3)
 			if err != nil {
-				utils.GetLogger().Printf("Strategy | [%s Four Stochastic Heikin Ashi] Error calculating stochastic 40: %v\n", s.symbol, err)
+				return Signal{}, err
 			} else {
 				s.stochastic40 = stoch40
 			}
 
 			stoch60, err := indicator.CalculateStochastic(cc, 60, 3, 3)
 			if err != nil {
-				utils.GetLogger().Printf("Strategy | [%s Four Stochastic Heikin Ashi] Error calculating stochastic 60: %v\n", s.symbol, err)
+				return Signal{}, err
 			} else {
 				s.stochastic60 = stoch60
 			}
 
 			stoch100, err := indicator.CalculateStochastic(cc, 100, 3, 3)
 			if err != nil {
-				utils.GetLogger().Printf("Strategy | [%s Four Stochastic Heikin Ashi] Error calculating stochastic 100: %v\n", s.symbol, err)
+				return Signal{}, err
 			} else {
 				s.stochastic100 = stoch100
 			}
@@ -292,7 +289,7 @@ func (s *FourStochasticHeikinAshi) OnCandles(ctx context.Context, oneHourCandles
 		// Update stochastic 20
 		k20, d20, err := indicator.UpdateStochastic(s.stochastic20, s.candles, c, 20, 3, 3)
 		if err != nil {
-			utils.GetLogger().Printf("Strategy | [%s Four Stochastic Heikin Ashi] Error updating stochastic 20: %v\n", s.symbol, err)
+			return Signal{}, err
 		} else {
 			s.stochastic20.K = append(s.stochastic20.K, k20)
 			s.stochastic20.D = append(s.stochastic20.D, d20)
@@ -301,7 +298,7 @@ func (s *FourStochasticHeikinAshi) OnCandles(ctx context.Context, oneHourCandles
 		// Update stochastic 40
 		k40, d40, err := indicator.UpdateStochastic(s.stochastic40, s.candles, c, 40, 3, 3)
 		if err != nil {
-			utils.GetLogger().Printf("Strategy | [%s Four Stochastic Heikin Ashi] Error updating stochastic 40: %v\n", s.symbol, err)
+			return Signal{}, err
 		} else {
 			s.stochastic40.K = append(s.stochastic40.K, k40)
 			s.stochastic40.D = append(s.stochastic40.D, d40)
@@ -310,7 +307,7 @@ func (s *FourStochasticHeikinAshi) OnCandles(ctx context.Context, oneHourCandles
 		// Update stochastic 60
 		k60, d60, err := indicator.UpdateStochastic(s.stochastic60, s.candles, c, 60, 3, 3)
 		if err != nil {
-			utils.GetLogger().Printf("Strategy | [%s Four Stochastic Heikin Ashi] Error updating stochastic 60: %v\n", s.symbol, err)
+			return Signal{}, err
 		} else {
 			s.stochastic60.K = append(s.stochastic60.K, k60)
 			s.stochastic60.D = append(s.stochastic60.D, d60)
@@ -319,7 +316,7 @@ func (s *FourStochasticHeikinAshi) OnCandles(ctx context.Context, oneHourCandles
 		// Update stochastic 100
 		k100, d100, err := indicator.UpdateStochastic(s.stochastic100, s.candles, c, 100, 3, 3)
 		if err != nil {
-			utils.GetLogger().Printf("Strategy | [%s Four Stochastic Heikin Ashi] Error updating stochastic 100: %v\n", s.symbol, err)
+			return Signal{}, err
 		} else {
 			s.stochastic100.K = append(s.stochastic100.K, k100)
 			s.stochastic100.D = append(s.stochastic100.D, d100)
@@ -327,7 +324,8 @@ func (s *FourStochasticHeikinAshi) OnCandles(ctx context.Context, oneHourCandles
 
 		s.candles = append(s.candles, c)
 
-		s.heikenAshiCandles = append(s.heikenAshiCandles, candle.GenerateNextHeikenAshiCandle(lastHeikenAshiCandle, c))
+		nextHeikenAshiCandle := candle.GenerateNextHeikenAshiCandle(lastHeikenAshiCandle, c)
+		s.heikenAshiCandles = append(s.heikenAshiCandles, nextHeikenAshiCandle)
 		lastHeikenAshiCandle = &s.heikenAshiCandles[len(s.heikenAshiCandles)-1]
 	}
 
@@ -351,7 +349,7 @@ func (s *FourStochasticHeikinAshi) OnCandles(ctx context.Context, oneHourCandles
 	}
 
 	// Get the latest Heikin Ashi candle
-	currHA := s.heikenAshiCandles[len(s.heikenAshiCandles)-1]
+	ha := s.heikenAshiCandles[len(s.heikenAshiCandles)-1]
 
 	// Check if we have valid stochastic values for all indicators
 	if len(s.stochastic20.K) == 0 || len(s.stochastic40.K) == 0 ||
@@ -372,7 +370,7 @@ func (s *FourStochasticHeikinAshi) OnCandles(ctx context.Context, oneHourCandles
 	switch currentState {
 	case NoPositionState:
 		// Check for buy signal: all stochastics oversold + bullish Heiken Ashi
-		if s.areAllStochasticsOversold() && s.isHeikinAshiBullish(currHA) {
+		if s.areAllStochasticsOversold() && s.isHeikinAshiBullish(ha) {
 			s.stateMachine.TransitionTo(LongBullishPositionUnderOversoldState, "all_stochastics_oversold_bullish_ha", LongBullish, "buy signal triggered")
 			return Signal{
 				Time:         lastCandle.Timestamp,
@@ -391,7 +389,7 @@ func (s *FourStochasticHeikinAshi) OnCandles(ctx context.Context, oneHourCandles
 
 	case LongBullishPositionUnderOversoldBeforeBuyState:
 		// Check if Heiken Ashi has become bullish
-		if s.isHeikinAshiBullish(currHA) {
+		if s.isHeikinAshiBullish(ha) {
 			s.stateMachine.TransitionTo(LongBullishPositionUnderOversoldState, "bullish_ha_detected", LongBullish, "buy signal triggered")
 			return Signal{
 				Time:         lastCandle.Timestamp,
@@ -431,7 +429,7 @@ func (s *FourStochasticHeikinAshi) OnCandles(ctx context.Context, oneHourCandles
 		// Check if green stochastic has crossed above 80
 		if s.isGreenStochasticOverbought() {
 			// If Heiken Ashi is bearish, sell immediately
-			if s.isHeikinAshiBearish(currHA) {
+			if s.isHeikinAshiBearish(ha) {
 				s.stateMachine.TransitionTo(NoPositionState, "green_stoch_overbought_bearish_ha", LongBearish, "exit signal triggered")
 				return Signal{
 					Time:         lastCandle.Timestamp,
@@ -448,7 +446,7 @@ func (s *FourStochasticHeikinAshi) OnCandles(ctx context.Context, oneHourCandles
 
 	case LongBearishPositionAboveOverboughtState:
 		// Check if Heiken Ashi has become bearish
-		if s.isHeikinAshiBearish(currHA) {
+		if s.isHeikinAshiBearish(ha) {
 			s.stateMachine.TransitionTo(NoPositionState, "bearish_ha_detected", LongBearish, "exit signal triggered")
 			return Signal{
 				Time:         lastCandle.Timestamp,
