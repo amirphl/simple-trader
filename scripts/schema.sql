@@ -44,13 +44,13 @@ CREATE INDEX IF NOT EXISTS idx_ticks_symbol_timestamp_price_quantity_side ON tic
 
 -- Orders (submitted by bot)
 CREATE TABLE IF NOT EXISTS orders (
-    order_id    VARCHAR(64) PRIMARY KEY,
+    order_id    VARCHAR(255) PRIMARY KEY,
     symbol      VARCHAR(32) NOT NULL,
     side        VARCHAR(8) NOT NULL,
     type        VARCHAR(16) NOT NULL,
     price       DOUBLE PRECISION NOT NULL,
     quantity    DOUBLE PRECISION NOT NULL,
-    status      VARCHAR(16) NOT NULL,
+    status      VARCHAR(128) NOT NULL,
     filled_qty  DOUBLE PRECISION NOT NULL,
     avg_price   DOUBLE PRECISION NOT NULL,
     created_at  TIMESTAMP   NOT NULL,
@@ -62,12 +62,12 @@ CREATE INDEX IF NOT EXISTS idx_orders_symbol_status_created_at ON orders(symbol,
 -- Positions (trading positions with risk management and statistics)
 CREATE TABLE IF NOT EXISTS positions (
     id                  BIGSERIAL PRIMARY KEY,
-    strategy_name       VARCHAR(64) NOT NULL,
+    strategy_name       TEXT NOT NULL,
     symbol              VARCHAR(32) NOT NULL,
     side                VARCHAR(8),
     entry               DOUBLE PRECISION,
     size                DOUBLE PRECISION,
-    order_id            VARCHAR(64),
+    order_id            VARCHAR(255),
     time                TIMESTAMP,
     active              BOOLEAN NOT NULL DEFAULT FALSE,
     trading_disabled    BOOLEAN NOT NULL DEFAULT FALSE,
@@ -94,7 +94,7 @@ CREATE TABLE IF NOT EXISTS positions (
     order_spec          JSONB NOT NULL DEFAULT '{}',
     created_at          TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at          TIMESTAMP NOT NULL DEFAULT NOW(),
-    UNIQUE (strategy_name, symbol, active) -- Only one active position per strategy/symbol
+    UNIQUE (id, strategy_name, symbol, active) -- Only one active position per strategy/symbol
 );
 
 CREATE INDEX IF NOT EXISTS idx_positions_strategy_name ON positions(strategy_name);
