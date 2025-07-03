@@ -154,7 +154,7 @@ func (s *StochasticHeikinAshi) OnCandles(ctx context.Context, oneHourCandles []c
 	// Filter candles for this symbol
 	var filteredCandles []candle.Candle
 	for _, c := range oneHourCandles {
-		if c.Symbol == s.symbol && c.Timeframe == "1h" && (lastCandle == nil || c.Timestamp.After(lastCandle.Timestamp)) {
+		if c.Symbol == s.symbol && c.Timeframe == s.Timeframe() && (lastCandle == nil || c.Timestamp.After(lastCandle.Timestamp)) {
 			filteredCandles = append(filteredCandles, c)
 		}
 	}
@@ -181,19 +181,17 @@ func (s *StochasticHeikinAshi) OnCandles(ctx context.Context, oneHourCandles []c
 
 		// Calculate time range: from 24 hours ago to 1 hour before the first candle
 		endTime := filteredCandles[0].Timestamp.Truncate(time.Hour)
-		startTime := endTime.Add(-24 * time.Hour) // Just 24 hours should be enough
+		startTime := endTime.Add(-3 * 24 * time.Hour) // Just 72 hours should be enough
 
-		utils.GetLogger().Printf("Strategy | [%s Stochastic Heikin Ashi] Fetching historical 1h candles from %s to %s\n",
-			s.symbol, startTime.Format(time.RFC3339), endTime.Format(time.RFC3339))
+		utils.GetLogger().Printf("Strategy | [%s Stochastic Heikin Ashi] Fetching historical %s candles from %s to %s\n",
+			s.symbol, s.Timeframe(),
+			startTime.Format(time.RFC3339), endTime.Format(time.RFC3339))
 
 		// Fetch historical 1h candles
-		historicalCandles, err := s.Storage.GetCandles(ctx, s.symbol, "1h", "", startTime, endTime)
+		historicalCandles, err := s.Storage.GetCandles(ctx, s.symbol, s.Timeframe(), "", startTime, endTime)
 		if err != nil {
-			utils.GetLogger().Printf("Strategy | [%s Stochastic Heikin Ashi] Error fetching historical candles from database: %v\n", s.symbol, err)
-			// Continue with the current candles even if historical fetch fails
+			return Signal{}, err
 		} else if len(historicalCandles) > 0 {
-			utils.GetLogger().Printf("Strategy | [%s Stochastic Heikin Ashi] Loaded %d historical candles from database\n", s.symbol, len(historicalCandles))
-
 			// Sort historical candles by timestamp
 			sort.Slice(historicalCandles, func(i, j int) bool {
 				return historicalCandles[i].Timestamp.Before(historicalCandles[j].Timestamp)
@@ -206,7 +204,7 @@ func (s *StochasticHeikinAshi) OnCandles(ctx context.Context, oneHourCandles []c
 
 			stochasticResult, err := indicator.CalculateStochastic(cc, s.periodK, s.smoothK, s.periodD)
 			if err != nil {
-				utils.GetLogger().Printf("Strategy | [%s Stochastic Heikin Ashi] Error calculating stochastic: %v\n", s.symbol, err)
+				return Signal{}, err
 			} else {
 				s.stochasticResult = stochasticResult
 			}
@@ -222,16 +220,16 @@ func (s *StochasticHeikinAshi) OnCandles(ctx context.Context, oneHourCandles []c
 	for _, c := range filteredCandles {
 		kValue, dValue, err := indicator.UpdateStochastic(s.stochasticResult, s.candles, c, s.periodK, s.smoothK, s.periodD)
 		if err != nil {
-			utils.GetLogger().Printf("Strategy | [%s Stochastic Heikin Ashi] Error updating stochastic: %v\n", s.symbol, err)
-			// Continue with the current candles even if stochastic update fails
+			return Signal{}, err
 		} else {
 			s.stochasticResult.K = append(s.stochasticResult.K, kValue)
 			s.stochasticResult.D = append(s.stochasticResult.D, dValue)
 		}
 
-		s.candles = append(s.candles, c) // NOTE: modified inside UpdateStochastic
+		s.candles = append(s.candles, c) // ISSUE: modified inside UpdateStochastic?
 
-		s.heikenAshiCandles = append(s.heikenAshiCandles, candle.GenerateNextHeikenAshiCandle(lastHeikenAshiCandle, c))
+		nextHeikenAshiCandle := candle.GenerateNextHeikenAshiCandle(lastHeikenAshiCandle, c)
+		s.heikenAshiCandles = append(s.heikenAshiCandles, nextHeikenAshiCandle)
 		lastHeikenAshiCandle = &s.heikenAshiCandles[len(s.heikenAshiCandles)-1]
 	}
 
@@ -255,8 +253,8 @@ func (s *StochasticHeikinAshi) OnCandles(ctx context.Context, oneHourCandles []c
 	}
 
 	// Get the latest Stochastic values
-	latestIdx := len(s.stochasticResult.K) - 1
-	if latestIdx < 0 {
+	idx := len(s.stochasticResult.K) - 1
+	if idx < 0 {
 		return Signal{
 			Time:         lastCandle.Timestamp,
 			Position:     Hold,
@@ -267,8 +265,8 @@ func (s *StochasticHeikinAshi) OnCandles(ctx context.Context, oneHourCandles []c
 		}, nil
 	}
 
-	kValue := s.stochasticResult.K[latestIdx]
-	dValue := s.stochasticResult.D[latestIdx]
+	kValue := s.stochasticResult.K[idx]
+	dValue := s.stochasticResult.D[idx]
 
 	// Check if we have valid Stochastic values
 	if math.IsNaN(kValue) || math.IsNaN(dValue) {
@@ -283,7 +281,7 @@ func (s *StochasticHeikinAshi) OnCandles(ctx context.Context, oneHourCandles []c
 	}
 
 	// Get the latest Heikin Ashi candle
-	currHA := s.heikenAshiCandles[len(s.heikenAshiCandles)-1]
+	ha := s.heikenAshiCandles[len(s.heikenAshiCandles)-1]
 
 	// State Machine Logic
 	currentState := s.stateMachine.GetCurrentState()
@@ -291,7 +289,7 @@ func (s *StochasticHeikinAshi) OnCandles(ctx context.Context, oneHourCandles []c
 	switch currentState {
 	case NoPositionState:
 		// Check for buy signal: stochastic oversold + bullish crossover + bullish Heikin Ashi
-		if s.isStochasticOversold() && kValue > dValue && s.isHeikinAshiBullish(currHA) {
+		if s.isStochasticOversold() && kValue > dValue && s.isHeikinAshiBullish(ha) {
 			s.stateMachine.TransitionTo(LongBullishState, "stochastic_oversold_bullish_crossover_bullish_ha", LongBullish, "buy signal triggered")
 			return Signal{
 				Time:         lastCandle.Timestamp,
