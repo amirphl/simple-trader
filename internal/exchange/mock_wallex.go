@@ -8,13 +8,13 @@ import (
 
 	"github.com/amirphl/simple-trader/internal/notifier"
 	"github.com/amirphl/simple-trader/internal/utils"
+	"github.com/google/uuid"
 )
 
 // MockWallexExchange acts as a proxy for some functions and provides mock responses for orders
 type MockWallexExchange struct {
 	realExchange Exchange // The real WallexExchange to proxy to
 	notifier     notifier.Notifier
-	orderCounter int64 // Counter for generating unique order IDs
 }
 
 // NewMockWallexExchange creates a new MockWallexExchange that proxies to a real WallexExchange
@@ -23,7 +23,6 @@ func NewMockWallexExchange(apiKey string, n notifier.Notifier) Exchange {
 	return &MockWallexExchange{
 		realExchange: realExchange,
 		notifier:     n,
-		orderCounter: 1000, // Start from 1000 for mock order IDs
 	}
 }
 
@@ -89,8 +88,7 @@ func (m *MockWallexExchange) SubmitOrder(ctx context.Context, req OrderRequest) 
 		}
 
 		// Generate a unique order ID
-		m.orderCounter++
-		orderID := fmt.Sprintf("mock_%d_%d", time.Now().Unix(), m.orderCounter)
+		orderID := fmt.Sprintf("mock_%d_%s", time.Now().Unix(), uuid.New().String())
 
 		// Create a successful order response
 		order := Order{
