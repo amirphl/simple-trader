@@ -115,7 +115,7 @@ func GetRiskParams(cfg Config, stratName string) RiskParams {
 func LoadConfig() (Config, error) {
 	// Define command-line flags
 	runMigration := flag.Bool("run-migration", false, "Run database migrations")
-	mode := flag.String("mode", "live", "Mode: live or backtest")
+	mode := flag.String("mode", "live", "Mode: live or backtest or replay")
 	symbols := flag.String("symbols", "btc-usdt", "Comma-separated list of trading symbols")
 	strategies := flag.String("strategies", "rsi", "Comma-separated list of strategies")
 	from := flag.String("from", time.Now().AddDate(-2, 0, 0).Format("2006-01-02"), "Backtest start date (YYYY-MM-DD)")
@@ -132,7 +132,7 @@ func LoadConfig() (Config, error) {
 	maxDailyLoss := flag.Float64("max-daily-loss", 0.0, "Max daily loss in account currency (e.g., 100.0)")
 	limitSpread := flag.Float64("limit-spread", 0.0, "Limit order spread as percent (e.g., 0.1 for 0.1%)")
 	initialBalance := flag.Float64("initial-balance", 0.0, "Initial balance in account currency (e.g., 100.0)")
-	riskMapFlag := flag.String("risk-map", "", "Comma-separated strategy:risk:stoploss:trailing triples (e.g., rsi:1.0:2.0:0.5)")
+	riskMapFlag := flag.String("risk-map", "", "Comma-separated strategy:risk:stoploss:trailing:tp:maxdaily:limitspread:initialbalance triples (e.g., rsi:1.0:2.0:0.5:3.0:200.0:0.1:10000)")
 	commissionPercent := flag.Float64("commission-percent", 0.1, "Commission percent (e.g., 0.1 for 0.1%)")
 	slippagePercent := flag.Float64("slippage-percent", 0.05, "Slippage percent (e.g., 0.05 for 0.05%)")
 	proxyURL := flag.String("proxy-url", "", "Proxy URL for API calls")
