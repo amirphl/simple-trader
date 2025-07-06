@@ -1,15 +1,19 @@
+// Package indicator
 package indicator
 
-import "math"
+import (
+	"fmt"
+	"math"
+)
 
 func CalculateRSI(prices []float64, period int) []float64 {
-	if len(prices) < period || period <= 0 {
+	if len(prices) <= period || period <= 0 {
 		return nil
 	}
 
 	rsi := make([]float64, len(prices))
 	// Initialize first period elements as NaN (invalid)
-	for i := 0; i < period; i++ {
+	for i := range period {
 		rsi[i] = math.NaN()
 	}
 
@@ -20,7 +24,7 @@ func CalculateRSI(prices []float64, period int) []float64 {
 		if change > 0 {
 			sumGain += change
 		} else {
-			sumLoss -= change // Use negative of change for loss
+			sumLoss += math.Abs(change) // Use absolute value for loss
 		}
 	}
 
@@ -44,7 +48,7 @@ func CalculateRSI(prices []float64, period int) []float64 {
 			currentLoss = 0
 		} else {
 			currentGain = 0
-			currentLoss = -change
+			currentLoss = math.Abs(change)
 		}
 
 		// Use proper Wilder's smoothing formula
@@ -76,7 +80,7 @@ func CalculateLastRSI(prices []float64, period int) (float64, error) {
 		if change > 0 {
 			sumGain += change
 		} else {
-			sumLoss -= change
+			sumLoss += math.Abs(change) // Use absolute value for loss
 		}
 	}
 
@@ -92,7 +96,7 @@ func CalculateLastRSI(prices []float64, period int) (float64, error) {
 			currentLoss = 0
 		} else {
 			currentGain = 0
-			currentLoss = -change
+			currentLoss = math.Abs(change)
 		}
 
 		avgGain = ((avgGain * float64(period-1)) + currentGain) / float64(period)
