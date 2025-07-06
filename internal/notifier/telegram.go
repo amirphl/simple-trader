@@ -1,3 +1,4 @@
+// Package notifier
 package notifier
 
 import (

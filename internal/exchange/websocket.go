@@ -1,3 +1,4 @@
+// Package exchange
 package exchange
 
 type WebsocketManager interface {

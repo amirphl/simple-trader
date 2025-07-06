@@ -1,3 +1,4 @@
+// Package journal
 package journal
 
 import "time"
@@ -15,4 +16,3 @@ type Journaler interface {
 	LogEvent(event Event) error
 	GetEvents(eventType string, start, end time.Time) ([]Event, error)
 }
-
