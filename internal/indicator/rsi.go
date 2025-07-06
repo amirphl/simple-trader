@@ -6,42 +6,51 @@ func CalculateRSI(prices []float64, period int) []float64 {
 	if len(prices) < period || period <= 0 {
 		return nil
 	}
+
 	rsi := make([]float64, len(prices))
-	// Initialize first period-1 elements as NaN (invalid)
-	for i := 0; i < period-1; i++ {
+	// Initialize first period elements as NaN (invalid)
+	for i := 0; i < period; i++ {
 		rsi[i] = math.NaN()
 	}
-	var gain, loss float64
-	// Calculate initial gains and losses
-	for i := 1; i < period; i++ {
+
+	// Calculate first average gain and loss
+	var sumGain, sumLoss float64
+	for i := 1; i <= period; i++ {
 		change := prices[i] - prices[i-1]
 		if change > 0 {
-			gain += change
+			sumGain += change
 		} else {
-			loss += -change // Fixed: Accumulate absolute value of loss
+			sumLoss -= change // Use negative of change for loss
 		}
 	}
-	avgGain := gain / float64(period)
-	avgLoss := loss / float64(period)
-	// Calculate first RSI
+
+	// Calculate first RSI value
+	avgGain := sumGain / float64(period)
+	avgLoss := sumLoss / float64(period)
+
 	if avgLoss == 0 {
-		rsi[period-1] = 100
+		rsi[period] = 100
 	} else {
 		rs := avgGain / avgLoss
-		rsi[period-1] = 100 - (100 / (1 + rs))
+		rsi[period] = 100 - (100 / (1 + rs))
 	}
-	// Calculate subsequent RSIs
-	for i := period; i < len(prices); i++ {
+
+	// Calculate subsequent RSIs using the smoothed method
+	for i := period + 1; i < len(prices); i++ {
 		change := prices[i] - prices[i-1]
+		var currentGain, currentLoss float64
 		if change > 0 {
-			gain = change
-			loss = 0
+			currentGain = change
+			currentLoss = 0
 		} else {
-			gain = 0
-			loss = -change
+			currentGain = 0
+			currentLoss = -change
 		}
-		avgGain = (avgGain*float64(period-1) + gain) / float64(period)
-		avgLoss = (avgLoss*float64(period-1) + loss) / float64(period)
+
+		// Use proper Wilder's smoothing formula
+		avgGain = ((avgGain * float64(period-1)) + currentGain) / float64(period)
+		avgLoss = ((avgLoss * float64(period-1)) + currentLoss) / float64(period)
+
 		if avgLoss == 0 {
 			rsi[i] = 100
 		} else {
@@ -49,5 +58,52 @@ func CalculateRSI(prices []float64, period int) []float64 {
 			rsi[i] = 100 - (100 / (1 + rs))
 		}
 	}
+
 	return rsi
 }
+
+// CalculateLastRSI efficiently calculates only the last RSI value
+// This is much more efficient when we only need the current RSI value
+func CalculateLastRSI(prices []float64, period int) (float64, error) {
+	if len(prices) <= period || period <= 0 {
+		return 0, fmt.Errorf("insufficient data: need more than %d prices", period)
+	}
+
+	// Calculate first average gain and loss
+	var sumGain, sumLoss float64
+	for i := 1; i <= period; i++ {
+		change := prices[i] - prices[i-1]
+		if change > 0 {
+			sumGain += change
+		} else {
+			sumLoss -= change
+		}
+	}
+
+	avgGain := sumGain / float64(period)
+	avgLoss := sumLoss / float64(period)
+
+	// Apply smoothing formula for remaining prices
+	for i := period + 1; i < len(prices); i++ {
+		change := prices[i] - prices[i-1]
+		var currentGain, currentLoss float64
+		if change > 0 {
+			currentGain = change
+			currentLoss = 0
+		} else {
+			currentGain = 0
+			currentLoss = -change
+		}
+
+		avgGain = ((avgGain * float64(period-1)) + currentGain) / float64(period)
+		avgLoss = ((avgLoss * float64(period-1)) + currentLoss) / float64(period)
+	}
+
+	if avgLoss == 0 {
+		return 100, nil
+	}
+
+	rs := avgGain / avgLoss
+	return 100 - (100 / (1 + rs)), nil
+}
+
