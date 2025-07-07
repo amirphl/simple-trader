@@ -170,6 +170,16 @@ type Storage interface {
 	GetCandleSourceStats(symbol string, start, end time.Time) (map[string]any, error)
 }
 
+type Ingester interface {
+	IngestCandle(c Candle) error
+	IngestRaw1mCandles(candles []Candle) error
+	BulkAggregateFrom1m(symbol string, start, end time.Time) error
+	BulkAggregateAllSymbolsFrom1m(start, end time.Time) error
+	GetLatestCandleFromCache(symbol, timeframe string) (*Candle, error)
+	GetCandlesFromDB(symbol, timeframe string, start, end time.Time) ([]Candle, error)
+	CleanupOldData(symbol, timeframe string, retentionDays int) error
+}
+
 type DefaultAggregator struct {
 	mu sync.RWMutex
 }
@@ -333,8 +343,8 @@ func (a *DefaultAggregator) AggregateIncremental(newCandle Candle, existingCandl
 	return existingCandles, nil
 }
 
-// CandleIngester handles real-time candle ingestion and aggregation
-type CandleIngester struct {
+// DefaultIngester handles real-time candle ingestion and aggregation
+type DefaultIngester struct {
 	storage    Storage
 	aggregator Aggregator
 	mu         sync.RWMutex
@@ -342,8 +352,8 @@ type CandleIngester struct {
 }
 
 // NewCandleIngester creates a new ingester with configuration
-func NewCandleIngester(storage Storage, aggregator Aggregator) *CandleIngester {
-	return &CandleIngester{
+func NewCandleIngester(storage Storage, aggregator Aggregator) Ingester {
+	return &DefaultIngester{
 		storage:    storage,
 		aggregator: aggregator,
 		cache:      make(map[string]map[string]*Candle),
@@ -353,7 +363,7 @@ func NewCandleIngester(storage Storage, aggregator Aggregator) *CandleIngester {
 // TODO: Transactional
 
 // IngestCandle processes a new candle and triggers aggregation for higher timeframes
-func (ci *CandleIngester) IngestCandle(c Candle) error {
+func (ci *DefaultIngester) IngestCandle(c Candle) error {
 	if err := c.Validate(); err != nil {
 		return fmt.Errorf("invalid candle: %w", err)
 	}
@@ -381,7 +391,7 @@ func (ci *CandleIngester) IngestCandle(c Candle) error {
 }
 
 // IngestRaw1mCandles efficiently ingests raw 1m candles and triggers aggregation
-func (ci *CandleIngester) IngestRaw1mCandles(candles []Candle) error {
+func (ci *DefaultIngester) IngestRaw1mCandles(candles []Candle) error {
 	if len(candles) == 0 {
 		return nil
 	}
@@ -454,7 +464,7 @@ func (ci *CandleIngester) IngestRaw1mCandles(candles []Candle) error {
 	return nil
 }
 
-func (ci *CandleIngester) aggregateToHigherTimeframes(c Candle) error {
+func (ci *DefaultIngester) aggregateToHigherTimeframes(c Candle) error {
 	// Get all supported timeframes that are larger than 1m
 	higherTimeframes := GetAggregationTimeframes()
 
@@ -588,7 +598,7 @@ func (ci *CandleIngester) aggregateToHigherTimeframes(c Candle) error {
 }
 
 // aggregateSymbolToHigherTimeframes aggregates all 1m candles for a symbol to higher timeframes
-func (ci *CandleIngester) aggregateSymbolToHigherTimeframes(symbol string) error {
+func (ci *DefaultIngester) aggregateSymbolToHigherTimeframes(symbol string) error {
 	// Get the latest 1m candle to determine the time range
 	latest1m, err := ci.storage.GetLatest1mCandle(symbol)
 	if err != nil {
@@ -717,7 +727,7 @@ func (ci *CandleIngester) aggregateSymbolToHigherTimeframes(symbol string) error
 // aggregateSymbolToHigherTimeframesV2 aggregates all 1m candles for a symbol to higher timeframes
 // ISSUE: There is still opportunities for optimization
 // ISSUE: Not works for 23:55 - 00:15
-func (ci *CandleIngester) aggregateSymbolToHigherTimeframesV2(symbol string) error {
+func (ci *DefaultIngester) aggregateSymbolToHigherTimeframesV2(symbol string) error {
 	// Get the latest 1m candle to determine the end time
 	latest1m, err := ci.storage.GetLatest1mCandle(symbol)
 	if err != nil {
@@ -835,7 +845,7 @@ func (ci *CandleIngester) aggregateSymbolToHigherTimeframesV2(symbol string) err
 // BulkAggregateFrom1m performs bulk aggregation of 1m candles to all higher timeframes
 // NOTE: start-time must be 00:00
 // NOTE: end-time must be the timestamp of the last 1m candle seen
-func (ci *CandleIngester) BulkAggregateFrom1m(symbol string, start, end time.Time) error {
+func (ci *DefaultIngester) BulkAggregateFrom1m(symbol string, start, end time.Time) error {
 	// Get all 1m candles for the time range in one database query
 	oneMCandles, err := ci.storage.GetCandles(symbol, "1m", start, end)
 	if err != nil {
@@ -907,7 +917,7 @@ func (ci *CandleIngester) BulkAggregateFrom1m(symbol string, start, end time.Tim
 // using the optimized GetCandlesV2 function which doesn't filter by symbol
 // NOTE: start-time must be 00:00
 // NOTE: end-time must be the timestamp of the last 1m candle seen
-func (ci *CandleIngester) BulkAggregateAllSymbolsFrom1m(start, end time.Time) error {
+func (ci *DefaultIngester) BulkAggregateAllSymbolsFrom1m(start, end time.Time) error {
 	// Get all 1m candles across all symbols in the time range
 	allCandles, err := ci.storage.GetCandlesV2("1m", start, end)
 	if err != nil {
@@ -1016,7 +1026,7 @@ func (ci *CandleIngester) BulkAggregateAllSymbolsFrom1m(start, end time.Time) er
 }
 
 // GetLatestCandleFromCache returns the latest candle for a symbol and timeframe
-func (ci *CandleIngester) GetLatestCandleFromCache(symbol, timeframe string) (*Candle, error) {
+func (ci *DefaultIngester) GetLatestCandleFromCache(symbol, timeframe string) (*Candle, error) {
 	ci.mu.RLock()
 	defer ci.mu.RUnlock()
 
@@ -1039,12 +1049,12 @@ func (ci *CandleIngester) GetLatestCandleFromCache(symbol, timeframe string) (*C
 }
 
 // GetCandles retrieves candles from storage
-func (ci *CandleIngester) GetCandles(symbol, timeframe string, start, end time.Time) ([]Candle, error) {
+func (ci *DefaultIngester) GetCandlesFromDB(symbol, timeframe string, start, end time.Time) ([]Candle, error) {
 	return ci.storage.GetCandles(symbol, timeframe, start, end)
 }
 
 // CleanupOldData removes old candles to prevent database bloat
-func (ci *CandleIngester) CleanupOldData(symbol, timeframe string, retentionDays int) error {
+func (ci *DefaultIngester) CleanupOldData(symbol, timeframe string, retentionDays int) error {
 	cutoff := time.Now().AddDate(0, 0, -retentionDays)
 	return ci.storage.DeleteCandles(symbol, timeframe, cutoff)
 }
