@@ -27,6 +27,27 @@ func NewPostgresDB(connStr string, maxOpen, maxIdle int) (*PostgresDB, error) {
 	return &PostgresDB{db: db}, nil
 }
 
+// SaveCandle saves a single candle to the database
+func (p *PostgresDB) SaveCandle(c *candle.Candle) error {
+	// Validate candle before saving
+	if err := c.Validate(); err != nil {
+		return fmt.Errorf("invalid candle for %s %s at %s: %w", c.Symbol, c.Timeframe, c.Timestamp, err)
+	}
+
+	_, err := p.db.Exec(`
+		INSERT INTO candles (symbol, timeframe, timestamp, open, high, low, close, volume, source)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+		ON CONFLICT (symbol, timeframe, timestamp, source) DO UPDATE SET 
+			open=EXCLUDED.open, high=EXCLUDED.high, low=EXCLUDED.low, 
+			close=EXCLUDED.close, volume=EXCLUDED.volume`,
+		c.Symbol, c.Timeframe, c.Timestamp, c.Open, c.High, c.Low, c.Close, c.Volume, c.Source)
+	if err != nil {
+		return fmt.Errorf("failed to save candle for %s %s at %s: %w", c.Symbol, c.Timeframe, c.Timestamp, err)
+	}
+
+	return nil
+}
+
 func (p *PostgresDB) SaveCandles(candles []candle.Candle) error {
 	if len(candles) == 0 {
 		return nil
@@ -65,6 +86,20 @@ func (p *PostgresDB) SaveCandles(candles []candle.Candle) error {
 	}
 
 	return tx.Commit()
+}
+
+// SaveConstructedCandles efficiently saves constructed (aggregated) candles
+func (p *PostgresDB) SaveConstructedCandles(candles []candle.Candle) error {
+	if len(candles) == 0 {
+		return nil
+	}
+
+	// Set source to "constructed" for all candles
+	for i := range candles {
+		candles[i].Source = "constructed"
+	}
+
+	return p.SaveCandles(candles)
 }
 
 // SaveRaw1mCandles efficiently saves raw 1m candles with optimized batch processing
@@ -167,6 +202,93 @@ func (p *PostgresDB) GetCandlesV2(timeframe string, start, end time.Time) ([]can
 	return candles, nil
 }
 
+// GetCandlesInRange retrieves candles in a specific time range for a symbol and timeframe
+func (p *PostgresDB) GetCandlesInRange(symbol, timeframe string, start, end time.Time, source string) ([]candle.Candle, error) {
+	query := `
+		SELECT timestamp, open, high, low, close, volume, symbol, timeframe, source 
+		FROM candles 
+		WHERE symbol=$1 AND timeframe=$2 AND timestamp >= $3 AND timestamp <= $4`
+	args := []any{symbol, timeframe, start, end}
+
+	if source != "" {
+		query += " AND source=$5"
+		args = append(args, source)
+	}
+
+	query += " ORDER BY timestamp ASC"
+
+	rows, err := p.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query candles in range: %w", err)
+	}
+	defer rows.Close()
+
+	var candles []candle.Candle
+	for rows.Next() {
+		var c candle.Candle
+		if err := rows.Scan(&c.Timestamp, &c.Open, &c.High, &c.Low, &c.Close, &c.Volume, &c.Symbol, &c.Timeframe, &c.Source); err != nil {
+			return nil, fmt.Errorf("failed to scan candle: %w", err)
+		}
+		candles = append(candles, c)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating candle rows: %w", err)
+	}
+
+	return candles, nil
+}
+
+// GetConstructedCandles retrieves only constructed candles
+func (p *PostgresDB) GetConstructedCandles(symbol, timeframe string, start, end time.Time) ([]candle.Candle, error) {
+	rows, err := p.db.Query(`
+		SELECT timestamp, open, high, low, close, volume, symbol, timeframe, source 
+		FROM candles 
+		WHERE symbol=$1 AND timeframe=$2 AND source='constructed' AND timestamp >= $3 AND timestamp <= $4 
+		ORDER BY timestamp ASC`,
+		symbol, timeframe, start, end)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query constructed candles: %w", err)
+	}
+	defer rows.Close()
+
+	var candles []candle.Candle
+	for rows.Next() {
+		var c candle.Candle
+		if err := rows.Scan(&c.Timestamp, &c.Open, &c.High, &c.Low, &c.Close, &c.Volume, &c.Symbol, &c.Timeframe, &c.Source); err != nil {
+			return nil, fmt.Errorf("failed to scan constructed candle: %w", err)
+		}
+		candles = append(candles, c)
+	}
+
+	return candles, nil
+}
+
+// GetRawCandles retrieves only raw candles (not constructed)
+func (p *PostgresDB) GetRawCandles(symbol, timeframe string, start, end time.Time) ([]candle.Candle, error) {
+	rows, err := p.db.Query(`
+		SELECT timestamp, open, high, low, close, volume, symbol, timeframe, source 
+		FROM candles 
+		WHERE symbol=$1 AND timeframe=$2 AND source != 'constructed' AND timestamp >= $3 AND timestamp <= $4 
+		ORDER BY timestamp ASC`,
+		symbol, timeframe, start, end)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query raw candles: %w", err)
+	}
+	defer rows.Close()
+
+	var candles []candle.Candle
+	for rows.Next() {
+		var c candle.Candle
+		if err := rows.Scan(&c.Timestamp, &c.Open, &c.High, &c.Low, &c.Close, &c.Volume, &c.Symbol, &c.Timeframe, &c.Source); err != nil {
+			return nil, fmt.Errorf("failed to scan raw candle: %w", err)
+		}
+		candles = append(candles, c)
+	}
+
+	return candles, nil
+}
+
 // GetLatestCandle retrieves the latest candle with optimized querying
 func (p *PostgresDB) GetLatestCandle(symbol, timeframe string) (*candle.Candle, error) {
 	row := p.db.QueryRow(`
@@ -186,9 +308,65 @@ func (p *PostgresDB) GetLatestCandle(symbol, timeframe string) (*candle.Candle, 
 	return &c, nil
 }
 
+// GetLatestCandleInRange retrieves the latest candle within a specific time range
+// This is useful when you need the most recent candle before a certain time
+func (p *PostgresDB) GetLatestCandleInRange(symbol, timeframe string, start, end time.Time) (*candle.Candle, error) {
+	row := p.db.QueryRow(`
+		SELECT timestamp, open, high, low, close, volume, symbol, timeframe, source 
+		FROM candles 
+		WHERE symbol=$1 AND timeframe=$2 AND timestamp >= $3 AND timestamp <= $4
+		ORDER BY timestamp DESC LIMIT 1`,
+		symbol, timeframe, start, end)
+
+	var c candle.Candle
+	if err := row.Scan(&c.Timestamp, &c.Open, &c.High, &c.Low, &c.Close, &c.Volume, &c.Symbol, &c.Timeframe, &c.Source); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to scan latest candle in range: %w", err)
+	}
+	return &c, nil
+}
+
+// GetLatestConstructedCandle retrieves the latest constructed candle
+func (p *PostgresDB) GetLatestConstructedCandle(symbol, timeframe string) (*candle.Candle, error) {
+	row := p.db.QueryRow(`
+		SELECT timestamp, open, high, low, close, volume, symbol, timeframe, source 
+		FROM candles 
+		WHERE symbol=$1 AND timeframe=$2 AND source='constructed' 
+		ORDER BY timestamp DESC LIMIT 1`,
+		symbol, timeframe)
+
+	var c candle.Candle
+	if err := row.Scan(&c.Timestamp, &c.Open, &c.High, &c.Low, &c.Close, &c.Volume, &c.Symbol, &c.Timeframe, &c.Source); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to scan latest constructed candle: %w", err)
+	}
+	return &c, nil
+}
+
 // GetLatest1mCandle retrieves the latest 1m candle for a symbol
 func (p *PostgresDB) GetLatest1mCandle(symbol string) (*candle.Candle, error) {
 	return p.GetLatestCandle(symbol, "1m")
+}
+
+// DeleteCandle removes a specific candle
+// TODO: TX
+func (p *PostgresDB) DeleteCandle(symbol, timeframe string, timestamp time.Time, source string) error {
+	result, err := p.db.Exec(`DELETE FROM candles WHERE symbol=$1 AND timeframe=$2 AND timestamp=$3 AND source=$4`,
+		symbol, timeframe, timestamp, source)
+	if err != nil {
+		return fmt.Errorf("failed to delete candle: %w", err)
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		return fmt.Errorf("no candle found to delete for %s %s at %s", symbol, timeframe, timestamp)
+	}
+
+	return nil
 }
 
 // DeleteCandles removes old candles with optimized deletion
@@ -207,6 +385,40 @@ func (p *PostgresDB) DeleteCandles(symbol, timeframe string, before time.Time) e
 	return nil
 }
 
+// DeleteCandlesInRange removes candles in a specific time range for a symbol and timeframe
+func (p *PostgresDB) DeleteCandlesInRange(symbol, timeframe string, start, end time.Time, source string) error {
+	query := `DELETE FROM candles WHERE symbol=$1 AND timeframe=$2 AND timestamp >= $3 AND timestamp <= $4`
+	args := []any{symbol, timeframe, start, end}
+
+	if source != "" {
+		query += " AND source=$5"
+		args = append(args, source)
+	}
+
+	_, err := p.db.Exec(query, args...)
+	if err != nil {
+		return fmt.Errorf("failed to delete candles in range: %w", err)
+	}
+	return nil
+}
+
+// DeleteConstructedCandles removes old constructed candles
+func (p *PostgresDB) DeleteConstructedCandles(symbol, timeframe string, before time.Time) error {
+	// TODO: TX
+	result, err := p.db.Exec(`DELETE FROM candles WHERE symbol=$1 AND timeframe=$2 AND source='constructed' AND timestamp < $3`,
+		symbol, timeframe, before)
+	if err != nil {
+		return fmt.Errorf("failed to delete constructed candles: %w", err)
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected > 0 {
+		fmt.Printf("Deleted %d old constructed candles for %s %s\n", rowsAffected, symbol, timeframe)
+	}
+
+	return nil
+}
+
 // GetCandleCount returns the count of candles in a time range
 func (p *PostgresDB) GetCandleCount(symbol, timeframe string, start, end time.Time) (int, error) {
 	var count int
@@ -216,6 +428,19 @@ func (p *PostgresDB) GetCandleCount(symbol, timeframe string, start, end time.Ti
 		symbol, timeframe, start, end).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get candle count: %w", err)
+	}
+	return count, nil
+}
+
+// GetConstructedCandleCount returns the count of constructed candles
+func (p *PostgresDB) GetConstructedCandleCount(symbol, timeframe string, start, end time.Time) (int, error) {
+	var count int
+	err := p.db.QueryRow(`
+		SELECT COUNT(*) FROM candles 
+		WHERE symbol=$1 AND timeframe=$2 AND source='constructed' AND timestamp >= $3 AND timestamp <= $4`,
+		symbol, timeframe, start, end).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get constructed candle count: %w", err)
 	}
 	return count, nil
 }
@@ -343,23 +568,6 @@ func (p *PostgresDB) UpdateCandles(candles []candle.Candle) error {
 	return nil
 }
 
-// DeleteCandle removes a specific candle
-// TODO: TX
-func (p *PostgresDB) DeleteCandle(symbol, timeframe string, timestamp time.Time, source string) error {
-	result, err := p.db.Exec(`DELETE FROM candles WHERE symbol=$1 AND timeframe=$2 AND timestamp=$3 AND source=$4`,
-		symbol, timeframe, timestamp, source)
-	if err != nil {
-		return fmt.Errorf("failed to delete candle: %w", err)
-	}
-
-	rowsAffected, _ := result.RowsAffected()
-	if rowsAffected == 0 {
-		return fmt.Errorf("no candle found to delete for %s %s at %s", symbol, timeframe, timestamp)
-	}
-
-	return nil
-}
-
 // GetAggregationStats returns statistics useful for aggregation
 func (p *PostgresDB) GetAggregationStats(symbol string) (map[string]any, error) {
 	stats := make(map[string]any)
@@ -428,6 +636,65 @@ func (p *PostgresDB) GetMissingCandleRanges(symbol string, start, end time.Time)
 	}
 
 	return gaps, nil
+}
+
+// GetCandleSourceStats returns statistics about candle sources
+func (p *PostgresDB) GetCandleSourceStats(symbol string, start, end time.Time) (map[string]any, error) {
+	stats := make(map[string]any)
+
+	// Get source distribution
+	rows, err := p.db.Query(`
+		SELECT source, timeframe, COUNT(*) as count
+		FROM candles 
+		WHERE symbol=$1 AND timestamp >= $2 AND timestamp <= $3
+		GROUP BY source, timeframe
+		ORDER BY source, timeframe`,
+		symbol, start, end)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query source stats: %w", err)
+	}
+	defer rows.Close()
+
+	sourceStats := make(map[string]map[string]int)
+	for rows.Next() {
+		var source, timeframe string
+		var count int
+		if err := rows.Scan(&source, &timeframe, &count); err != nil {
+			return nil, fmt.Errorf("failed to scan source stat: %w", err)
+		}
+
+		if sourceStats[source] == nil {
+			sourceStats[source] = make(map[string]int)
+		}
+		sourceStats[source][timeframe] = count
+	}
+
+	stats["source_distribution"] = sourceStats
+
+	// Get constructed vs raw candle counts
+	var constructedCount, rawCount int
+
+	err = p.db.QueryRow(`
+		SELECT COUNT(*) FROM candles 
+		WHERE symbol=$1 AND source='constructed' AND timestamp >= $2 AND timestamp <= $3`,
+		symbol, start, end).Scan(&constructedCount)
+	if err != nil {
+		constructedCount = 0
+	}
+
+	err = p.db.QueryRow(`
+		SELECT COUNT(*) FROM candles 
+		WHERE symbol=$1 AND source != 'constructed' AND timestamp >= $2 AND timestamp <= $3`,
+		symbol, start, end).Scan(&rawCount)
+	if err != nil {
+		rawCount = 0
+	}
+
+	stats["constructed_count"] = constructedCount
+	stats["raw_count"] = rawCount
+	stats["total_count"] = constructedCount + rawCount
+
+	return stats, nil
 }
 
 func (p *PostgresDB) SaveOrderBook(ob market.OrderBook) error {
@@ -619,178 +886,6 @@ func (p *PostgresDB) DeleteState(key string) error {
 	return err
 }
 
-// SaveConstructedCandles efficiently saves constructed (aggregated) candles
-func (p *PostgresDB) SaveConstructedCandles(candles []candle.Candle) error {
-	if len(candles) == 0 {
-		return nil
-	}
-
-	// Set source to "constructed" for all candles
-	for i := range candles {
-		candles[i].Source = "constructed"
-	}
-
-	return p.SaveCandles(candles)
-}
-
-// GetConstructedCandles retrieves only constructed candles
-func (p *PostgresDB) GetConstructedCandles(symbol, timeframe string, start, end time.Time) ([]candle.Candle, error) {
-	rows, err := p.db.Query(`
-		SELECT timestamp, open, high, low, close, volume, symbol, timeframe, source 
-		FROM candles 
-		WHERE symbol=$1 AND timeframe=$2 AND source='constructed' AND timestamp >= $3 AND timestamp <= $4 
-		ORDER BY timestamp ASC`,
-		symbol, timeframe, start, end)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query constructed candles: %w", err)
-	}
-	defer rows.Close()
-
-	var candles []candle.Candle
-	for rows.Next() {
-		var c candle.Candle
-		if err := rows.Scan(&c.Timestamp, &c.Open, &c.High, &c.Low, &c.Close, &c.Volume, &c.Symbol, &c.Timeframe, &c.Source); err != nil {
-			return nil, fmt.Errorf("failed to scan constructed candle: %w", err)
-		}
-		candles = append(candles, c)
-	}
-
-	return candles, nil
-}
-
-// GetRawCandles retrieves only raw candles (not constructed)
-func (p *PostgresDB) GetRawCandles(symbol, timeframe string, start, end time.Time) ([]candle.Candle, error) {
-	rows, err := p.db.Query(`
-		SELECT timestamp, open, high, low, close, volume, symbol, timeframe, source 
-		FROM candles 
-		WHERE symbol=$1 AND timeframe=$2 AND source != 'constructed' AND timestamp >= $3 AND timestamp <= $4 
-		ORDER BY timestamp ASC`,
-		symbol, timeframe, start, end)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query raw candles: %w", err)
-	}
-	defer rows.Close()
-
-	var candles []candle.Candle
-	for rows.Next() {
-		var c candle.Candle
-		if err := rows.Scan(&c.Timestamp, &c.Open, &c.High, &c.Low, &c.Close, &c.Volume, &c.Symbol, &c.Timeframe, &c.Source); err != nil {
-			return nil, fmt.Errorf("failed to scan raw candle: %w", err)
-		}
-		candles = append(candles, c)
-	}
-
-	return candles, nil
-}
-
-// GetLatestConstructedCandle retrieves the latest constructed candle
-func (p *PostgresDB) GetLatestConstructedCandle(symbol, timeframe string) (*candle.Candle, error) {
-	row := p.db.QueryRow(`
-		SELECT timestamp, open, high, low, close, volume, symbol, timeframe, source 
-		FROM candles 
-		WHERE symbol=$1 AND timeframe=$2 AND source='constructed' 
-		ORDER BY timestamp DESC LIMIT 1`,
-		symbol, timeframe)
-
-	var c candle.Candle
-	if err := row.Scan(&c.Timestamp, &c.Open, &c.High, &c.Low, &c.Close, &c.Volume, &c.Symbol, &c.Timeframe, &c.Source); err != nil {
-		if err == sql.ErrNoRows {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("failed to scan latest constructed candle: %w", err)
-	}
-	return &c, nil
-}
-
-// GetConstructedCandleCount returns the count of constructed candles
-func (p *PostgresDB) GetConstructedCandleCount(symbol, timeframe string, start, end time.Time) (int, error) {
-	var count int
-	err := p.db.QueryRow(`
-		SELECT COUNT(*) FROM candles 
-		WHERE symbol=$1 AND timeframe=$2 AND source='constructed' AND timestamp >= $3 AND timestamp <= $4`,
-		symbol, timeframe, start, end).Scan(&count)
-	if err != nil {
-		return 0, fmt.Errorf("failed to get constructed candle count: %w", err)
-	}
-	return count, nil
-}
-
-// DeleteConstructedCandles removes old constructed candles
-func (p *PostgresDB) DeleteConstructedCandles(symbol, timeframe string, before time.Time) error {
-	// TODO: TX
-	result, err := p.db.Exec(`DELETE FROM candles WHERE symbol=$1 AND timeframe=$2 AND source='constructed' AND timestamp < $3`,
-		symbol, timeframe, before)
-	if err != nil {
-		return fmt.Errorf("failed to delete constructed candles: %w", err)
-	}
-
-	rowsAffected, _ := result.RowsAffected()
-	if rowsAffected > 0 {
-		fmt.Printf("Deleted %d old constructed candles for %s %s\n", rowsAffected, symbol, timeframe)
-	}
-
-	return nil
-}
-
-// GetCandleSourceStats returns statistics about candle sources
-func (p *PostgresDB) GetCandleSourceStats(symbol string, start, end time.Time) (map[string]any, error) {
-	stats := make(map[string]any)
-
-	// Get source distribution
-	rows, err := p.db.Query(`
-		SELECT source, timeframe, COUNT(*) as count
-		FROM candles 
-		WHERE symbol=$1 AND timestamp >= $2 AND timestamp <= $3
-		GROUP BY source, timeframe
-		ORDER BY source, timeframe`,
-		symbol, start, end)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query source stats: %w", err)
-	}
-	defer rows.Close()
-
-	sourceStats := make(map[string]map[string]int)
-	for rows.Next() {
-		var source, timeframe string
-		var count int
-		if err := rows.Scan(&source, &timeframe, &count); err != nil {
-			return nil, fmt.Errorf("failed to scan source stat: %w", err)
-		}
-
-		if sourceStats[source] == nil {
-			sourceStats[source] = make(map[string]int)
-		}
-		sourceStats[source][timeframe] = count
-	}
-
-	stats["source_distribution"] = sourceStats
-
-	// Get constructed vs raw candle counts
-	var constructedCount, rawCount int
-
-	err = p.db.QueryRow(`
-		SELECT COUNT(*) FROM candles 
-		WHERE symbol=$1 AND source='constructed' AND timestamp >= $2 AND timestamp <= $3`,
-		symbol, start, end).Scan(&constructedCount)
-	if err != nil {
-		constructedCount = 0
-	}
-
-	err = p.db.QueryRow(`
-		SELECT COUNT(*) FROM candles 
-		WHERE symbol=$1 AND source != 'constructed' AND timestamp >= $2 AND timestamp <= $3`,
-		symbol, start, end).Scan(&rawCount)
-	if err != nil {
-		rawCount = 0
-	}
-
-	stats["constructed_count"] = constructedCount
-	stats["raw_count"] = rawCount
-	stats["total_count"] = constructedCount + rawCount
-
-	return stats, nil
-}
-
 // GetOpenOrders retrieves all open orders (not filled/canceled/expired) from the DB
 func (p *PostgresDB) GetOpenOrders() ([]order.OrderResponse, error) {
 	rows, err := p.db.Query(`SELECT order_id, symbol, side, type, price, quantity, status, filled_qty, avg_price, created_at, updated_at FROM orders WHERE status NOT IN ('FILLED', 'CANCELED', 'EXPIRED', 'filled', 'canceled', 'expired')`)
@@ -807,26 +902,6 @@ func (p *PostgresDB) GetOpenOrders() ([]order.OrderResponse, error) {
 		orders = append(orders, o)
 	}
 	return orders, nil
-}
-
-// GetLatestCandleInRange retrieves the latest candle within a specific time range
-// This is useful when you need the most recent candle before a certain time
-func (p *PostgresDB) GetLatestCandleInRange(symbol, timeframe string, start, end time.Time) (*candle.Candle, error) {
-	row := p.db.QueryRow(`
-		SELECT timestamp, open, high, low, close, volume, symbol, timeframe, source 
-		FROM candles 
-		WHERE symbol=$1 AND timeframe=$2 AND timestamp >= $3 AND timestamp <= $4
-		ORDER BY timestamp DESC LIMIT 1`,
-		symbol, timeframe, start, end)
-
-	var c candle.Candle
-	if err := row.Scan(&c.Timestamp, &c.Open, &c.High, &c.Low, &c.Close, &c.Volume, &c.Symbol, &c.Timeframe, &c.Source); err != nil {
-		if err == sql.ErrNoRows {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("failed to scan latest candle in range: %w", err)
-	}
-	return &c, nil
 }
 
 // GetCandle retrieves a single candle by symbol, timeframe, timestamp, and source
@@ -846,79 +921,4 @@ func (p *PostgresDB) GetCandle(symbol, timeframe string, timestamp time.Time, so
 		return nil, fmt.Errorf("failed to scan candle: %w", err)
 	}
 	return &c, nil
-}
-
-// DeleteCandlesInRange removes candles in a specific time range for a symbol and timeframe
-func (p *PostgresDB) DeleteCandlesInRange(symbol, timeframe string, start, end time.Time, source string) error {
-	query := `DELETE FROM candles WHERE symbol=$1 AND timeframe=$2 AND timestamp >= $3 AND timestamp <= $4`
-	args := []any{symbol, timeframe, start, end}
-
-	if source != "" {
-		query += " AND source=$5"
-		args = append(args, source)
-	}
-
-	_, err := p.db.Exec(query, args...)
-	if err != nil {
-		return fmt.Errorf("failed to delete candles in range: %w", err)
-	}
-	return nil
-}
-
-// SaveCandle saves a single candle to the database
-func (p *PostgresDB) SaveCandle(c *candle.Candle) error {
-	// Validate candle before saving
-	if err := c.Validate(); err != nil {
-		return fmt.Errorf("invalid candle for %s %s at %s: %w", c.Symbol, c.Timeframe, c.Timestamp, err)
-	}
-
-	_, err := p.db.Exec(`
-		INSERT INTO candles (symbol, timeframe, timestamp, open, high, low, close, volume, source)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-		ON CONFLICT (symbol, timeframe, timestamp, source) DO UPDATE SET 
-			open=EXCLUDED.open, high=EXCLUDED.high, low=EXCLUDED.low, 
-			close=EXCLUDED.close, volume=EXCLUDED.volume`,
-		c.Symbol, c.Timeframe, c.Timestamp, c.Open, c.High, c.Low, c.Close, c.Volume, c.Source)
-	if err != nil {
-		return fmt.Errorf("failed to save candle for %s %s at %s: %w", c.Symbol, c.Timeframe, c.Timestamp, err)
-	}
-
-	return nil
-}
-
-// GetCandlesInRange retrieves candles in a specific time range for a symbol and timeframe
-func (p *PostgresDB) GetCandlesInRange(symbol, timeframe string, start, end time.Time, source string) ([]candle.Candle, error) {
-	query := `
-		SELECT timestamp, open, high, low, close, volume, symbol, timeframe, source 
-		FROM candles 
-		WHERE symbol=$1 AND timeframe=$2 AND timestamp >= $3 AND timestamp <= $4`
-	args := []any{symbol, timeframe, start, end}
-
-	if source != "" {
-		query += " AND source=$5"
-		args = append(args, source)
-	}
-
-	query += " ORDER BY timestamp ASC"
-
-	rows, err := p.db.Query(query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query candles in range: %w", err)
-	}
-	defer rows.Close()
-
-	var candles []candle.Candle
-	for rows.Next() {
-		var c candle.Candle
-		if err := rows.Scan(&c.Timestamp, &c.Open, &c.High, &c.Low, &c.Close, &c.Volume, &c.Symbol, &c.Timeframe, &c.Source); err != nil {
-			return nil, fmt.Errorf("failed to scan candle: %w", err)
-		}
-		candles = append(candles, c)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating candle rows: %w", err)
-	}
-
-	return candles, nil
 }

@@ -150,13 +150,14 @@ type Storage interface {
 	SaveConstructedCandles(candles []Candle) error
 	GetCandle(symbol, timeframe string, timestamp time.Time, source string) (*Candle, error)
 	GetCandles(symbol, timeframe string, start, end time.Time) ([]Candle, error)
-	GetCandlesInRange(symbol, timeframe string, start, end time.Time, source string) ([]Candle, error)
 	GetCandlesV2(timeframe string, start, end time.Time) ([]Candle, error)
+	GetCandlesInRange(symbol, timeframe string, start, end time.Time, source string) ([]Candle, error)
 	GetConstructedCandles(symbol, timeframe string, start, end time.Time) ([]Candle, error)
 	GetRawCandles(symbol, timeframe string, start, end time.Time) ([]Candle, error)
 	GetLatestCandle(symbol, timeframe string) (*Candle, error)
 	GetLatestCandleInRange(symbol, timeframe string, start, end time.Time) (*Candle, error)
 	GetLatestConstructedCandle(symbol, timeframe string) (*Candle, error)
+	GetLatest1mCandle(symbol string) (*Candle, error)
 	DeleteCandles(symbol, timeframe string, before time.Time) error
 	DeleteCandlesInRange(symbol, timeframe string, start, end time.Time, source string) error
 	DeleteConstructedCandles(symbol, timeframe string, before time.Time) error
@@ -164,9 +165,8 @@ type Storage interface {
 	GetConstructedCandleCount(symbol, timeframe string, start, end time.Time) (int, error)
 	UpdateCandle(candle Candle) error
 	UpdateCandles(candle []Candle) error
-	GetLatest1mCandle(symbol string) (*Candle, error)
-	GetMissingCandleRanges(symbol string, start, end time.Time) ([]struct{ Start, End time.Time }, error)
 	GetAggregationStats(symbol string) (map[string]any, error)
+	GetMissingCandleRanges(symbol string, start, end time.Time) ([]struct{ Start, End time.Time }, error)
 	GetCandleSourceStats(symbol string, start, end time.Time) (map[string]any, error)
 }
 
