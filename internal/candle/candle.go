@@ -145,9 +145,12 @@ type Aggregator interface {
 
 // Storage interface for saving and retrieving candles.
 type Storage interface {
+	SaveCandle(candle *Candle) error
 	SaveCandles(candles []Candle) error
 	SaveConstructedCandles(candles []Candle) error
+	GetCandle(symbol, timeframe string, timestamp time.Time, source string) (*Candle, error)
 	GetCandles(symbol, timeframe string, start, end time.Time) ([]Candle, error)
+	GetCandlesInRange(symbol, timeframe string, start, end time.Time, source string) ([]Candle, error)
 	GetCandlesV2(timeframe string, start, end time.Time) ([]Candle, error)
 	GetConstructedCandles(symbol, timeframe string, start, end time.Time) ([]Candle, error)
 	GetRawCandles(symbol, timeframe string, start, end time.Time) ([]Candle, error)
@@ -155,6 +158,7 @@ type Storage interface {
 	GetLatestCandleInRange(symbol, timeframe string, start, end time.Time) (*Candle, error)
 	GetLatestConstructedCandle(symbol, timeframe string) (*Candle, error)
 	DeleteCandles(symbol, timeframe string, before time.Time) error
+	DeleteCandlesInRange(symbol, timeframe string, start, end time.Time, source string) error
 	DeleteConstructedCandles(symbol, timeframe string, before time.Time) error
 	GetCandleCount(symbol, timeframe string, start, end time.Time) (int, error)
 	GetConstructedCandleCount(symbol, timeframe string, start, end time.Time) (int, error)

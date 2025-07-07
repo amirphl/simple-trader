@@ -828,3 +828,97 @@ func (p *PostgresDB) GetLatestCandleInRange(symbol, timeframe string, start, end
 	}
 	return &c, nil
 }
+
+// GetCandle retrieves a single candle by symbol, timeframe, timestamp, and source
+func (p *PostgresDB) GetCandle(symbol, timeframe string, timestamp time.Time, source string) (*candle.Candle, error) {
+	row := p.db.QueryRow(`
+		SELECT timestamp, open, high, low, close, volume, symbol, timeframe, source 
+		FROM candles 
+		WHERE symbol=$1 AND timeframe=$2 AND timestamp=$3 AND source=$4 
+		LIMIT 1`,
+		symbol, timeframe, timestamp, source)
+
+	var c candle.Candle
+	if err := row.Scan(&c.Timestamp, &c.Open, &c.High, &c.Low, &c.Close, &c.Volume, &c.Symbol, &c.Timeframe, &c.Source); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to scan candle: %w", err)
+	}
+	return &c, nil
+}
+
+// DeleteCandlesInRange removes candles in a specific time range for a symbol and timeframe
+func (p *PostgresDB) DeleteCandlesInRange(symbol, timeframe string, start, end time.Time, source string) error {
+	query := `DELETE FROM candles WHERE symbol=$1 AND timeframe=$2 AND timestamp >= $3 AND timestamp <= $4`
+	args := []any{symbol, timeframe, start, end}
+
+	if source != "" {
+		query += " AND source=$5"
+		args = append(args, source)
+	}
+
+	_, err := p.db.Exec(query, args...)
+	if err != nil {
+		return fmt.Errorf("failed to delete candles in range: %w", err)
+	}
+	return nil
+}
+
+// SaveCandle saves a single candle to the database
+func (p *PostgresDB) SaveCandle(c *candle.Candle) error {
+	// Validate candle before saving
+	if err := c.Validate(); err != nil {
+		return fmt.Errorf("invalid candle for %s %s at %s: %w", c.Symbol, c.Timeframe, c.Timestamp, err)
+	}
+
+	_, err := p.db.Exec(`
+		INSERT INTO candles (symbol, timeframe, timestamp, open, high, low, close, volume, source)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+		ON CONFLICT (symbol, timeframe, timestamp, source) DO UPDATE SET 
+			open=EXCLUDED.open, high=EXCLUDED.high, low=EXCLUDED.low, 
+			close=EXCLUDED.close, volume=EXCLUDED.volume`,
+		c.Symbol, c.Timeframe, c.Timestamp, c.Open, c.High, c.Low, c.Close, c.Volume, c.Source)
+	if err != nil {
+		return fmt.Errorf("failed to save candle for %s %s at %s: %w", c.Symbol, c.Timeframe, c.Timestamp, err)
+	}
+
+	return nil
+}
+
+// GetCandlesInRange retrieves candles in a specific time range for a symbol and timeframe
+func (p *PostgresDB) GetCandlesInRange(symbol, timeframe string, start, end time.Time, source string) ([]candle.Candle, error) {
+	query := `
+		SELECT timestamp, open, high, low, close, volume, symbol, timeframe, source 
+		FROM candles 
+		WHERE symbol=$1 AND timeframe=$2 AND timestamp >= $3 AND timestamp <= $4`
+	args := []any{symbol, timeframe, start, end}
+
+	if source != "" {
+		query += " AND source=$5"
+		args = append(args, source)
+	}
+
+	query += " ORDER BY timestamp ASC"
+
+	rows, err := p.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query candles in range: %w", err)
+	}
+	defer rows.Close()
+
+	var candles []candle.Candle
+	for rows.Next() {
+		var c candle.Candle
+		if err := rows.Scan(&c.Timestamp, &c.Open, &c.High, &c.Low, &c.Close, &c.Volume, &c.Symbol, &c.Timeframe, &c.Source); err != nil {
+			return nil, fmt.Errorf("failed to scan candle: %w", err)
+		}
+		candles = append(candles, c)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating candle rows: %w", err)
+	}
+
+	return candles, nil
+}
