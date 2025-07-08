@@ -4,17 +4,19 @@ import (
 	"strings"
 	"testing"
 
+	dbconf "github.com/amirphl/simple-trader/internal/db/conf"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestSchemaCompatibility(t *testing.T) {
 	// Set up test database
-	testDB, cleanup := SetupTestDB(t)
+	cfg, cleanup := dbconf.NewTestConfig(t)
+	require.NotNil(t, cfg)
 	defer cleanup()
 
 	// Get the PostgresDB instance
-	db, err := testDB.GetTestPostgresDB()
+	db, err := New(*cfg)
 	require.NoError(t, err)
 
 	// Check if we can query the candles table

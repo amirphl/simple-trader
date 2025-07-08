@@ -5,17 +5,19 @@ import (
 	"time"
 
 	"github.com/amirphl/simple-trader/internal/candle"
+	dbconf "github.com/amirphl/simple-trader/internal/db/conf"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestPostgresDB_SaveCandle(t *testing.T) {
 	// Set up test database
-	testDB, cleanup := SetupTestDB(t)
+	cfg, cleanup := dbconf.NewTestConfig(t)
+	require.NotNil(t, cfg)
 	defer cleanup()
 
 	// Create PostgresDB instance
-	db, err := testDB.GetTestPostgresDB()
+	db, err := New(*cfg)
 	require.NoError(t, err)
 
 	// Test 1: Basic candle save
@@ -288,11 +290,12 @@ func TestPostgresDB_SaveCandle(t *testing.T) {
 
 func TestPostgresDB_SaveCandles(t *testing.T) {
 	// Set up test database
-	testDB, cleanup := SetupTestDB(t)
+	cfg, cleanup := dbconf.NewTestConfig(t)
+	require.NotNil(t, cfg)
 	defer cleanup()
 
 	// Create PostgresDB instance
-	db, err := testDB.GetTestPostgresDB()
+	db, err := New(*cfg)
 	require.NoError(t, err)
 
 	// Test 1: Save multiple valid candles
@@ -532,11 +535,12 @@ func TestPostgresDB_SaveCandles(t *testing.T) {
 
 func TestPostgresDB_SaveConstructedCandles(t *testing.T) {
 	// Set up test database
-	testDB, cleanup := SetupTestDB(t)
+	cfg, cleanup := dbconf.NewTestConfig(t)
+	require.NotNil(t, cfg)
 	defer cleanup()
 
 	// Create PostgresDB instance
-	db, err := testDB.GetTestPostgresDB()
+	db, err := New(*cfg)
 	require.NoError(t, err)
 
 	// Test 1: Save constructed candles
@@ -791,11 +795,12 @@ func TestPostgresDB_SaveConstructedCandles(t *testing.T) {
 
 func TestPostgresDB_GetCandle(t *testing.T) {
 	// Set up test database
-	testDB, cleanup := SetupTestDB(t)
+	cfg, cleanup := dbconf.NewTestConfig(t)
+	require.NotNil(t, cfg)
 	defer cleanup()
 
 	// Create PostgresDB instance
-	db, err := testDB.GetTestPostgresDB()
+	db, err := New(*cfg)
 	require.NoError(t, err)
 
 	now := time.Now().UTC().Truncate(time.Minute)
@@ -856,11 +861,12 @@ func TestPostgresDB_GetCandle(t *testing.T) {
 
 func TestPostgresDB_GetCandles(t *testing.T) {
 	// Set up test database
-	testDB, cleanup := SetupTestDB(t)
+	cfg, cleanup := dbconf.NewTestConfig(t)
+	require.NotNil(t, cfg)
 	defer cleanup()
 
 	// Create PostgresDB instance
-	db, err := testDB.GetTestPostgresDB()
+	db, err := New(*cfg)
 	require.NoError(t, err)
 
 	now := time.Now().UTC().Truncate(time.Minute)
@@ -951,11 +957,12 @@ func TestPostgresDB_GetCandles(t *testing.T) {
 
 func TestPostgresDB_GetCandlesV2(t *testing.T) {
 	// Set up test database
-	testDB, cleanup := SetupTestDB(t)
+	cfg, cleanup := dbconf.NewTestConfig(t)
+	require.NotNil(t, cfg)
 	defer cleanup()
 
 	// Create PostgresDB instance
-	db, err := testDB.GetTestPostgresDB()
+	db, err := New(*cfg)
 	require.NoError(t, err)
 
 	now := time.Now().UTC().Truncate(time.Minute)
@@ -1070,11 +1077,12 @@ func TestPostgresDB_GetCandlesV2(t *testing.T) {
 
 func TestPostgresDB_GetCandlesInRange(t *testing.T) {
 	// Set up test database
-	testDB, cleanup := SetupTestDB(t)
+	cfg, cleanup := dbconf.NewTestConfig(t)
+	require.NotNil(t, cfg)
 	defer cleanup()
 
 	// Create PostgresDB instance
-	db, err := testDB.GetTestPostgresDB()
+	db, err := New(*cfg)
 	require.NoError(t, err)
 
 	now := time.Now().UTC().Truncate(time.Minute)
@@ -1167,11 +1175,12 @@ func TestPostgresDB_GetCandlesInRange(t *testing.T) {
 
 func TestPostgresDB_GetConstructedCandles(t *testing.T) {
 	// Set up test database
-	testDB, cleanup := SetupTestDB(t)
+	cfg, cleanup := dbconf.NewTestConfig(t)
+	require.NotNil(t, cfg)
 	defer cleanup()
 
 	// Create PostgresDB instance
-	db, err := testDB.GetTestPostgresDB()
+	db, err := New(*cfg)
 	require.NoError(t, err)
 
 	now := time.Now().UTC().Truncate(time.Minute)
@@ -1263,11 +1272,12 @@ func TestPostgresDB_GetConstructedCandles(t *testing.T) {
 
 func TestPostgresDB_GetRawCandles(t *testing.T) {
 	// Set up test database
-	testDB, cleanup := SetupTestDB(t)
+	cfg, cleanup := dbconf.NewTestConfig(t)
+	require.NotNil(t, cfg)
 	defer cleanup()
 
 	// Create PostgresDB instance
-	db, err := testDB.GetTestPostgresDB()
+	db, err := New(*cfg)
 	require.NoError(t, err)
 
 	now := time.Now().UTC().Truncate(time.Minute)
@@ -1394,11 +1404,12 @@ func TestPostgresDB_GetRawCandles(t *testing.T) {
 
 func TestPostgresDB_GetLatestCandle(t *testing.T) {
 	// Set up test database
-	testDB, cleanup := SetupTestDB(t)
+	cfg, cleanup := dbconf.NewTestConfig(t)
+	require.NotNil(t, cfg)
 	defer cleanup()
 
 	// Create PostgresDB instance
-	db, err := testDB.GetTestPostgresDB()
+	db, err := New(*cfg)
 	require.NoError(t, err)
 
 	now := time.Now().UTC().Truncate(time.Minute)
@@ -1574,11 +1585,12 @@ func TestPostgresDB_GetLatestCandle(t *testing.T) {
 
 func TestPostgresDB_GetLatestCandleInRange(t *testing.T) {
 	// Set up test database
-	testDB, cleanup := SetupTestDB(t)
+	cfg, cleanup := dbconf.NewTestConfig(t)
+	require.NotNil(t, cfg)
 	defer cleanup()
 
 	// Create PostgresDB instance
-	db, err := testDB.GetTestPostgresDB()
+	db, err := New(*cfg)
 	require.NoError(t, err)
 
 	now := time.Now().UTC().Truncate(time.Minute)
@@ -1753,11 +1765,12 @@ func TestPostgresDB_GetLatestCandleInRange(t *testing.T) {
 
 func TestPostgresDB_GetLatestConstructedCandle(t *testing.T) {
 	// Set up test database
-	testDB, cleanup := SetupTestDB(t)
+	cfg, cleanup := dbconf.NewTestConfig(t)
+	require.NotNil(t, cfg)
 	defer cleanup()
 
 	// Create PostgresDB instance
-	db, err := testDB.GetTestPostgresDB()
+	db, err := New(*cfg)
 	require.NoError(t, err)
 
 	now := time.Now().UTC().Truncate(time.Minute)
@@ -1926,11 +1939,12 @@ func TestPostgresDB_GetLatestConstructedCandle(t *testing.T) {
 
 func TestPostgresDB_GetLatest1mCandle(t *testing.T) {
 	// Set up test database
-	testDB, cleanup := SetupTestDB(t)
+	cfg, cleanup := dbconf.NewTestConfig(t)
+	require.NotNil(t, cfg)
 	defer cleanup()
 
 	// Create PostgresDB instance
-	db, err := testDB.GetTestPostgresDB()
+	db, err := New(*cfg)
 	require.NoError(t, err)
 
 	now := time.Now().UTC().Truncate(time.Minute)
@@ -2131,11 +2145,12 @@ func TestPostgresDB_GetLatest1mCandle(t *testing.T) {
 
 func TestPostgresDB_DeleteCandles(t *testing.T) {
 	// Set up test database
-	testDB, cleanup := SetupTestDB(t)
+	cfg, cleanup := dbconf.NewTestConfig(t)
+	require.NotNil(t, cfg)
 	defer cleanup()
 
 	// Create PostgresDB instance
-	db, err := testDB.GetTestPostgresDB()
+	db, err := New(*cfg)
 	require.NoError(t, err)
 
 	now := time.Now().UTC().Truncate(time.Minute)
@@ -2306,11 +2321,12 @@ func TestPostgresDB_DeleteCandles(t *testing.T) {
 
 func TestPostgresDB_DeleteCandlesInRange(t *testing.T) {
 	// Set up test database
-	testDB, cleanup := SetupTestDB(t)
+	cfg, cleanup := dbconf.NewTestConfig(t)
+	require.NotNil(t, cfg)
 	defer cleanup()
 
 	// Create PostgresDB instance
-	db, err := testDB.GetTestPostgresDB()
+	db, err := New(*cfg)
 	require.NoError(t, err)
 
 	now := time.Now().UTC().Truncate(time.Minute)
@@ -2510,11 +2526,12 @@ func TestPostgresDB_DeleteCandlesInRange(t *testing.T) {
 
 func TestPostgresDB_DeleteConstructedCandles(t *testing.T) {
 	// Set up test database
-	testDB, cleanup := SetupTestDB(t)
+	cfg, cleanup := dbconf.NewTestConfig(t)
+	require.NotNil(t, cfg)
 	defer cleanup()
 
 	// Create PostgresDB instance
-	db, err := testDB.GetTestPostgresDB()
+	db, err := New(*cfg)
 	require.NoError(t, err)
 
 	now := time.Now().UTC().Truncate(time.Minute)
@@ -2737,11 +2754,12 @@ func TestPostgresDB_DeleteConstructedCandles(t *testing.T) {
 
 func TestPostgresDB_GetCandleCount(t *testing.T) {
 	// Set up test database
-	testDB, cleanup := SetupTestDB(t)
+	cfg, cleanup := dbconf.NewTestConfig(t)
+	require.NotNil(t, cfg)
 	defer cleanup()
 
 	// Create PostgresDB instance
-	db, err := testDB.GetTestPostgresDB()
+	db, err := New(*cfg)
 	require.NoError(t, err)
 
 	now := time.Now().UTC().Truncate(time.Minute)
@@ -2918,11 +2936,12 @@ func TestPostgresDB_GetCandleCount(t *testing.T) {
 
 func TestPostgresDB_GetConstructedCandleCount(t *testing.T) {
 	// Set up test database
-	testDB, cleanup := SetupTestDB(t)
+	cfg, cleanup := dbconf.NewTestConfig(t)
+	require.NotNil(t, cfg)
 	defer cleanup()
 
 	// Create PostgresDB instance
-	db, err := testDB.GetTestPostgresDB()
+	db, err := New(*cfg)
 	require.NoError(t, err)
 
 	now := time.Now().UTC().Truncate(time.Minute)
@@ -3090,11 +3109,12 @@ func TestPostgresDB_GetConstructedCandleCount(t *testing.T) {
 
 func TestPostgresDB_UpdateCandle(t *testing.T) {
 	// Set up test database
-	testDB, cleanup := SetupTestDB(t)
+	cfg, cleanup := dbconf.NewTestConfig(t)
+	require.NotNil(t, cfg)
 	defer cleanup()
 
 	// Create PostgresDB instance
-	db, err := testDB.GetTestPostgresDB()
+	db, err := New(*cfg)
 	require.NoError(t, err)
 
 	now := time.Now().UTC().Truncate(time.Minute)
@@ -3243,11 +3263,12 @@ func TestPostgresDB_UpdateCandle(t *testing.T) {
 
 func TestPostgresDB_UpdateCandles(t *testing.T) {
 	// Set up test database
-	testDB, cleanup := SetupTestDB(t)
+	cfg, cleanup := dbconf.NewTestConfig(t)
+	require.NotNil(t, cfg)
 	defer cleanup()
 
 	// Create PostgresDB instance
-	db, err := testDB.GetTestPostgresDB()
+	db, err := New(*cfg)
 	require.NoError(t, err)
 
 	now := time.Now().UTC().Truncate(time.Minute)
