@@ -2735,6 +2735,359 @@ func TestPostgresDB_DeleteConstructedCandles(t *testing.T) {
 	})
 }
 
+func TestPostgresDB_GetCandleCount(t *testing.T) {
+	// Set up test database
+	testDB, cleanup := SetupTestDB(t)
+	defer cleanup()
+
+	// Create PostgresDB instance
+	db, err := testDB.GetTestPostgresDB()
+	require.NoError(t, err)
+
+	now := time.Now().UTC().Truncate(time.Minute)
+
+	// Test 1: Count candles with multiple candles
+	t.Run("Count multiple candles", func(t *testing.T) {
+		// Insert test candles with different timestamps
+		candles := []candle.Candle{
+			{
+				Symbol:    "BTC-USDT",
+				Timeframe: "1m",
+				Timestamp: now.Add(-3 * time.Hour),
+				Open:      10000.0,
+				High:      10100.0,
+				Low:       9900.0,
+				Close:     10050.0,
+				Volume:    1.5,
+				Source:    "test",
+			},
+			{
+				Symbol:    "BTC-USDT",
+				Timeframe: "1m",
+				Timestamp: now.Add(-2 * time.Hour),
+				Open:      10100.0,
+				High:      10200.0,
+				Low:       10000.0,
+				Close:     10150.0,
+				Volume:    2.0,
+				Source:    "test",
+			},
+			{
+				Symbol:    "BTC-USDT",
+				Timeframe: "1m",
+				Timestamp: now.Add(-1 * time.Hour),
+				Open:      10150.0,
+				High:      10250.0,
+				Low:       10050.0,
+				Close:     10200.0,
+				Volume:    1.8,
+				Source:    "test",
+			},
+		}
+
+		err := db.SaveCandles(candles)
+		require.NoError(t, err)
+
+		// Count all candles
+		count, err := db.GetCandleCount("BTC-USDT", "1m", now.Add(-4*time.Hour), now)
+		assert.NoError(t, err)
+		assert.Equal(t, 3, count)
+	})
+
+	// Test 2: Count candles with empty result
+	t.Run("Count with empty result", func(t *testing.T) {
+		count, err := db.GetCandleCount("NON-EXISTENT", "1m", now.Add(-4*time.Hour), now)
+		assert.NoError(t, err)
+		assert.Equal(t, 0, count)
+	})
+
+	// Test 3: Count candles with specific timeframe
+	t.Run("Count with specific timeframe", func(t *testing.T) {
+		// Insert candles with different timeframes
+		candles := []candle.Candle{
+			{
+				Symbol:    "ETH-USDT",
+				Timeframe: "1m",
+				Timestamp: now,
+				Open:      300.0,
+				High:      310.0,
+				Low:       295.0,
+				Close:     305.0,
+				Volume:    10.0,
+				Source:    "test",
+			},
+			{
+				Symbol:    "ETH-USDT",
+				Timeframe: "5m",
+				Timestamp: now,
+				Open:      301.0,
+				High:      311.0,
+				Low:       296.0,
+				Close:     306.0,
+				Volume:    12.0,
+				Source:    "test",
+			},
+		}
+
+		err := db.SaveCandles(candles)
+		require.NoError(t, err)
+
+		// Count only 5m candles
+		count, err := db.GetCandleCount("ETH-USDT", "5m", now.Add(-1*time.Hour), now.Add(1*time.Hour))
+		assert.NoError(t, err)
+		assert.Equal(t, 1, count)
+	})
+
+	// Test 4: Count candles with exact time range
+	t.Run("Count with exact time range", func(t *testing.T) {
+		exactTime := now.Add(-5 * time.Hour)
+
+		// Insert test candle with exact timestamp
+		testCandle := candle.Candle{
+			Symbol:    "LTC-USDT",
+			Timeframe: "1m",
+			Timestamp: exactTime,
+			Open:      50.0,
+			High:      52.0,
+			Low:       49.0,
+			Close:     51.0,
+			Volume:    10.0,
+			Source:    "test",
+		}
+
+		err := db.SaveCandle(&testCandle)
+		require.NoError(t, err)
+
+		// Count with exact start and end time
+		count, err := db.GetCandleCount("LTC-USDT", "1m", exactTime, exactTime)
+		assert.NoError(t, err)
+		assert.Equal(t, 1, count)
+	})
+
+	// Test 5: Count candles with inverted time range
+	t.Run("Count with inverted time range", func(t *testing.T) {
+		// Define inverted range (end before start)
+		start := now
+		end := now.Add(-1 * time.Hour)
+
+		// Should return 0 for inverted range
+		count, err := db.GetCandleCount("BTC-USDT", "1m", start, end)
+		assert.NoError(t, err)
+		assert.Equal(t, 0, count)
+	})
+
+	// Test 6: Count candles with multiple sources
+	t.Run("Count with multiple sources", func(t *testing.T) {
+		sameTime := now.Add(-6 * time.Hour)
+
+		// Insert candles with same timestamp but different sources
+		candles := []candle.Candle{
+			{
+				Symbol:    "XRP-USDT",
+				Timeframe: "1m",
+				Timestamp: sameTime,
+				Open:      0.25,
+				High:      0.26,
+				Low:       0.24,
+				Close:     0.255,
+				Volume:    1000.0,
+				Source:    "source1",
+			},
+			{
+				Symbol:    "XRP-USDT",
+				Timeframe: "1m",
+				Timestamp: sameTime,
+				Open:      0.26,
+				High:      0.27,
+				Low:       0.25,
+				Close:     0.265,
+				Volume:    1200.0,
+				Source:    "source2",
+			},
+		}
+
+		err := db.SaveCandles(candles)
+		require.NoError(t, err)
+
+		// Count should include both sources
+		count, err := db.GetCandleCount("XRP-USDT", "1m", sameTime.Add(-1*time.Minute), sameTime.Add(1*time.Minute))
+		assert.NoError(t, err)
+		assert.Equal(t, 2, count)
+	})
+}
+
+func TestPostgresDB_GetConstructedCandleCount(t *testing.T) {
+	// Set up test database
+	testDB, cleanup := SetupTestDB(t)
+	defer cleanup()
+
+	// Create PostgresDB instance
+	db, err := testDB.GetTestPostgresDB()
+	require.NoError(t, err)
+
+	now := time.Now().UTC().Truncate(time.Minute)
+
+	// Test 1: Count constructed candles with mix of constructed and raw candles
+	t.Run("Count with mix of constructed and raw candles", func(t *testing.T) {
+		// Insert mix of constructed and raw candles
+		candles := []candle.Candle{
+			{
+				Symbol:    "BTC-USDT",
+				Timeframe: "1h",
+				Timestamp: now.Add(-3 * time.Hour),
+				Open:      9800.0,
+				High:      9900.0,
+				Low:       9700.0,
+				Close:     9850.0,
+				Volume:    1.8,
+				Source:    "constructed",
+			},
+			{
+				Symbol:    "BTC-USDT",
+				Timeframe: "1h",
+				Timestamp: now.Add(-2 * time.Hour),
+				Open:      9900.0,
+				High:      10000.0,
+				Low:       9800.0,
+				Close:     10000.0,
+				Volume:    2.0,
+				Source:    "constructed",
+			},
+			{
+				Symbol:    "BTC-USDT",
+				Timeframe: "1h",
+				Timestamp: now.Add(-1 * time.Hour),
+				Open:      10000.0,
+				High:      10100.0,
+				Low:       9900.0,
+				Close:     10050.0,
+				Volume:    1.5,
+				Source:    "exchange", // Raw candle
+			},
+		}
+
+		err := db.SaveCandles(candles)
+		require.NoError(t, err)
+
+		// Count only constructed candles
+		count, err := db.GetConstructedCandleCount("BTC-USDT", "1h", now.Add(-4*time.Hour), now)
+		assert.NoError(t, err)
+		assert.Equal(t, 2, count)
+
+		// Verify total count includes all candles
+		totalCount, err := db.GetCandleCount("BTC-USDT", "1h", now.Add(-4*time.Hour), now)
+		assert.NoError(t, err)
+		assert.Equal(t, 3, totalCount)
+	})
+
+	// Test 2: Count constructed candles with empty result
+	t.Run("Count constructed with empty result", func(t *testing.T) {
+		count, err := db.GetConstructedCandleCount("NON-EXISTENT", "1h", now.Add(-4*time.Hour), now)
+		assert.NoError(t, err)
+		assert.Equal(t, 0, count)
+	})
+
+	// Test 3: Count constructed candles with specific timeframe
+	t.Run("Count constructed with specific timeframe", func(t *testing.T) {
+		// Insert constructed candles with different timeframes
+		candles := []candle.Candle{
+			{
+				Symbol:    "ETH-USDT",
+				Timeframe: "1h",
+				Timestamp: now,
+				Open:      300.0,
+				High:      310.0,
+				Low:       295.0,
+				Close:     305.0,
+				Volume:    10.0,
+				Source:    "constructed",
+			},
+			{
+				Symbol:    "ETH-USDT",
+				Timeframe: "4h",
+				Timestamp: now,
+				Open:      301.0,
+				High:      311.0,
+				Low:       296.0,
+				Close:     306.0,
+				Volume:    12.0,
+				Source:    "constructed",
+			},
+		}
+
+		err := db.SaveCandles(candles)
+		require.NoError(t, err)
+
+		// Count only 4h constructed candles
+		count, err := db.GetConstructedCandleCount("ETH-USDT", "4h", now.Add(-1*time.Hour), now.Add(1*time.Hour))
+		assert.NoError(t, err)
+		assert.Equal(t, 1, count)
+	})
+
+	// Test 4: Count constructed candles with exact time range
+	t.Run("Count constructed with exact time range", func(t *testing.T) {
+		exactTime := now.Add(-5 * time.Hour)
+
+		// Insert constructed candle with exact timestamp
+		testCandle := candle.Candle{
+			Symbol:    "LTC-USDT",
+			Timeframe: "1h",
+			Timestamp: exactTime,
+			Open:      50.0,
+			High:      52.0,
+			Low:       49.0,
+			Close:     51.0,
+			Volume:    10.0,
+			Source:    "constructed",
+		}
+
+		err := db.SaveCandle(&testCandle)
+		require.NoError(t, err)
+
+		// Count with exact start and end time
+		count, err := db.GetConstructedCandleCount("LTC-USDT", "1h", exactTime, exactTime)
+		assert.NoError(t, err)
+		assert.Equal(t, 1, count)
+	})
+
+	// Test 5: Count constructed candles when only raw candles exist
+	t.Run("Count constructed when only raw candles exist", func(t *testing.T) {
+		// Insert only raw candles
+		candles := []candle.Candle{
+			{
+				Symbol:    "XRP-USDT",
+				Timeframe: "1h",
+				Timestamp: now,
+				Open:      0.25,
+				High:      0.26,
+				Low:       0.24,
+				Close:     0.255,
+				Volume:    1000.0,
+				Source:    "exchange1",
+			},
+			{
+				Symbol:    "XRP-USDT",
+				Timeframe: "1h",
+				Timestamp: now.Add(-1 * time.Hour),
+				Open:      0.24,
+				High:      0.25,
+				Low:       0.23,
+				Close:     0.245,
+				Volume:    900.0,
+				Source:    "exchange2",
+			},
+		}
+
+		err := db.SaveCandles(candles)
+		require.NoError(t, err)
+
+		// Count constructed candles (should be 0)
+		count, err := db.GetConstructedCandleCount("XRP-USDT", "1h", now.Add(-2*time.Hour), now.Add(1*time.Hour))
+		assert.NoError(t, err)
+		assert.Equal(t, 0, count)
+	})
+}
+
 func TestPostgresDB_UpdateCandle(t *testing.T) {
 	// Set up test database
 	testDB, cleanup := SetupTestDB(t)
@@ -2744,39 +3097,364 @@ func TestPostgresDB_UpdateCandle(t *testing.T) {
 	db, err := testDB.GetTestPostgresDB()
 	require.NoError(t, err)
 
-	// Create and save a test candle
 	now := time.Now().UTC().Truncate(time.Minute)
-	c := candle.Candle{
-		Symbol:    "BTC-USDT",
-		Timeframe: "1m",
-		Timestamp: now,
-		Open:      10000.0,
-		High:      10100.0,
-		Low:       9900.0,
-		Close:     10050.0,
-		Volume:    1.5,
-		Source:    "test",
-	}
 
-	err = db.SaveCandle(&c)
-	assert.NoError(t, err)
+	// Test 1: Update existing candle
+	t.Run("Update existing candle", func(t *testing.T) {
+		// Insert initial candle
+		initialCandle := candle.Candle{
+			Symbol:    "BTC-USDT",
+			Timeframe: "1m",
+			Timestamp: now,
+			Open:      10000.0,
+			High:      10100.0,
+			Low:       9900.0,
+			Close:     10050.0,
+			Volume:    1.5,
+			Source:    "test",
+		}
 
-	// Update the candle
-	c.High = 10200.0
-	c.Low = 9800.0
-	c.Close = 10150.0
-	c.Volume = 2.5
+		err := db.SaveCandle(&initialCandle)
+		require.NoError(t, err)
 
-	err = db.UpdateCandle(c)
-	assert.NoError(t, err)
+		// Create updated candle with same key but different values
+		updatedCandle := candle.Candle{
+			Symbol:    "BTC-USDT",
+			Timeframe: "1m",
+			Timestamp: now,
+			Open:      10010.0, // Changed
+			High:      10200.0, // Changed
+			Low:       9950.0,  // Changed
+			Close:     10150.0, // Changed
+			Volume:    2.5,     // Changed
+			Source:    "test",
+		}
 
-	// Retrieve and verify the updated candle
-	updated, err := db.GetCandle(c.Symbol, c.Timeframe, c.Timestamp, c.Source)
-	assert.NoError(t, err)
-	assert.NotNil(t, updated)
-	assert.Equal(t, 10000.0, updated.Open)  // Open should remain the same
-	assert.Equal(t, 10200.0, updated.High)  // Updated value
-	assert.Equal(t, 9800.0, updated.Low)    // Updated value
-	assert.Equal(t, 10150.0, updated.Close) // Updated value
-	assert.Equal(t, 2.5, updated.Volume)    // Updated value
+		// Update the candle
+		err = db.UpdateCandle(updatedCandle)
+		assert.NoError(t, err)
+
+		// Verify candle was updated
+		retrievedCandle, err := db.GetCandle("BTC-USDT", "1m", now, "test")
+		require.NoError(t, err)
+		require.NotNil(t, retrievedCandle)
+
+		assert.Equal(t, updatedCandle.Open, retrievedCandle.Open)
+		assert.Equal(t, updatedCandle.High, retrievedCandle.High)
+		assert.Equal(t, updatedCandle.Low, retrievedCandle.Low)
+		assert.Equal(t, updatedCandle.Close, retrievedCandle.Close)
+		assert.Equal(t, updatedCandle.Volume, retrievedCandle.Volume)
+	})
+
+	// Test 2: Update non-existent candle
+	t.Run("Update non-existent candle", func(t *testing.T) {
+		nonExistentCandle := candle.Candle{
+			Symbol:    "NON-EXISTENT",
+			Timeframe: "1m",
+			Timestamp: now,
+			Open:      100.0,
+			High:      110.0,
+			Low:       90.0,
+			Close:     105.0,
+			Volume:    1.0,
+			Source:    "test",
+		}
+
+		// Try to update non-existent candle
+		err = db.UpdateCandle(nonExistentCandle)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "no candle found to update")
+	})
+
+	// Test 3: Update with invalid candle data
+	t.Run("Update with invalid candle data", func(t *testing.T) {
+		// Insert initial valid candle
+		initialCandle := candle.Candle{
+			Symbol:    "ETH-USDT",
+			Timeframe: "1m",
+			Timestamp: now,
+			Open:      300.0,
+			High:      310.0,
+			Low:       295.0,
+			Close:     305.0,
+			Volume:    10.0,
+			Source:    "test",
+		}
+
+		err := db.SaveCandle(&initialCandle)
+		require.NoError(t, err)
+
+		// Create invalid candle (negative price)
+		invalidCandle := candle.Candle{
+			Symbol:    "ETH-USDT",
+			Timeframe: "1m",
+			Timestamp: now,
+			Open:      -300.0, // Invalid negative price
+			High:      310.0,
+			Low:       295.0,
+			Close:     305.0,
+			Volume:    10.0,
+			Source:    "test",
+		}
+
+		// Try to update with invalid data
+		err = db.UpdateCandle(invalidCandle)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid candle for update")
+	})
+
+	// Test 4: Update with different source
+	t.Run("Update with different source", func(t *testing.T) {
+		// Insert initial candle with source1
+		initialCandle := candle.Candle{
+			Symbol:    "LTC-USDT",
+			Timeframe: "1m",
+			Timestamp: now,
+			Open:      50.0,
+			High:      52.0,
+			Low:       49.0,
+			Close:     51.0,
+			Volume:    100.0,
+			Source:    "source1",
+		}
+
+		err := db.SaveCandle(&initialCandle)
+		require.NoError(t, err)
+
+		// Create updated candle with source2 (different primary key)
+		updatedCandle := candle.Candle{
+			Symbol:    "LTC-USDT",
+			Timeframe: "1m",
+			Timestamp: now,
+			Open:      50.5,
+			High:      52.5,
+			Low:       49.5,
+			Close:     51.5,
+			Volume:    110.0,
+			Source:    "source2", // Different source
+		}
+
+		// Try to update - should fail as this is effectively a new candle
+		err = db.UpdateCandle(updatedCandle)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "no candle found to update")
+	})
+}
+
+func TestPostgresDB_UpdateCandles(t *testing.T) {
+	// Set up test database
+	testDB, cleanup := SetupTestDB(t)
+	defer cleanup()
+
+	// Create PostgresDB instance
+	db, err := testDB.GetTestPostgresDB()
+	require.NoError(t, err)
+
+	now := time.Now().UTC().Truncate(time.Minute)
+
+	// Test 1: Update multiple existing candles
+	t.Run("Update multiple existing candles", func(t *testing.T) {
+		// Insert initial candles
+		initialCandles := []candle.Candle{
+			{
+				Symbol:    "BTC-USDT",
+				Timeframe: "1m",
+				Timestamp: now.Add(-2 * time.Hour),
+				Open:      9900.0,
+				High:      10000.0,
+				Low:       9800.0,
+				Close:     10000.0,
+				Volume:    2.0,
+				Source:    "test",
+			},
+			{
+				Symbol:    "BTC-USDT",
+				Timeframe: "1m",
+				Timestamp: now.Add(-1 * time.Hour),
+				Open:      10000.0,
+				High:      10100.0,
+				Low:       9900.0,
+				Close:     10050.0,
+				Volume:    1.5,
+				Source:    "test",
+			},
+		}
+
+		err := db.SaveCandles(initialCandles)
+		require.NoError(t, err)
+
+		// Create updated candles
+		updatedCandles := []candle.Candle{
+			{
+				Symbol:    "BTC-USDT",
+				Timeframe: "1m",
+				Timestamp: now.Add(-2 * time.Hour),
+				Open:      9950.0,  // Changed
+				High:      10050.0, // Changed
+				Low:       9850.0,  // Changed
+				Close:     10025.0, // Changed
+				Volume:    2.2,     // Changed
+				Source:    "test",
+			},
+			{
+				Symbol:    "BTC-USDT",
+				Timeframe: "1m",
+				Timestamp: now.Add(-1 * time.Hour),
+				Open:      10050.0, // Changed
+				High:      10150.0, // Changed
+				Low:       9950.0,  // Changed
+				Close:     10100.0, // Changed
+				Volume:    1.7,     // Changed
+				Source:    "test",
+			},
+		}
+
+		// Update the candles
+		err = db.UpdateCandles(updatedCandles)
+		assert.NoError(t, err)
+
+		// Verify candles were updated
+		for _, updatedCandle := range updatedCandles {
+			retrievedCandle, err := db.GetCandle(updatedCandle.Symbol, updatedCandle.Timeframe, updatedCandle.Timestamp, updatedCandle.Source)
+			require.NoError(t, err)
+			require.NotNil(t, retrievedCandle)
+
+			assert.Equal(t, updatedCandle.Open, retrievedCandle.Open)
+			assert.Equal(t, updatedCandle.High, retrievedCandle.High)
+			assert.Equal(t, updatedCandle.Low, retrievedCandle.Low)
+			assert.Equal(t, updatedCandle.Close, retrievedCandle.Close)
+			assert.Equal(t, updatedCandle.Volume, retrievedCandle.Volume)
+		}
+	})
+
+	// Test 2: Update with empty slice
+	t.Run("Update with empty slice", func(t *testing.T) {
+		emptyCandles := []candle.Candle{}
+
+		// Update with empty slice
+		err = db.UpdateCandles(emptyCandles)
+		assert.NoError(t, err) // Should not error with empty slice
+	})
+
+	// Test 3: Update with non-existent candles
+	t.Run("Update with non-existent candles", func(t *testing.T) {
+		nonExistentCandles := []candle.Candle{
+			{
+				Symbol:    "NON-EXISTENT",
+				Timeframe: "1m",
+				Timestamp: now,
+				Open:      100.0,
+				High:      110.0,
+				Low:       90.0,
+				Close:     105.0,
+				Volume:    1.0,
+				Source:    "test",
+			},
+		}
+
+		// Try to update non-existent candles
+		err = db.UpdateCandles(nonExistentCandles)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "no candles were updated")
+	})
+
+	// Test 4: Update with mix of existing and non-existent candles
+	t.Run("Update with mix of existing and non-existent candles", func(t *testing.T) {
+		// Insert one candle
+		existingCandle := candle.Candle{
+			Symbol:    "ETH-USDT",
+			Timeframe: "1m",
+			Timestamp: now,
+			Open:      300.0,
+			High:      310.0,
+			Low:       295.0,
+			Close:     305.0,
+			Volume:    10.0,
+			Source:    "test",
+		}
+
+		err := db.SaveCandle(&existingCandle)
+		require.NoError(t, err)
+
+		// Create mix of existing and non-existent candles
+		mixedCandles := []candle.Candle{
+			{
+				Symbol:    "ETH-USDT",
+				Timeframe: "1m",
+				Timestamp: now,
+				Open:      305.0, // Changed
+				High:      315.0, // Changed
+				Low:       300.0, // Changed
+				Close:     310.0, // Changed
+				Volume:    12.0,  // Changed
+				Source:    "test",
+			},
+			{
+				Symbol:    "NON-EXISTENT",
+				Timeframe: "1m",
+				Timestamp: now,
+				Open:      100.0,
+				High:      110.0,
+				Low:       90.0,
+				Close:     105.0,
+				Volume:    1.0,
+				Source:    "test",
+			},
+		}
+
+		// Try to update mixed candles
+		// This should succeed because at least one candle was updated
+		err = db.UpdateCandles(mixedCandles)
+		assert.NoError(t, err)
+
+		// Verify the existing candle was updated
+		retrievedCandle, err := db.GetCandle("ETH-USDT", "1m", now, "test")
+		require.NoError(t, err)
+		require.NotNil(t, retrievedCandle)
+
+		assert.Equal(t, 305.0, retrievedCandle.Open)
+		assert.Equal(t, 315.0, retrievedCandle.High)
+		assert.Equal(t, 300.0, retrievedCandle.Low)
+		assert.Equal(t, 310.0, retrievedCandle.Close)
+		assert.Equal(t, 12.0, retrievedCandle.Volume)
+	})
+
+	// Test 5: Update with invalid candle data
+	t.Run("Update with invalid candle data", func(t *testing.T) {
+		// Insert valid candle
+		validCandle := candle.Candle{
+			Symbol:    "LTC-USDT",
+			Timeframe: "1m",
+			Timestamp: now,
+			Open:      50.0,
+			High:      52.0,
+			Low:       49.0,
+			Close:     51.0,
+			Volume:    100.0,
+			Source:    "test",
+		}
+
+		err := db.SaveCandle(&validCandle)
+		require.NoError(t, err)
+
+		// Try to update with invalid data
+		invalidCandles := []candle.Candle{
+			{
+				Symbol:    "LTC-USDT",
+				Timeframe: "1m",
+				Timestamp: now,
+				Open:      -50.0, // Invalid negative price
+				High:      52.0,
+				Low:       49.0,
+				Close:     51.0,
+				Volume:    100.0,
+				Source:    "test",
+			},
+		}
+
+		// Update should fail validation
+		err = db.UpdateCandles(invalidCandles)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid candle for update")
+	})
 }
