@@ -178,6 +178,9 @@ type Ingester interface {
 	GetLatestCandleFromCache(symbol, timeframe string) (*Candle, error)
 	GetCandlesFromDB(symbol, timeframe string, start, end time.Time) ([]Candle, error)
 	CleanupOldData(symbol, timeframe string, retentionDays int) error
+
+	// NOTE: Don't use.
+	AggregateToHigherTimeframes(c Candle) error
 }
 
 type DefaultAggregator struct {
@@ -384,7 +387,7 @@ func (ci *DefaultIngester) IngestCandle(c Candle) error {
 
 	// If this is a base timeframe (1m), aggregate to higher timeframes
 	if c.Timeframe == "1m" {
-		return ci.aggregateToHigherTimeframes(c)
+		return ci.AggregateToHigherTimeframes(c)
 	}
 
 	return nil
@@ -464,7 +467,7 @@ func (ci *DefaultIngester) IngestRaw1mCandles(candles []Candle) error {
 	return nil
 }
 
-func (ci *DefaultIngester) aggregateToHigherTimeframes(c Candle) error {
+func (ci *DefaultIngester) AggregateToHigherTimeframes(c Candle) error {
 	// Get all supported timeframes that are larger than 1m
 	higherTimeframes := GetAggregationTimeframes()
 

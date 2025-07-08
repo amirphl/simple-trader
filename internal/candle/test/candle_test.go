@@ -1456,3 +1456,621 @@ func TestDefaultIngester_IngestCandle(t *testing.T) {
 		mockAggregator.AssertNotCalled(t, "AggregateFrom1m")
 	})
 }
+
+func TestDefaultIngester_AggregateToHigherTimeframes(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Minute)
+
+	// Test 1: Basic aggregation with a single 1m candle
+	t.Run("Basic aggregation with a single 1m candle", func(t *testing.T) {
+		mockStorage := new(MockStorage)
+		mockAggregator := new(MockAggregator)
+
+		ingester := candle.NewCandleIngester(mockStorage, mockAggregator).(*candle.DefaultIngester)
+
+		testCandle := candle.Candle{
+			Symbol:    "BTC-USDT",
+			Timeframe: "1m",
+			Timestamp: now,
+			Open:      10000.0,
+			High:      10100.0,
+			Low:       9900.0,
+			Close:     10050.0,
+			Volume:    1.5,
+			Source:    "test",
+		}
+
+		// Mock 1-day bucket for aggregation
+		dayStart := now.Truncate(24 * time.Hour)
+		dayEnd := dayStart.Add(24 * time.Hour)
+
+		// Set up expectations for getting candles
+		mockStorage.On("GetCandles", "BTC-USDT", "1m", dayStart, dayEnd).Return([]candle.Candle{testCandle}, nil)
+
+		// Mock getting latest candles for each timeframe
+		for _, tf := range candle.GetAggregationTimeframes() {
+			mockStorage.On("GetLatestCandle", "BTC-USDT", tf).Return((*candle.Candle)(nil), nil)
+		}
+
+		// Mock aggregation results for each timeframe
+		for _, tf := range candle.GetAggregationTimeframes() {
+			aggregatedCandle := candle.Candle{
+				Symbol:    "BTC-USDT",
+				Timeframe: tf,
+				Timestamp: now.Truncate(candle.GetTimeframeDuration(tf)),
+				Open:      testCandle.Open,
+				High:      testCandle.High,
+				Low:       testCandle.Low,
+				Close:     testCandle.Close,
+				Volume:    testCandle.Volume,
+				Source:    "constructed",
+			}
+
+			mockAggregator.On("AggregateFrom1m", mock.Anything, tf).Return([]candle.Candle{aggregatedCandle}, nil).Once()
+		}
+
+		// Mock saving constructed candles
+		mockStorage.On("SaveConstructedCandles", mock.Anything).Return(nil)
+
+		// Execute
+		err := ingester.AggregateToHigherTimeframes(testCandle)
+
+		// Verify
+		assert.NoError(t, err)
+		mockStorage.AssertExpectations(t)
+		mockAggregator.AssertExpectations(t)
+	})
+
+	// Test 2: Error getting 1m candles
+	t.Run("Error getting 1m candles", func(t *testing.T) {
+		mockStorage := new(MockStorage)
+		mockAggregator := new(MockAggregator)
+
+		ingester := candle.NewCandleIngester(mockStorage, mockAggregator).(*candle.DefaultIngester)
+
+		testCandle := candle.Candle{
+			Symbol:    "BTC-USDT",
+			Timeframe: "1m",
+			Timestamp: now,
+			Open:      10000.0,
+			High:      10100.0,
+			Low:       9900.0,
+			Close:     10050.0,
+			Volume:    1.5,
+			Source:    "test",
+		}
+
+		// Mock 1-day bucket for aggregation
+		dayStart := now.Truncate(24 * time.Hour)
+		dayEnd := dayStart.Add(24 * time.Hour)
+
+		// Mock error when getting candles
+		mockStorage.On("GetCandles", "BTC-USDT", "1m", dayStart, dayEnd).Return([]candle.Candle{}, errors.New("database error"))
+
+		// Execute
+		err := ingester.AggregateToHigherTimeframes(testCandle)
+
+		// Verify
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to get 1m candles")
+		mockStorage.AssertExpectations(t)
+	})
+
+	// Test 3: No 1m candles found
+	t.Run("No 1m candles found", func(t *testing.T) {
+		mockStorage := new(MockStorage)
+		mockAggregator := new(MockAggregator)
+
+		ingester := candle.NewCandleIngester(mockStorage, mockAggregator).(*candle.DefaultIngester)
+
+		testCandle := candle.Candle{
+			Symbol:    "BTC-USDT",
+			Timeframe: "1m",
+			Timestamp: now,
+			Open:      10000.0,
+			High:      10100.0,
+			Low:       9900.0,
+			Close:     10050.0,
+			Volume:    1.5,
+			Source:    "test",
+		}
+
+		// Mock 1-day bucket for aggregation
+		dayStart := now.Truncate(24 * time.Hour)
+		dayEnd := dayStart.Add(24 * time.Hour)
+
+		// Return empty slice (no candles found)
+		mockStorage.On("GetCandles", "BTC-USDT", "1m", dayStart, dayEnd).Return([]candle.Candle{}, nil)
+
+		// Execute
+		err := ingester.AggregateToHigherTimeframes(testCandle)
+
+		// Verify
+		assert.NoError(t, err) // Should not error, just return
+		mockStorage.AssertExpectations(t)
+		mockAggregator.AssertNotCalled(t, "AggregateFrom1m")
+	})
+
+	// Test 4: Error getting latest candle
+	t.Run("Error getting latest candle", func(t *testing.T) {
+		mockStorage := new(MockStorage)
+		mockAggregator := new(MockAggregator)
+
+		ingester := candle.NewCandleIngester(mockStorage, mockAggregator).(*candle.DefaultIngester)
+
+		testCandle := candle.Candle{
+			Symbol:    "BTC-USDT",
+			Timeframe: "1m",
+			Timestamp: now,
+			Open:      10000.0,
+			High:      10100.0,
+			Low:       9900.0,
+			Close:     10050.0,
+			Volume:    1.5,
+			Source:    "test",
+		}
+
+		// Mock 1-day bucket for aggregation
+		dayStart := now.Truncate(24 * time.Hour)
+		dayEnd := dayStart.Add(24 * time.Hour)
+
+		// Set up expectations for getting candles
+		mockStorage.On("GetCandles", "BTC-USDT", "1m", dayStart, dayEnd).Return([]candle.Candle{testCandle}, nil)
+
+		// Mock error when getting latest candle for 5m timeframe
+		mockStorage.On("GetLatestCandle", "BTC-USDT", "5m").Return((*candle.Candle)(nil), errors.New("database error"))
+
+		// Execute
+		err := ingester.AggregateToHigherTimeframes(testCandle)
+
+		// Verify
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to get latest 5m candle")
+		mockStorage.AssertExpectations(t)
+	})
+
+	// Test 5: Error in aggregation
+	t.Run("Error in aggregation", func(t *testing.T) {
+		mockStorage := new(MockStorage)
+		mockAggregator := new(MockAggregator)
+
+		ingester := candle.NewCandleIngester(mockStorage, mockAggregator).(*candle.DefaultIngester)
+
+		testCandle := candle.Candle{
+			Symbol:    "BTC-USDT",
+			Timeframe: "1m",
+			Timestamp: now,
+			Open:      10000.0,
+			High:      10100.0,
+			Low:       9900.0,
+			Close:     10050.0,
+			Volume:    1.5,
+			Source:    "test",
+		}
+
+		// Mock 1-day bucket for aggregation
+		dayStart := now.Truncate(24 * time.Hour)
+		dayEnd := dayStart.Add(24 * time.Hour)
+
+		// Set up expectations for getting candles
+		mockStorage.On("GetCandles", "BTC-USDT", "1m", dayStart, dayEnd).Return([]candle.Candle{testCandle}, nil)
+
+		// Mock getting latest candles for each timeframe
+		for _, tf := range candle.GetAggregationTimeframes() {
+			mockStorage.On("GetLatestCandle", "BTC-USDT", tf).Return((*candle.Candle)(nil), nil)
+		}
+
+		// Mock aggregation error for 5m timeframe
+		mockAggregator.On("AggregateFrom1m", mock.Anything, "5m").Return([]candle.Candle{}, errors.New("aggregation error")).Once()
+
+		// Execute
+		err := ingester.AggregateToHigherTimeframes(testCandle)
+
+		// Verify
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to aggregate to 5m")
+		mockStorage.AssertExpectations(t)
+		mockAggregator.AssertExpectations(t)
+	})
+
+	// Test 6: Error saving constructed candles
+	t.Run("Error saving constructed candles", func(t *testing.T) {
+		mockStorage := new(MockStorage)
+		mockAggregator := new(MockAggregator)
+
+		ingester := candle.NewCandleIngester(mockStorage, mockAggregator).(*candle.DefaultIngester)
+
+		testCandle := candle.Candle{
+			Symbol:    "BTC-USDT",
+			Timeframe: "1m",
+			Timestamp: now,
+			Open:      10000.0,
+			High:      10100.0,
+			Low:       9900.0,
+			Close:     10050.0,
+			Volume:    1.5,
+			Source:    "test",
+		}
+
+		// Mock 1-day bucket for aggregation
+		dayStart := now.Truncate(24 * time.Hour)
+		dayEnd := dayStart.Add(24 * time.Hour)
+
+		// Set up expectations for getting candles
+		mockStorage.On("GetCandles", "BTC-USDT", "1m", dayStart, dayEnd).Return([]candle.Candle{testCandle}, nil)
+
+		// Mock getting latest candles for each timeframe
+		for _, tf := range candle.GetAggregationTimeframes() {
+			mockStorage.On("GetLatestCandle", "BTC-USDT", tf).Return((*candle.Candle)(nil), nil)
+		}
+
+		// Mock aggregation results for each timeframe
+		for _, tf := range candle.GetAggregationTimeframes() {
+			aggregatedCandle := candle.Candle{
+				Symbol:    "BTC-USDT",
+				Timeframe: tf,
+				Timestamp: now.Truncate(candle.GetTimeframeDuration(tf)),
+				Open:      testCandle.Open,
+				High:      testCandle.High,
+				Low:       testCandle.Low,
+				Close:     testCandle.Close,
+				Volume:    testCandle.Volume,
+				Source:    "constructed",
+			}
+
+			mockAggregator.On("AggregateFrom1m", mock.Anything, tf).Return([]candle.Candle{aggregatedCandle}, nil).Once()
+		}
+
+		// Mock error when saving constructed candles
+		mockStorage.On("SaveConstructedCandles", mock.Anything).Return(errors.New("database error"))
+
+		// Execute
+		err := ingester.AggregateToHigherTimeframes(testCandle)
+
+		// Verify
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to save constructed candles")
+		mockStorage.AssertExpectations(t)
+		mockAggregator.AssertExpectations(t)
+	})
+
+	// Test 7: Error updating candles
+	t.Run("Error updating candles", func(t *testing.T) {
+		mockStorage := new(MockStorage)
+		mockAggregator := new(MockAggregator)
+
+		ingester := candle.NewCandleIngester(mockStorage, mockAggregator).(*candle.DefaultIngester)
+
+		testCandle := candle.Candle{
+			Symbol:    "BTC-USDT",
+			Timeframe: "1m",
+			Timestamp: now,
+			Open:      10000.0,
+			High:      10100.0,
+			Low:       9900.0,
+			Close:     10050.0,
+			Volume:    1.5,
+			Source:    "test",
+		}
+
+		// Mock 1-day bucket for aggregation
+		dayStart := now.Truncate(24 * time.Hour)
+		dayEnd := dayStart.Add(24 * time.Hour)
+
+		// Set up expectations for getting candles
+		mockStorage.On("GetCandles", "BTC-USDT", "1m", dayStart, dayEnd).Return([]candle.Candle{testCandle}, nil)
+
+		// For 5m timeframe, simulate an existing candle that needs updating
+		fiveMinStart := now.Truncate(5 * time.Minute)
+		existingFiveMinCandle := &candle.Candle{
+			Symbol:    "BTC-USDT",
+			Timeframe: "5m",
+			Timestamp: fiveMinStart,
+			Open:      9900.0,
+			High:      10000.0,
+			Low:       9800.0,
+			Close:     9950.0,
+			Volume:    1.0,
+			Source:    "constructed",
+		}
+
+		// Mock getting latest candles for each timeframe
+		for _, tf := range candle.GetAggregationTimeframes() {
+			if tf == "5m" {
+				mockStorage.On("GetLatestCandle", "BTC-USDT", tf).Return(existingFiveMinCandle, nil)
+			} else {
+				mockStorage.On("GetLatestCandle", "BTC-USDT", tf).Return((*candle.Candle)(nil), nil)
+			}
+		}
+
+		// Mock aggregation results for 5m timeframe (updating existing)
+		updatedFiveMinCandle := candle.Candle{
+			Symbol:    "BTC-USDT",
+			Timeframe: "5m",
+			Timestamp: fiveMinStart,
+			Open:      9900.0,
+			High:      10100.0,
+			Low:       9800.0,
+			Close:     10050.0,
+			Volume:    2.5,
+			Source:    "constructed",
+		}
+		mockAggregator.On("AggregateFrom1m", mock.Anything, "5m").Return([]candle.Candle{updatedFiveMinCandle}, nil)
+
+		// Mock for other timeframes (new candles)
+		for _, tf := range candle.GetAggregationTimeframes() {
+			if tf != "5m" {
+				aggregatedCandle := candle.Candle{
+					Symbol:    "BTC-USDT",
+					Timeframe: tf,
+					Timestamp: now.Truncate(candle.GetTimeframeDuration(tf)),
+					Open:      testCandle.Open,
+					High:      testCandle.High,
+					Low:       testCandle.Low,
+					Close:     testCandle.Close,
+					Volume:    testCandle.Volume,
+					Source:    "constructed",
+				}
+				mockAggregator.On("AggregateFrom1m", mock.Anything, tf).Return([]candle.Candle{aggregatedCandle}, nil)
+			}
+		}
+
+		// Mock error when updating candles
+		mockStorage.On("UpdateCandles", mock.Anything).Return(errors.New("database error"))
+
+		// Execute
+		err := ingester.AggregateToHigherTimeframes(testCandle)
+
+		// Verify
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to update candles")
+		mockStorage.AssertExpectations(t)
+		mockAggregator.AssertExpectations(t)
+	})
+
+	// Test 8: Complex scenario - mix of updates and new candles
+	t.Run("Complex scenario - mix of updates and new candles", func(t *testing.T) {
+		mockStorage := new(MockStorage)
+		mockAggregator := new(MockAggregator)
+
+		ingester := candle.NewCandleIngester(mockStorage, mockAggregator).(*candle.DefaultIngester)
+
+		// Create a candle at a specific time that will trigger both updates and new candles
+		// For example, a candle at 10:14:00 will:
+		// - Update existing 5m candle (10:10-10:15)
+		// - Update existing 15m candle (10:00-10:15)
+		// - Create new 30m candle (10:00-10:30)
+		// - Create new 1h candle (10:00-11:00)
+		specificTime := time.Date(2023, 5, 15, 10, 14, 0, 0, time.UTC)
+
+		testCandle := candle.Candle{
+			Symbol:    "BTC-USDT",
+			Timeframe: "1m",
+			Timestamp: specificTime,
+			Open:      10000.0,
+			High:      10100.0,
+			Low:       9900.0,
+			Close:     10050.0,
+			Volume:    1.5,
+			Source:    "test",
+		}
+
+		// Mock 1-day bucket for aggregation
+		dayStart := specificTime.Truncate(24 * time.Hour)
+		dayEnd := dayStart.Add(24 * time.Hour)
+
+		// Create multiple 1m candles for the day
+		oneMCandles := []candle.Candle{
+			// Previous candles in the 5m bucket
+			{
+				Symbol:    "BTC-USDT",
+				Timeframe: "1m",
+				Timestamp: specificTime.Add(-4 * time.Minute),
+				Open:      9800.0,
+				High:      9850.0,
+				Low:       9750.0,
+				Close:     9820.0,
+				Volume:    1.2,
+				Source:    "test",
+			},
+			{
+				Symbol:    "BTC-USDT",
+				Timeframe: "1m",
+				Timestamp: specificTime.Add(-3 * time.Minute),
+				Open:      9820.0,
+				High:      9900.0,
+				Low:       9800.0,
+				Close:     9880.0,
+				Volume:    1.3,
+				Source:    "test",
+			},
+			{
+				Symbol:    "BTC-USDT",
+				Timeframe: "1m",
+				Timestamp: specificTime.Add(-2 * time.Minute),
+				Open:      9880.0,
+				High:      9950.0,
+				Low:       9870.0,
+				Close:     9920.0,
+				Volume:    1.4,
+				Source:    "test",
+			},
+			{
+				Symbol:    "BTC-USDT",
+				Timeframe: "1m",
+				Timestamp: specificTime.Add(-1 * time.Minute),
+				Open:      9920.0,
+				High:      10000.0,
+				Low:       9900.0,
+				Close:     9980.0,
+				Volume:    1.5,
+				Source:    "test",
+			},
+			// Current candle
+			testCandle,
+		}
+
+		// Set up expectations for getting candles
+		mockStorage.On("GetCandles", "BTC-USDT", "1m", dayStart, dayEnd).Return(oneMCandles, nil)
+
+		// Set up existing candles for different timeframes
+		fiveMinStart := specificTime.Truncate(5 * time.Minute)
+		fifteenMinStart := specificTime.Truncate(15 * time.Minute)
+
+		// 5m and 15m candles exist and will be updated
+		existingFiveMinCandle := &candle.Candle{
+			Symbol:    "BTC-USDT",
+			Timeframe: "5m",
+			Timestamp: fiveMinStart,
+			Open:      9800.0,
+			High:      10000.0,
+			Low:       9750.0,
+			Close:     9980.0,
+			Volume:    5.4, // Sum of previous 4 candles
+			Source:    "constructed",
+		}
+
+		existingFifteenMinCandle := &candle.Candle{
+			Symbol:    "BTC-USDT",
+			Timeframe: "15m",
+			Timestamp: fifteenMinStart,
+			Open:      9500.0, // From earlier candles
+			High:      10000.0,
+			Low:       9400.0,
+			Close:     9980.0,
+			Volume:    15.0,
+			Source:    "constructed",
+		}
+
+		// Mock getting latest candles for each timeframe
+		for _, tf := range candle.GetAggregationTimeframes() {
+			switch tf {
+			case "5m":
+				mockStorage.On("GetLatestCandle", "BTC-USDT", tf).Return(existingFiveMinCandle, nil)
+			case "15m":
+				mockStorage.On("GetLatestCandle", "BTC-USDT", tf).Return(existingFifteenMinCandle, nil)
+			default:
+				mockStorage.On("GetLatestCandle", "BTC-USDT", tf).Return((*candle.Candle)(nil), nil)
+			}
+		}
+
+		// Mock aggregation results for each timeframe
+
+		// 5m - update existing
+		updatedFiveMinCandle := candle.Candle{
+			Symbol:    "BTC-USDT",
+			Timeframe: "5m",
+			Timestamp: fiveMinStart,
+			Open:      9800.0,  // Unchanged
+			High:      10100.0, // Updated from new candle
+			Low:       9750.0,  // Unchanged
+			Close:     10050.0, // Updated from new candle
+			Volume:    6.9,     // Updated with new candle
+			Source:    "constructed",
+		}
+		mockAggregator.On("AggregateFrom1m", mock.MatchedBy(func(candles []candle.Candle) bool {
+			return len(candles) > 0 && candles[0].Timestamp.Equal(specificTime.Add(-4*time.Minute))
+		}), "5m").Return([]candle.Candle{updatedFiveMinCandle}, nil)
+
+		// 15m - update existing
+		updatedFifteenMinCandle := candle.Candle{
+			Symbol:    "BTC-USDT",
+			Timeframe: "15m",
+			Timestamp: fifteenMinStart,
+			Open:      9500.0,  // Unchanged
+			High:      10100.0, // Updated from new candle
+			Low:       9400.0,  // Unchanged
+			Close:     10050.0, // Updated from new candle
+			Volume:    16.5,    // Updated with new candle
+			Source:    "constructed",
+		}
+		mockAggregator.On("AggregateFrom1m", mock.MatchedBy(func(candles []candle.Candle) bool {
+			return len(candles) > 0 && candles[0].Timestamp.After(fifteenMinStart.Add(-time.Minute))
+		}), "15m").Return([]candle.Candle{updatedFifteenMinCandle}, nil)
+
+		// 30m - new candle
+		thirtyMinCandle := candle.Candle{
+			Symbol:    "BTC-USDT",
+			Timeframe: "30m",
+			Timestamp: specificTime.Truncate(30 * time.Minute),
+			Open:      9400.0,  // From earlier candles
+			High:      10100.0, // Including new candle
+			Low:       9300.0,  // From earlier candles
+			Close:     10050.0, // From new candle
+			Volume:    25.0,    // Including new candle
+			Source:    "constructed",
+		}
+		mockAggregator.On("AggregateFrom1m", mock.Anything, "30m").Return([]candle.Candle{thirtyMinCandle}, nil)
+
+		// 1h - new candle
+		oneHourCandle := candle.Candle{
+			Symbol:    "BTC-USDT",
+			Timeframe: "1h",
+			Timestamp: specificTime.Truncate(time.Hour),
+			Open:      9200.0,  // From earlier candles
+			High:      10100.0, // Including new candle
+			Low:       9100.0,  // From earlier candles
+			Close:     10050.0, // From new candle
+			Volume:    45.0,    // Including new candle
+			Source:    "constructed",
+		}
+		mockAggregator.On("AggregateFrom1m", mock.Anything, "1h").Return([]candle.Candle{oneHourCandle}, nil)
+
+		// 4h - new candle
+		fourHourCandle := candle.Candle{
+			Symbol:    "BTC-USDT",
+			Timeframe: "4h",
+			Timestamp: specificTime.Truncate(4 * time.Hour),
+			Open:      8800.0,  // From earlier candles
+			High:      10100.0, // Including new candle
+			Low:       8700.0,  // From earlier candles
+			Close:     10050.0, // From new candle
+			Volume:    120.0,   // Including new candle
+			Source:    "constructed",
+		}
+		mockAggregator.On("AggregateFrom1m", mock.Anything, "4h").Return([]candle.Candle{fourHourCandle}, nil)
+
+		// 1d - new candle
+		oneDayCandle := candle.Candle{
+			Symbol:    "BTC-USDT",
+			Timeframe: "1d",
+			Timestamp: specificTime.Truncate(24 * time.Hour),
+			Open:      8500.0,  // From earlier candles
+			High:      10100.0, // Including new candle
+			Low:       8400.0,  // From earlier candles
+			Close:     10050.0, // From new candle
+			Volume:    350.0,   // Including new candle
+			Source:    "constructed",
+		}
+		mockAggregator.On("AggregateFrom1m", mock.Anything, "1d").Return([]candle.Candle{oneDayCandle}, nil)
+
+		// Mock updating and saving candles
+		mockStorage.On("UpdateCandles", mock.MatchedBy(func(candles []candle.Candle) bool {
+			if len(candles) != 2 {
+				return false
+			}
+			// Should contain 5m and 15m updates
+			return (candles[0].Timeframe == "5m" || candles[1].Timeframe == "5m") &&
+				(candles[0].Timeframe == "15m" || candles[1].Timeframe == "15m")
+		})).Return(nil)
+
+		mockStorage.On("SaveConstructedCandles", mock.MatchedBy(func(candles []candle.Candle) bool {
+			if len(candles) != 4 {
+				return false
+			}
+			// Should contain 30m, 1h, 4h, and 1d new candles
+			hasTimeframes := make(map[string]bool)
+			for _, c := range candles {
+				hasTimeframes[c.Timeframe] = true
+			}
+			return hasTimeframes["30m"] && hasTimeframes["1h"] && hasTimeframes["4h"] && hasTimeframes["1d"]
+		})).Return(nil)
+
+		// Execute
+		err := ingester.AggregateToHigherTimeframes(testCandle)
+
+		// Verify
+		assert.NoError(t, err)
+		mockStorage.AssertExpectations(t)
+		mockAggregator.AssertExpectations(t)
+	})
+}
