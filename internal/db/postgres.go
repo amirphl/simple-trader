@@ -53,6 +53,14 @@ func (p *PostgresDB) SaveCandles(candles []candle.Candle) error {
 		return nil
 	}
 
+	// Validate all candles first
+	for i, c := range candles {
+		if err := c.Validate(); err != nil {
+			return fmt.Errorf("invalid candle at index %d for %s %s at %s: %w",
+				i, c.Symbol, c.Timeframe, c.Timestamp, err)
+		}
+	}
+
 	tx, err := p.db.Begin()
 	if err != nil {
 		return err
@@ -63,26 +71,38 @@ func (p *PostgresDB) SaveCandles(candles []candle.Candle) error {
 		}
 	}()
 
-	stmt, err := tx.Prepare(`INSERT INTO candles (symbol, timeframe, timestamp, open, high, low, close, volume, source)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-		ON CONFLICT (symbol, timeframe, timestamp, source) DO UPDATE SET 
-			open=EXCLUDED.open, high=EXCLUDED.high, low=EXCLUDED.low, 
-			close=EXCLUDED.close, volume=EXCLUDED.volume`)
-	if err != nil {
-		return err
+	// Build the batch insert query
+	query := `INSERT INTO candles (symbol, timeframe, timestamp, open, high, low, close, volume, source)
+		VALUES `
+
+	args := []interface{}{}
+	paramCount := 0
+
+	for i, c := range candles {
+		// Add comma if not the first value
+		if i > 0 {
+			query += ","
+		}
+
+		// Add parameter placeholders for this candle - $1,$2,$3...
+		query += fmt.Sprintf("($%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d)",
+			paramCount+1, paramCount+2, paramCount+3, paramCount+4,
+			paramCount+5, paramCount+6, paramCount+7, paramCount+8, paramCount+9)
+
+		// Add the actual parameters
+		args = append(args, c.Symbol, c.Timeframe, c.Timestamp, c.Open, c.High, c.Low, c.Close, c.Volume, c.Source)
+		paramCount += 9
 	}
-	defer stmt.Close()
 
-	for _, c := range candles {
-		// Validate candle before saving
-		if err := c.Validate(); err != nil {
-			return fmt.Errorf("invalid candle for %s %s at %s: %w", c.Symbol, c.Timeframe, c.Timestamp, err)
-		}
+	// Add ON CONFLICT clause
+	query += ` ON CONFLICT (symbol, timeframe, timestamp, source) DO UPDATE SET 
+		open=EXCLUDED.open, high=EXCLUDED.high, low=EXCLUDED.low, 
+		close=EXCLUDED.close, volume=EXCLUDED.volume`
 
-		_, err := stmt.Exec(c.Symbol, c.Timeframe, c.Timestamp, c.Open, c.High, c.Low, c.Close, c.Volume, c.Source)
-		if err != nil {
-			return fmt.Errorf("failed to save candle for %s %s at %s: %w", c.Symbol, c.Timeframe, c.Timestamp, err)
-		}
+	// Execute the single batch statement
+	_, err = tx.Exec(query, args...)
+	if err != nil {
+		return fmt.Errorf("failed to batch save candles: %w", err)
 	}
 
 	return tx.Commit()
