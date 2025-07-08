@@ -65,4 +65,4 @@ CREATE INDEX IF NOT EXISTS idx_events_type_time ON events(type, time);
 CREATE TABLE IF NOT EXISTS state (
     key         VARCHAR(64) PRIMARY KEY,
     value       JSONB       NOT NULL
-); 
+);
