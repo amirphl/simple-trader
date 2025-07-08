@@ -92,7 +92,7 @@ func SetupTestDB(t *testing.T) (*TestDB, func()) {
 
 	// Check if TimescaleDB is available
 	var hasTimescaleDB bool
-	err = db.QueryRow("SELECT EXISTS(SELECT 1 FROM pg_available_extensions WHERE name = 'timescaledb')").Scan(&hasTimescaleDB)
+	err = db.QueryRow("SELECT 1 FROM pg_available_extensions WHERE name = 'timescaledb'").Scan(&hasTimescaleDB)
 	if err != nil {
 		t.Logf("Warning: Failed to check for TimescaleDB extension: %v", err)
 	}
