@@ -4,15 +4,18 @@ import (
 	"testing"
 	"time"
 
+	"github.com/amirphl/simple-trader/internal/candle"
+	"github.com/amirphl/simple-trader/internal/db"
+	dbconf "github.com/amirphl/simple-trader/internal/db/conf"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 // Helper function to create test candles
-func createTestCandles(symbol string, timeframe string, timestamps []time.Time, opens, highs, lows, closes, volumes []float64) []Candle {
-	candles := make([]Candle, len(timestamps))
+func createTestCandles(symbol string, timeframe string, timestamps []time.Time, opens, highs, lows, closes, volumes []float64) []candle.Candle {
+	candles := make([]candle.Candle, len(timestamps))
 	for i := range timestamps {
-		candles[i] = Candle{
+		candles[i] = candle.Candle{
 			Timestamp: timestamps[i],
 			Open:      opens[i],
 			High:      highs[i],
@@ -29,11 +32,11 @@ func createTestCandles(symbol string, timeframe string, timestamps []time.Time, 
 
 func TestDefaultAggregator_Aggregate(t *testing.T) {
 	// Setup
-	aggregator := &DefaultAggregator{}
+	aggregator := &candle.DefaultAggregator{}
 	now := time.Now().Truncate(time.Minute)
 
 	t.Run("Empty candles", func(t *testing.T) {
-		result, err := aggregator.Aggregate([]Candle{}, "5m")
+		result, err := aggregator.Aggregate([]candle.Candle{}, "5m")
 		assert.Nil(t, err)
 		assert.Nil(t, result)
 	})
@@ -54,7 +57,7 @@ func TestDefaultAggregator_Aggregate(t *testing.T) {
 	})
 
 	t.Run("Invalid candle", func(t *testing.T) {
-		invalidCandle := Candle{
+		invalidCandle := candle.Candle{
 			Timestamp: now,
 			Open:      10000,
 			High:      9900, // High < Low (invalid)
@@ -65,7 +68,7 @@ func TestDefaultAggregator_Aggregate(t *testing.T) {
 			Timeframe: "1m",
 		}
 
-		result, err := aggregator.Aggregate([]Candle{invalidCandle}, "5m")
+		result, err := aggregator.Aggregate([]candle.Candle{invalidCandle}, "5m")
 		assert.Error(t, err)
 		assert.Nil(t, result)
 	})
@@ -84,7 +87,7 @@ func TestDefaultAggregator_Aggregate(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, result, 1)
 
-		expected := Candle{
+		expected := candle.Candle{
 			Timestamp: now.Truncate(5 * time.Minute),
 			Open:      10000,
 			High:      10100,
@@ -119,7 +122,7 @@ func TestDefaultAggregator_Aggregate(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, result, 1)
 
-		expected := Candle{
+		expected := candle.Candle{
 			Timestamp: baseTime,
 			Open:      10000,
 			High:      10150, // Max of all highs
@@ -156,7 +159,7 @@ func TestDefaultAggregator_Aggregate(t *testing.T) {
 		require.Len(t, result, 2)
 
 		// First bucket
-		expected1 := Candle{
+		expected1 := candle.Candle{
 			Timestamp: baseTime,
 			Open:      10000,
 			High:      10150,
@@ -169,7 +172,7 @@ func TestDefaultAggregator_Aggregate(t *testing.T) {
 		}
 
 		// Second bucket
-		expected2 := Candle{
+		expected2 := candle.Candle{
 			Timestamp: baseTime.Add(5 * time.Minute),
 			Open:      10100,
 			High:      10250,
@@ -188,7 +191,7 @@ func TestDefaultAggregator_Aggregate(t *testing.T) {
 	t.Run("Unsorted input candles", func(t *testing.T) {
 		// Create unsorted candles
 		baseTime := now.Truncate(5 * time.Minute)
-		candles := []Candle{
+		candles := []candle.Candle{
 			{
 				Timestamp: baseTime.Add(2 * time.Minute),
 				Open:      10070,
@@ -228,7 +231,7 @@ func TestDefaultAggregator_Aggregate(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, result, 1)
 
-		expected := Candle{
+		expected := candle.Candle{
 			Timestamp: baseTime,
 			Open:      10000, // Should be from the earliest candle
 			High:      10150,
@@ -255,7 +258,7 @@ func TestDefaultAggregator_Aggregate(t *testing.T) {
 		closes := make([]float64, 60)
 		volumes := make([]float64, 60)
 
-		for i := 0; i < 60; i++ {
+		for i := range 60 {
 			timestamps[i] = baseTime.Add(time.Duration(i) * time.Minute)
 			opens[i] = 10000 + float64(i)
 			highs[i] = 10100 + float64(i)
@@ -270,7 +273,7 @@ func TestDefaultAggregator_Aggregate(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, result, 1)
 
-		expected := Candle{
+		expected := candle.Candle{
 			Timestamp: baseTime,
 			Open:      10000,                       // First candle's open
 			High:      10159,                       // Max high
@@ -288,11 +291,11 @@ func TestDefaultAggregator_Aggregate(t *testing.T) {
 
 func TestDefaultAggregator_AggregateFrom1m(t *testing.T) {
 	// Setup
-	aggregator := &DefaultAggregator{}
+	aggregator := &candle.DefaultAggregator{}
 	now := time.Now().Truncate(time.Minute)
 
 	t.Run("Empty candles", func(t *testing.T) {
-		result, err := aggregator.AggregateFrom1m([]Candle{}, "5m")
+		result, err := aggregator.AggregateFrom1m([]candle.Candle{}, "5m")
 		assert.Nil(t, err)
 		assert.Nil(t, result)
 	})
@@ -332,7 +335,7 @@ func TestDefaultAggregator_AggregateFrom1m(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, result, 1)
 
-		expected := Candle{
+		expected := candle.Candle{
 			Timestamp: baseTime,
 			Open:      10000,
 			High:      10150,
@@ -360,7 +363,7 @@ func TestDefaultAggregator_AggregateFrom1m(t *testing.T) {
 			[]float64{1.5, 2.0},
 		)
 
-		invalidCandle := Candle{
+		invalidCandle := candle.Candle{
 			Timestamp: baseTime.Add(2 * time.Minute),
 			Open:      10070,
 			High:      10120,
@@ -383,12 +386,12 @@ func TestDefaultAggregator_AggregateFrom1m(t *testing.T) {
 
 func TestDefaultAggregator_AggregateIncremental(t *testing.T) {
 	// Setup
-	aggregator := &DefaultAggregator{}
+	aggregator := &candle.DefaultAggregator{}
 	now := time.Now().Truncate(time.Minute)
 
 	t.Run("Invalid new candle", func(t *testing.T) {
-		existingCandles := []Candle{}
-		invalidCandle := Candle{
+		existingCandles := []candle.Candle{}
+		invalidCandle := candle.Candle{
 			Timestamp: now,
 			Open:      10000,
 			High:      9900, // High < Low (invalid)
@@ -405,8 +408,8 @@ func TestDefaultAggregator_AggregateIncremental(t *testing.T) {
 	})
 
 	t.Run("Invalid timeframe", func(t *testing.T) {
-		existingCandles := []Candle{}
-		newCandle := Candle{
+		existingCandles := []candle.Candle{}
+		newCandle := candle.Candle{
 			Timestamp: now,
 			Open:      10000,
 			High:      10100,
@@ -423,8 +426,8 @@ func TestDefaultAggregator_AggregateIncremental(t *testing.T) {
 	})
 
 	t.Run("Empty existing candles", func(t *testing.T) {
-		existingCandles := []Candle{}
-		newCandle := Candle{
+		existingCandles := []candle.Candle{}
+		newCandle := candle.Candle{
 			Timestamp: now,
 			Open:      10000,
 			High:      10100,
@@ -439,7 +442,7 @@ func TestDefaultAggregator_AggregateIncremental(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, result, 1)
 
-		expected := Candle{
+		expected := candle.Candle{
 			Timestamp: now.Truncate(5 * time.Minute),
 			Open:      10000,
 			High:      10100,
@@ -456,7 +459,7 @@ func TestDefaultAggregator_AggregateIncremental(t *testing.T) {
 
 	t.Run("Update existing bucket", func(t *testing.T) {
 		baseTime := now.Truncate(5 * time.Minute)
-		existingCandles := []Candle{
+		existingCandles := []candle.Candle{
 			{
 				Timestamp: baseTime,
 				Open:      10000,
@@ -471,7 +474,7 @@ func TestDefaultAggregator_AggregateIncremental(t *testing.T) {
 		}
 
 		// New candle in the same bucket
-		newCandle := Candle{
+		newCandle := candle.Candle{
 			Timestamp: baseTime.Add(2 * time.Minute),
 			Open:      10060,
 			High:      10200, // Higher than existing
@@ -487,7 +490,7 @@ func TestDefaultAggregator_AggregateIncremental(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, result, 1)
 
-		expected := Candle{
+		expected := candle.Candle{
 			Timestamp: baseTime,
 			Open:      10000, // Original open
 			High:      10200, // New high
@@ -504,7 +507,7 @@ func TestDefaultAggregator_AggregateIncremental(t *testing.T) {
 
 	t.Run("Add new bucket", func(t *testing.T) {
 		baseTime := now.Truncate(5 * time.Minute)
-		existingCandles := []Candle{
+		existingCandles := []candle.Candle{
 			{
 				Timestamp: baseTime,
 				Open:      10000,
@@ -519,7 +522,7 @@ func TestDefaultAggregator_AggregateIncremental(t *testing.T) {
 		}
 
 		// New candle in a different bucket
-		newCandle := Candle{
+		newCandle := candle.Candle{
 			Timestamp: baseTime.Add(5 * time.Minute), // Next 5m bucket
 			Open:      10060,
 			High:      10200,
@@ -539,7 +542,7 @@ func TestDefaultAggregator_AggregateIncremental(t *testing.T) {
 		assert.Equal(t, existingCandles[0], result[0])
 
 		// Second candle should be new
-		expected := Candle{
+		expected := candle.Candle{
 			Timestamp: baseTime.Add(5 * time.Minute),
 			Open:      10060,
 			High:      10200,
@@ -556,7 +559,7 @@ func TestDefaultAggregator_AggregateIncremental(t *testing.T) {
 
 	t.Run("Multiple existing buckets", func(t *testing.T) {
 		baseTime := now.Truncate(5 * time.Minute)
-		existingCandles := []Candle{
+		existingCandles := []candle.Candle{
 			{
 				Timestamp: baseTime,
 				Open:      10000,
@@ -582,7 +585,7 @@ func TestDefaultAggregator_AggregateIncremental(t *testing.T) {
 		}
 
 		// New candle updating the second bucket
-		newCandle := Candle{
+		newCandle := candle.Candle{
 			Timestamp: baseTime.Add(7 * time.Minute),
 			Open:      10150,
 			High:      10300,
@@ -602,7 +605,7 @@ func TestDefaultAggregator_AggregateIncremental(t *testing.T) {
 		assert.Equal(t, existingCandles[0], result[0])
 
 		// Second candle should be updated
-		expected := Candle{
+		expected := candle.Candle{
 			Timestamp: baseTime.Add(5 * time.Minute),
 			Open:      10060,
 			High:      10300, // Updated
@@ -619,7 +622,7 @@ func TestDefaultAggregator_AggregateIncremental(t *testing.T) {
 
 	t.Run("Unsorted existing candles", func(t *testing.T) {
 		baseTime := now.Truncate(5 * time.Minute)
-		existingCandles := []Candle{
+		existingCandles := []candle.Candle{
 			{
 				Timestamp: baseTime.Add(5 * time.Minute),
 				Open:      10060,
@@ -645,7 +648,7 @@ func TestDefaultAggregator_AggregateIncremental(t *testing.T) {
 		}
 
 		// New candle for a new bucket
-		newCandle := Candle{
+		newCandle := candle.Candle{
 			Timestamp: baseTime.Add(10 * time.Minute),
 			Open:      10150,
 			High:      10300,
@@ -666,7 +669,7 @@ func TestDefaultAggregator_AggregateIncremental(t *testing.T) {
 		assert.True(t, result[1].Timestamp.Before(result[2].Timestamp))
 
 		// New candle should be the last one
-		expected := Candle{
+		expected := candle.Candle{
 			Timestamp: baseTime.Add(10 * time.Minute),
 			Open:      10150,
 			High:      10300,
@@ -682,8 +685,8 @@ func TestDefaultAggregator_AggregateIncremental(t *testing.T) {
 	})
 
 	t.Run("Zero volume candle", func(t *testing.T) {
-		existingCandles := []Candle{}
-		newCandle := Candle{
+		existingCandles := []candle.Candle{}
+		newCandle := candle.Candle{
 			Timestamp: now,
 			Open:      10000,
 			High:      10100,
@@ -699,7 +702,7 @@ func TestDefaultAggregator_AggregateIncremental(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, result, 1)
 
-		expected := Candle{
+		expected := candle.Candle{
 			Timestamp: now.Truncate(5 * time.Minute),
 			Open:      10000,
 			High:      10100,
@@ -712,5 +715,199 @@ func TestDefaultAggregator_AggregateIncremental(t *testing.T) {
 		}
 
 		assert.Equal(t, expected, result[0])
+	})
+}
+
+func TestDefaultAggregator_Aggregate1mTimeRange(t *testing.T) {
+	// Set up test database
+	cfg, cleanup := dbconf.NewTestConfig(t)
+	defer cleanup()
+
+	// Create PostgresDB instance
+	db, err := db.New(*cfg)
+	require.NoError(t, err)
+
+	// Create aggregator
+	aggregator := &candle.DefaultAggregator{}
+
+	// Define test time range
+	now := time.Now().UTC().Truncate(time.Hour)
+	start := now.Add(-60 * time.Minute)
+	end := now
+
+	// Test 1: Basic aggregation with valid data
+	t.Run("Basic aggregation with valid data", func(t *testing.T) {
+		// Insert 60 1-minute candles
+		var oneMinCandles []candle.Candle
+		for i := range 60 {
+			c := candle.Candle{
+				Symbol:    "BTC-USDT",
+				Timeframe: "1m",
+				Timestamp: start.Add(time.Duration(i) * time.Minute),
+				Open:      10000.0 + float64(i),
+				High:      10100.0 + float64(i),
+				Low:       9900.0 + float64(i),
+				Close:     10050.0 + float64(i),
+				Volume:    1.5 + float64(i)*0.1,
+				Source:    "test",
+			}
+			oneMinCandles = append(oneMinCandles, c)
+		}
+
+		err = db.SaveCandles(oneMinCandles)
+		require.NoError(t, err)
+
+		// Aggregate to 15m
+		aggregated, err := aggregator.Aggregate1mTimeRange("BTC-USDT", start, end, "15m", db)
+		require.NoError(t, err)
+
+		// Should get 4 15-minute candles
+		assert.Len(t, aggregated, 4)
+
+		// Verify first candle
+		assert.Equal(t, start, aggregated[0].Timestamp)
+		assert.Equal(t, oneMinCandles[0].Open, aggregated[0].Open)
+		assert.Equal(t, "constructed", aggregated[0].Source)
+		assert.Equal(t, "15m", aggregated[0].Timeframe)
+
+		// Verify high is the highest of the 15 candles
+		highestHigh := oneMinCandles[0].High
+		for i := range 15 {
+			if oneMinCandles[i].High > highestHigh {
+				highestHigh = oneMinCandles[i].High
+			}
+		}
+		assert.Equal(t, highestHigh, aggregated[0].High)
+	})
+
+	// Test 2: Empty time range
+	t.Run("Empty time range", func(t *testing.T) {
+		emptyStart := now.Add(10 * time.Minute)
+		emptyEnd := now.Add(5 * time.Minute) // End before start
+
+		aggregated, err := aggregator.Aggregate1mTimeRange("BTC-USDT", emptyStart, emptyEnd, "5m", db)
+		assert.NoError(t, err)
+		assert.Empty(t, aggregated)
+	})
+
+	// Test 3: No data in time range
+	t.Run("No data in time range", func(t *testing.T) {
+		futureStart := now.Add(time.Hour)
+		futureEnd := now.Add(2 * time.Hour)
+
+		aggregated, err := aggregator.Aggregate1mTimeRange("BTC-USDT", futureStart, futureEnd, "15m", db)
+		assert.NoError(t, err)
+		assert.Empty(t, aggregated)
+	})
+
+	// Test 4: Invalid timeframe
+	t.Run("Invalid timeframe", func(t *testing.T) {
+		_, err := aggregator.Aggregate1mTimeRange("BTC-USDT", start, end, "2m", db)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid timeframe")
+	})
+
+	// Test 5: Non-existent symbol
+	t.Run("Non-existent symbol", func(t *testing.T) {
+		aggregated, err := aggregator.Aggregate1mTimeRange("NON-EXISTENT", start, end, "15m", db)
+		assert.NoError(t, err)
+		assert.Empty(t, aggregated)
+	})
+
+	// Test 6: Partial data in time range
+	t.Run("Partial data in time range", func(t *testing.T) {
+		partialStart := now.Add(-30 * time.Minute)
+
+		aggregated, err := aggregator.Aggregate1mTimeRange("BTC-USDT", partialStart, end, "15m", db)
+		require.NoError(t, err)
+
+		// Should get 2 15-minute candles
+		assert.Len(t, aggregated, 2)
+	})
+
+	// Test 7: Exact timeframe boundary
+	t.Run("Exact timeframe boundary", func(t *testing.T) {
+		// Create time range exactly matching a 15m boundary
+		boundaryStart := now.Truncate(15 * time.Minute)
+		boundaryEnd := boundaryStart.Add(15 * time.Minute)
+
+		// Insert 15 1-minute candles exactly in this range
+		var boundaryCandles []candle.Candle
+		for i := range 15 {
+			c := candle.Candle{
+				Symbol:    "BOUNDARY-TEST",
+				Timeframe: "1m",
+				Timestamp: boundaryStart.Add(time.Duration(i) * time.Minute),
+				Open:      1000.0 + float64(i),
+				High:      1100.0 + float64(i),
+				Low:       900.0 + float64(i),
+				Close:     1050.0 + float64(i),
+				Volume:    1.0,
+				Source:    "test",
+			}
+			boundaryCandles = append(boundaryCandles, c)
+		}
+
+		err = db.SaveCandles(boundaryCandles)
+		require.NoError(t, err)
+
+		aggregated, err := aggregator.Aggregate1mTimeRange("BOUNDARY-TEST", boundaryStart, boundaryEnd, "15m", db)
+		require.NoError(t, err)
+
+		// Should get exactly 1 candle
+		assert.Len(t, aggregated, 1)
+		assert.Equal(t, boundaryStart, aggregated[0].Timestamp)
+		assert.Equal(t, boundaryCandles[0].Open, aggregated[0].Open)
+		assert.Equal(t, boundaryCandles[14].Close, aggregated[0].Close)
+	})
+
+	// Test 8: Missing candles in the middle
+	t.Run("Missing candles in the middle", func(t *testing.T) {
+		// Create candles with a gap in the middle
+		var gappedCandles []candle.Candle
+		gapStart := now.Add(-45 * time.Minute).Truncate(time.Hour)
+
+		// First 15 minutes of candles
+		for i := range 15 {
+			c := candle.Candle{
+				Symbol:    "GAPPED-DATA",
+				Timeframe: "1m",
+				Timestamp: gapStart.Add(time.Duration(i) * time.Minute),
+				Open:      2000.0,
+				High:      2100.0,
+				Low:       1900.0,
+				Close:     2050.0,
+				Volume:    1.0,
+				Source:    "test",
+			}
+			gappedCandles = append(gappedCandles, c)
+		}
+
+		// Skip 15 minutes
+
+		// Last 15 minutes of candles
+		for i := 30; i < 45; i++ {
+			c := candle.Candle{
+				Symbol:    "GAPPED-DATA",
+				Timeframe: "1m",
+				Timestamp: gapStart.Add(time.Duration(i) * time.Minute),
+				Open:      3000.0,
+				High:      3100.0,
+				Low:       2900.0,
+				Close:     3050.0,
+				Volume:    1.0,
+				Source:    "test",
+			}
+			gappedCandles = append(gappedCandles, c)
+		}
+
+		err = db.SaveCandles(gappedCandles)
+		require.NoError(t, err)
+
+		aggregated, err := aggregator.Aggregate1mTimeRange("GAPPED-DATA", gapStart, gapStart.Add(45*time.Minute), "15m", db)
+		require.NoError(t, err)
+
+		// Should get 3 candles (one will be empty/missing)
+		assert.Len(t, aggregated, 2)
 	})
 }
