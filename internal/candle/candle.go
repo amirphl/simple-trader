@@ -1048,7 +1048,7 @@ func (ci *DefaultIngester) GetLatestCandleFromCache(symbol, timeframe string) (*
 	return candle, nil
 }
 
-// GetCandles retrieves candles from storage
+// GetCandlesFromDB retrieves candles from storage
 func (ci *DefaultIngester) GetCandlesFromDB(symbol, timeframe string, start, end time.Time) ([]Candle, error) {
 	return ci.storage.GetCandles(symbol, timeframe, start, end)
 }
