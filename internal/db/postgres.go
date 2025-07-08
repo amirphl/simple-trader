@@ -182,6 +182,7 @@ func (p *PostgresDB) GetCandles(symbol, timeframe string, start, end time.Time) 
 		if err := rows.Scan(&c.Timestamp, &c.Open, &c.High, &c.Low, &c.Close, &c.Volume, &c.Symbol, &c.Timeframe, &c.Source); err != nil {
 			return nil, fmt.Errorf("failed to scan candle: %w", err)
 		}
+		c.Timestamp = c.Timestamp.UTC()
 		candles = append(candles, c)
 	}
 
@@ -212,6 +213,7 @@ func (p *PostgresDB) GetCandlesV2(timeframe string, start, end time.Time) ([]can
 			&c.Symbol, &c.Timeframe, &c.Source); err != nil {
 			return nil, fmt.Errorf("failed to scan candle: %w", err)
 		}
+		c.Timestamp = c.Timestamp.UTC()
 		candles = append(candles, c)
 	}
 
@@ -249,6 +251,7 @@ func (p *PostgresDB) GetCandlesInRange(symbol, timeframe string, start, end time
 		if err := rows.Scan(&c.Timestamp, &c.Open, &c.High, &c.Low, &c.Close, &c.Volume, &c.Symbol, &c.Timeframe, &c.Source); err != nil {
 			return nil, fmt.Errorf("failed to scan candle: %w", err)
 		}
+		c.Timestamp = c.Timestamp.UTC()
 		candles = append(candles, c)
 	}
 
@@ -278,6 +281,7 @@ func (p *PostgresDB) GetConstructedCandles(symbol, timeframe string, start, end 
 		if err := rows.Scan(&c.Timestamp, &c.Open, &c.High, &c.Low, &c.Close, &c.Volume, &c.Symbol, &c.Timeframe, &c.Source); err != nil {
 			return nil, fmt.Errorf("failed to scan constructed candle: %w", err)
 		}
+		c.Timestamp = c.Timestamp.UTC()
 		candles = append(candles, c)
 	}
 
@@ -303,6 +307,7 @@ func (p *PostgresDB) GetRawCandles(symbol, timeframe string, start, end time.Tim
 		if err := rows.Scan(&c.Timestamp, &c.Open, &c.High, &c.Low, &c.Close, &c.Volume, &c.Symbol, &c.Timeframe, &c.Source); err != nil {
 			return nil, fmt.Errorf("failed to scan raw candle: %w", err)
 		}
+		c.Timestamp = c.Timestamp.UTC()
 		candles = append(candles, c)
 	}
 
@@ -325,6 +330,7 @@ func (p *PostgresDB) GetLatestCandle(symbol, timeframe string) (*candle.Candle, 
 		}
 		return nil, fmt.Errorf("failed to scan latest candle: %w", err)
 	}
+	c.Timestamp = c.Timestamp.UTC()
 	return &c, nil
 }
 
@@ -345,6 +351,7 @@ func (p *PostgresDB) GetLatestCandleInRange(symbol, timeframe string, start, end
 		}
 		return nil, fmt.Errorf("failed to scan latest candle in range: %w", err)
 	}
+	c.Timestamp = c.Timestamp.UTC()
 	return &c, nil
 }
 
@@ -364,6 +371,7 @@ func (p *PostgresDB) GetLatestConstructedCandle(symbol, timeframe string) (*cand
 		}
 		return nil, fmt.Errorf("failed to scan latest constructed candle: %w", err)
 	}
+	c.Timestamp = c.Timestamp.UTC()
 	return &c, nil
 }
 
@@ -391,16 +399,16 @@ func (p *PostgresDB) DeleteCandle(symbol, timeframe string, timestamp time.Time,
 
 // DeleteCandles removes old candles with optimized deletion
 func (p *PostgresDB) DeleteCandles(symbol, timeframe string, before time.Time) error {
-	result, err := p.db.Exec(`DELETE FROM candles WHERE symbol=$1 AND timeframe=$2 AND timestamp < $3`,
+	_, err := p.db.Exec(`DELETE FROM candles WHERE symbol=$1 AND timeframe=$2 AND timestamp < $3`,
 		symbol, timeframe, before)
 	if err != nil {
 		return fmt.Errorf("failed to delete candles: %w", err)
 	}
 
-	rowsAffected, _ := result.RowsAffected()
-	if rowsAffected > 0 {
-		fmt.Printf("Deleted %d old candles for %s %s\n", rowsAffected, symbol, timeframe)
-	}
+	// rowsAffected, _ := result.RowsAffected()
+	// if rowsAffected > 0 {
+	// 	fmt.Printf("Deleted %d old candles for %s %s\n", rowsAffected, symbol, timeframe)
+	// }
 
 	return nil
 }
@@ -425,16 +433,16 @@ func (p *PostgresDB) DeleteCandlesInRange(symbol, timeframe string, start, end t
 // DeleteConstructedCandles removes old constructed candles
 func (p *PostgresDB) DeleteConstructedCandles(symbol, timeframe string, before time.Time) error {
 	// TODO: TX
-	result, err := p.db.Exec(`DELETE FROM candles WHERE symbol=$1 AND timeframe=$2 AND source='constructed' AND timestamp < $3`,
+	_, err := p.db.Exec(`DELETE FROM candles WHERE symbol=$1 AND timeframe=$2 AND source='constructed' AND timestamp < $3`,
 		symbol, timeframe, before)
 	if err != nil {
 		return fmt.Errorf("failed to delete constructed candles: %w", err)
 	}
 
-	rowsAffected, _ := result.RowsAffected()
-	if rowsAffected > 0 {
-		fmt.Printf("Deleted %d old constructed candles for %s %s\n", rowsAffected, symbol, timeframe)
-	}
+	// rowsAffected, _ := result.RowsAffected()
+	// if rowsAffected > 0 {
+	// 	fmt.Printf("Deleted %d old constructed candles for %s %s\n", rowsAffected, symbol, timeframe)
+	// }
 
 	return nil
 }
@@ -940,5 +948,7 @@ func (p *PostgresDB) GetCandle(symbol, timeframe string, timestamp time.Time, so
 		}
 		return nil, fmt.Errorf("failed to scan candle: %w", err)
 	}
+	c.Timestamp = c.Timestamp.UTC()
+
 	return &c, nil
 }

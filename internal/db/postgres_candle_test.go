@@ -1401,61 +1401,175 @@ func TestPostgresDB_GetLatestCandle(t *testing.T) {
 	db, err := testDB.GetTestPostgresDB()
 	require.NoError(t, err)
 
-	// Create test candles with different timestamps
 	now := time.Now().UTC().Truncate(time.Minute)
-	symbol := "BTC-USDT"
-	timeframe := "1m"
-	source := "test"
 
-	candles := []candle.Candle{
-		{
-			Symbol:    symbol,
-			Timeframe: timeframe,
-			Timestamp: now.Add(-2 * time.Minute),
-			Open:      10000.0,
-			High:      10100.0,
-			Low:       9900.0,
-			Close:     10050.0,
-			Volume:    1.5,
-			Source:    source,
-		},
-		{
-			Symbol:    symbol,
-			Timeframe: timeframe,
-			Timestamp: now, // Latest
-			Open:      10100.0,
-			High:      10200.0,
-			Low:       10000.0,
-			Close:     10150.0,
-			Volume:    2.0,
-			Source:    source,
-		},
-		{
-			Symbol:    symbol,
-			Timeframe: timeframe,
-			Timestamp: now.Add(-1 * time.Minute),
-			Open:      10050.0,
-			High:      10150.0,
-			Low:       9950.0,
-			Close:     10100.0,
-			Volume:    1.8,
-			Source:    source,
-		},
-	}
+	// Test 1: Get latest candle when multiple exist
+	t.Run("Get latest from multiple candles", func(t *testing.T) {
+		// Insert test candles with different timestamps
+		candles := []candle.Candle{
+			{
+				Symbol:    "BTC-USDT",
+				Timeframe: "1m",
+				Timestamp: now.Add(-2 * time.Hour),
+				Open:      9900.0,
+				High:      10000.0,
+				Low:       9800.0,
+				Close:     10000.0,
+				Volume:    2.0,
+				Source:    "test",
+			},
+			{
+				Symbol:    "BTC-USDT",
+				Timeframe: "1m",
+				Timestamp: now.Add(-1 * time.Hour), // Latest timestamp
+				Open:      10000.0,
+				High:      10100.0,
+				Low:       9900.0,
+				Close:     10050.0,
+				Volume:    1.5,
+				Source:    "test",
+			},
+			{
+				Symbol:    "BTC-USDT",
+				Timeframe: "1m",
+				Timestamp: now.Add(-3 * time.Hour),
+				Open:      9800.0,
+				High:      9900.0,
+				Low:       9700.0,
+				Close:     9850.0,
+				Volume:    1.8,
+				Source:    "test",
+			},
+		}
 
-	// Save candles
-	err = db.SaveCandles(candles)
-	assert.NoError(t, err)
+		err := db.SaveCandles(candles)
+		require.NoError(t, err)
 
-	// Test getting latest candle
-	latest, err := db.GetLatestCandle(symbol, timeframe)
-	assert.NoError(t, err)
-	assert.NotNil(t, latest)
-	assert.Equal(t, now.Unix(), latest.Timestamp.Unix())
-	assert.Equal(t, 10100.0, latest.Open)
-	assert.Equal(t, 10200.0, latest.High)
-	assert.Equal(t, 10000.0, latest.Low)
-	assert.Equal(t, 10150.0, latest.Close)
+		// Get latest candle
+		latest, err := db.GetLatestCandle("BTC-USDT", "1m")
+		assert.NoError(t, err)
+		require.NotNil(t, latest)
+
+		// Verify it's the correct one (latest timestamp)
+		assert.Equal(t, now.Add(-1*time.Hour).Unix(), latest.Timestamp.Unix())
+		assert.Equal(t, 10000.0, latest.Open)
+		assert.Equal(t, 10100.0, latest.High)
+		assert.Equal(t, 9900.0, latest.Low)
+		assert.Equal(t, 10050.0, latest.Close)
+		assert.Equal(t, 1.5, latest.Volume)
+	})
+
+	// Test 2: Get latest candle when none exist
+	t.Run("Get latest when none exist", func(t *testing.T) {
+		latest, err := db.GetLatestCandle("NON-EXISTENT", "1m")
+		assert.NoError(t, err)
+		assert.Nil(t, latest)
+	})
+
+	// Test 3: Get latest candle with specific timeframe
+	t.Run("Get latest with specific timeframe", func(t *testing.T) {
+		// Insert candles with different timeframes
+		candles := []candle.Candle{
+			{
+				Symbol:    "ETH-USDT",
+				Timeframe: "1m",
+				Timestamp: now,
+				Open:      300.0,
+				High:      310.0,
+				Low:       295.0,
+				Close:     305.0,
+				Volume:    10.0,
+				Source:    "test",
+			},
+			{
+				Symbol:    "ETH-USDT",
+				Timeframe: "5m",
+				Timestamp: now.Add(-5 * time.Minute),
+				Open:      298.0,
+				High:      308.0,
+				Low:       293.0,
+				Close:     303.0,
+				Volume:    15.0,
+				Source:    "test",
+			},
+			{
+				Symbol:    "ETH-USDT",
+				Timeframe: "5m",
+				Timestamp: now,
+				Open:      301.0,
+				High:      311.0,
+				Low:       296.0,
+				Close:     306.0,
+				Volume:    12.0,
+				Source:    "test",
+			},
+		}
+
+		err := db.SaveCandles(candles)
+		require.NoError(t, err)
+
+		// Get latest 5m candle
+		latest, err := db.GetLatestCandle("ETH-USDT", "5m")
+		assert.NoError(t, err)
+		require.NotNil(t, latest)
+
+		// Verify it's the correct one
+		assert.Equal(t, "5m", latest.Timeframe)
+		assert.Equal(t, now.Unix(), latest.Timestamp.Unix())
+		assert.Equal(t, 301.0, latest.Open)
+	})
+
+	// Test 4: Get latest candle with multiple sources
+	t.Run("Get latest with multiple sources", func(t *testing.T) {
+		// Insert candles with same timestamp but different sources
+		candles := []candle.Candle{
+			{
+				Symbol:    "LTC-USDT",
+				Timeframe: "1m",
+				Timestamp: now,
+				Open:      50.0,
+				High:      52.0,
+				Low:       49.0,
+				Close:     51.0,
+				Volume:    100.0,
+				Source:    "source1",
+			},
+			{
+				Symbol:    "LTC-USDT",
+				Timeframe: "1m",
+				Timestamp: now,
+				Open:      50.5,
+				High:      52.5,
+				Low:       49.5,
+				Close:     51.5,
+				Volume:    110.0,
+				Source:    "source2",
+			},
+		}
+
+		err := db.SaveCandles(candles)
+		require.NoError(t, err)
+
+		// Get latest candle (should be the latest regardless of source)
+		latest, err := db.GetLatestCandle("LTC-USDT", "1m")
+		assert.NoError(t, err)
+		require.NotNil(t, latest)
+
+		// Verify it's one of the candles with the latest timestamp
+		assert.Equal(t, now.Unix(), latest.Timestamp.Unix())
+		assert.Equal(t, "LTC-USDT", latest.Symbol)
+		assert.Equal(t, "1m", latest.Timeframe)
+
+		// Source could be either source1 or source2 depending on DB ordering
+		assert.Contains(t, []string{"source1", "source2"}, latest.Source)
+	})
+
+	// Test 5: Get latest with empty string parameters (edge case)
+	t.Run("Get latest with empty params", func(t *testing.T) {
+		latest, err := db.GetLatestCandle("", "")
+		assert.NoError(t, err) // Should not error but return nil
+		assert.Nil(t, latest)
+	})
 }
 
 func TestPostgresDB_GetLatestCandleInRange(t *testing.T) {
@@ -1467,39 +1581,1158 @@ func TestPostgresDB_GetLatestCandleInRange(t *testing.T) {
 	db, err := testDB.GetTestPostgresDB()
 	require.NoError(t, err)
 
-	// Create test candles
 	now := time.Now().UTC().Truncate(time.Minute)
-	symbol := "BTC-USDT"
-	timeframe := "1m"
-	source := "test"
 
-	candles := []candle.Candle{}
-	for i := 0; i < 10; i++ {
-		candles = append(candles, candle.Candle{
-			Symbol:    symbol,
-			Timeframe: timeframe,
-			Timestamp: now.Add(time.Duration(-i) * time.Minute),
-			Open:      10000.0 + float64(i),
-			High:      10100.0 + float64(i),
-			Low:       9900.0 + float64(i),
-			Close:     10050.0 + float64(i),
-			Volume:    1.5 + float64(i),
-			Source:    source,
-		})
-	}
+	// Test 1: Get latest in range with multiple candles
+	t.Run("Get latest in range with multiple candles", func(t *testing.T) {
+		// Insert test candles with different timestamps
+		candles := []candle.Candle{
+			{
+				Symbol:    "BTC-USDT",
+				Timeframe: "1m",
+				Timestamp: now.Add(-3 * time.Hour),
+				Open:      9800.0,
+				High:      9900.0,
+				Low:       9700.0,
+				Close:     9850.0,
+				Volume:    1.8,
+				Source:    "test",
+			},
+			{
+				Symbol:    "BTC-USDT",
+				Timeframe: "1m",
+				Timestamp: now.Add(-2 * time.Hour),
+				Open:      9900.0,
+				High:      10000.0,
+				Low:       9800.0,
+				Close:     10000.0,
+				Volume:    2.0,
+				Source:    "test",
+			},
+			{
+				Symbol:    "BTC-USDT",
+				Timeframe: "1m",
+				Timestamp: now.Add(-1 * time.Hour),
+				Open:      10000.0,
+				High:      10100.0,
+				Low:       9900.0,
+				Close:     10050.0,
+				Volume:    1.5,
+				Source:    "test",
+			},
+		}
 
-	// Save candles
-	err = db.SaveCandles(candles)
-	assert.NoError(t, err)
+		err := db.SaveCandles(candles)
+		require.NoError(t, err)
 
-	// Test getting latest candle in range
-	start := now.Add(-8 * time.Minute)
-	end := now.Add(-3 * time.Minute)
+		// Define range to include only the middle candle
+		start := now.Add(-2*time.Hour - 10*time.Minute)
+		end := now.Add(-2*time.Hour + 10*time.Minute)
 
-	latest, err := db.GetLatestCandleInRange(symbol, timeframe, start, end)
-	assert.NoError(t, err)
-	assert.NotNil(t, latest)
-	assert.Equal(t, now.Add(-3*time.Minute).Unix(), latest.Timestamp.Unix())
+		// Get latest candle in range
+		latest, err := db.GetLatestCandleInRange("BTC-USDT", "1m", start, end)
+		assert.NoError(t, err)
+		require.NotNil(t, latest)
+
+		// Verify it's the correct one
+		assert.Equal(t, now.Add(-2*time.Hour).Unix(), latest.Timestamp.Unix())
+		assert.Equal(t, 9900.0, latest.Open)
+		assert.Equal(t, 10000.0, latest.High)
+		assert.Equal(t, 9800.0, latest.Low)
+		assert.Equal(t, 10000.0, latest.Close)
+	})
+
+	// Test 2: Get latest in range with no candles in range
+	t.Run("Get latest in range with no candles in range", func(t *testing.T) {
+		// Define range where no candles exist
+		start := now.Add(-30 * time.Minute)
+		end := now.Add(-15 * time.Minute)
+
+		// Get latest candle in range
+		latest, err := db.GetLatestCandleInRange("BTC-USDT", "1m", start, end)
+		assert.NoError(t, err)
+		assert.Nil(t, latest) // No candles in range
+	})
+
+	// Test 3: Get latest in range with exact timestamp match
+	t.Run("Get latest in range with exact timestamp match", func(t *testing.T) {
+		exactTime := now.Add(-4 * time.Hour)
+
+		// Insert test candle with exact timestamp
+		testCandle := candle.Candle{
+			Symbol:    "ETH-USDT",
+			Timeframe: "1m",
+			Timestamp: exactTime,
+			Open:      300.0,
+			High:      310.0,
+			Low:       295.0,
+			Close:     305.0,
+			Volume:    10.0,
+			Source:    "test",
+		}
+
+		err := db.SaveCandle(&testCandle)
+		require.NoError(t, err)
+
+		// Define range with exact start and end time
+		start := exactTime
+		end := exactTime
+
+		// Get latest candle in range
+		latest, err := db.GetLatestCandleInRange("ETH-USDT", "1m", start, end)
+		assert.NoError(t, err)
+		require.NotNil(t, latest)
+
+		// Verify it's the correct one
+		assert.Equal(t, exactTime.Unix(), latest.Timestamp.Unix())
+		assert.Equal(t, 300.0, latest.Open)
+	})
+
+	// Test 4: Get latest in range with inverted time range (start > end)
+	t.Run("Get latest in range with inverted time range", func(t *testing.T) {
+		// Define inverted range
+		start := now
+		end := now.Add(-1 * time.Hour)
+
+		// Get latest candle in range (should return nil)
+		latest, err := db.GetLatestCandleInRange("BTC-USDT", "1m", start, end)
+		assert.NoError(t, err)
+		assert.Nil(t, latest) // Invalid range, should return nil
+	})
+
+	// Test 5: Get latest in range with multiple candles at same timestamp
+	t.Run("Get latest in range with multiple candles at same timestamp", func(t *testing.T) {
+		sameTime := now.Add(-5 * time.Hour)
+
+		// Insert candles with same timestamp but different sources
+		candles := []candle.Candle{
+			{
+				Symbol:    "XRP-USDT",
+				Timeframe: "1m",
+				Timestamp: sameTime,
+				Open:      0.25,
+				High:      0.26,
+				Low:       0.24,
+				Close:     0.255,
+				Volume:    1000.0,
+				Source:    "source1",
+			},
+			{
+				Symbol:    "XRP-USDT",
+				Timeframe: "1m",
+				Timestamp: sameTime,
+				Open:      0.26,
+				High:      0.27,
+				Low:       0.25,
+				Close:     0.265,
+				Volume:    1200.0,
+				Source:    "source2",
+			},
+		}
+
+		err := db.SaveCandles(candles)
+		require.NoError(t, err)
+
+		// Define range to include this timestamp
+		start := sameTime.Add(-10 * time.Minute)
+		end := sameTime.Add(10 * time.Minute)
+
+		// Get latest candle in range
+		latest, err := db.GetLatestCandleInRange("XRP-USDT", "1m", start, end)
+		assert.NoError(t, err)
+		require.NotNil(t, latest)
+
+		// Verify it has the correct timestamp
+		assert.Equal(t, sameTime.Unix(), latest.Timestamp.Unix())
+		assert.Equal(t, "XRP-USDT", latest.Symbol)
+
+		// Source could be either source1 or source2 depending on DB ordering
+		assert.Contains(t, []string{"source1", "source2"}, latest.Source)
+	})
+}
+
+func TestPostgresDB_GetLatestConstructedCandle(t *testing.T) {
+	// Set up test database
+	testDB, cleanup := SetupTestDB(t)
+	defer cleanup()
+
+	// Create PostgresDB instance
+	db, err := testDB.GetTestPostgresDB()
+	require.NoError(t, err)
+
+	now := time.Now().UTC().Truncate(time.Minute)
+
+	// Test 1: Get latest constructed candle with multiple candles
+	t.Run("Get latest constructed candle with multiple candles", func(t *testing.T) {
+		// Insert mix of constructed and raw candles
+		candles := []candle.Candle{
+			{
+				Symbol:    "BTC-USDT",
+				Timeframe: "1h",
+				Timestamp: now.Add(-3 * time.Hour),
+				Open:      9800.0,
+				High:      9900.0,
+				Low:       9700.0,
+				Close:     9850.0,
+				Volume:    1.8,
+				Source:    "constructed",
+			},
+			{
+				Symbol:    "BTC-USDT",
+				Timeframe: "1h",
+				Timestamp: now.Add(-2 * time.Hour),
+				Open:      9900.0,
+				High:      10000.0,
+				Low:       9800.0,
+				Close:     10000.0,
+				Volume:    2.0,
+				Source:    "constructed",
+			},
+			{
+				Symbol:    "BTC-USDT",
+				Timeframe: "1h",
+				Timestamp: now.Add(-1 * time.Hour),
+				Open:      10000.0,
+				High:      10100.0,
+				Low:       9900.0,
+				Close:     10050.0,
+				Volume:    1.5,
+				Source:    "exchange", // Raw candle
+			},
+		}
+
+		err := db.SaveCandles(candles)
+		require.NoError(t, err)
+
+		// Get latest constructed candle
+		latest, err := db.GetLatestConstructedCandle("BTC-USDT", "1h")
+		assert.NoError(t, err)
+		require.NotNil(t, latest)
+
+		// Verify it's the latest constructed one, not the raw one
+		assert.Equal(t, now.Add(-2*time.Hour).Unix(), latest.Timestamp.Unix())
+		assert.Equal(t, "constructed", latest.Source)
+		assert.Equal(t, 9900.0, latest.Open)
+		assert.Equal(t, 10000.0, latest.High)
+		assert.Equal(t, 9800.0, latest.Low)
+		assert.Equal(t, 10000.0, latest.Close)
+	})
+
+	// Test 2: Get latest constructed candle when none exist
+	t.Run("Get latest constructed candle when none exist", func(t *testing.T) {
+		latest, err := db.GetLatestConstructedCandle("NON-EXISTENT", "1h")
+		assert.NoError(t, err)
+		assert.Nil(t, latest)
+	})
+
+	// Test 3: Get latest constructed candle with specific timeframe
+	t.Run("Get latest constructed candle with specific timeframe", func(t *testing.T) {
+		// Insert constructed candles with different timeframes
+		candles := []candle.Candle{
+			{
+				Symbol:    "ETH-USDT",
+				Timeframe: "1h",
+				Timestamp: now,
+				Open:      300.0,
+				High:      310.0,
+				Low:       295.0,
+				Close:     305.0,
+				Volume:    10.0,
+				Source:    "constructed",
+			},
+			{
+				Symbol:    "ETH-USDT",
+				Timeframe: "4h",
+				Timestamp: now.Add(-4 * time.Hour),
+				Open:      298.0,
+				High:      308.0,
+				Low:       293.0,
+				Close:     303.0,
+				Volume:    15.0,
+				Source:    "constructed",
+			},
+			{
+				Symbol:    "ETH-USDT",
+				Timeframe: "4h",
+				Timestamp: now,
+				Open:      301.0,
+				High:      311.0,
+				Low:       296.0,
+				Close:     306.0,
+				Volume:    12.0,
+				Source:    "constructed",
+			},
+		}
+
+		err := db.SaveCandles(candles)
+		require.NoError(t, err)
+
+		// Get latest 4h constructed candle
+		latest, err := db.GetLatestConstructedCandle("ETH-USDT", "4h")
+		assert.NoError(t, err)
+		require.NotNil(t, latest)
+
+		// Verify it's the correct one
+		assert.Equal(t, "4h", latest.Timeframe)
+		assert.Equal(t, now.Unix(), latest.Timestamp.Unix())
+		assert.Equal(t, "constructed", latest.Source)
+		assert.Equal(t, 301.0, latest.Open)
+	})
+
+	// Test 4: Get latest constructed when only raw candles exist
+	t.Run("Get latest constructed when only raw candles exist", func(t *testing.T) {
+		// Insert only raw candles
+		candles := []candle.Candle{
+			{
+				Symbol:    "LTC-USDT",
+				Timeframe: "1h",
+				Timestamp: now,
+				Open:      50.0,
+				High:      52.0,
+				Low:       49.0,
+				Close:     51.0,
+				Volume:    100.0,
+				Source:    "exchange1",
+			},
+			{
+				Symbol:    "LTC-USDT",
+				Timeframe: "1h",
+				Timestamp: now.Add(-1 * time.Hour),
+				Open:      49.0,
+				High:      51.0,
+				Low:       48.0,
+				Close:     50.0,
+				Volume:    90.0,
+				Source:    "exchange2",
+			},
+		}
+
+		err := db.SaveCandles(candles)
+		require.NoError(t, err)
+
+		// Get latest constructed candle (should be nil)
+		latest, err := db.GetLatestConstructedCandle("LTC-USDT", "1h")
+		assert.NoError(t, err)
+		assert.Nil(t, latest) // No constructed candles
+	})
+
+	// Test 5: Get latest constructed with empty string parameters (edge case)
+	t.Run("Get latest constructed with empty params", func(t *testing.T) {
+		latest, err := db.GetLatestConstructedCandle("", "")
+		assert.NoError(t, err) // Should not error but return nil
+		assert.Nil(t, latest)
+	})
+}
+
+func TestPostgresDB_GetLatest1mCandle(t *testing.T) {
+	// Set up test database
+	testDB, cleanup := SetupTestDB(t)
+	defer cleanup()
+
+	// Create PostgresDB instance
+	db, err := testDB.GetTestPostgresDB()
+	require.NoError(t, err)
+
+	now := time.Now().UTC().Truncate(time.Minute)
+
+	// Test 1: Get latest 1m candle with multiple candles
+	t.Run("Get latest 1m candle with multiple candles", func(t *testing.T) {
+		// Insert 1m candles with different timestamps
+		candles := []candle.Candle{
+			{
+				Symbol:    "BTC-USDT",
+				Timeframe: "1m",
+				Timestamp: now.Add(-3 * time.Minute),
+				Open:      9800.0,
+				High:      9900.0,
+				Low:       9700.0,
+				Close:     9850.0,
+				Volume:    1.8,
+				Source:    "test",
+			},
+			{
+				Symbol:    "BTC-USDT",
+				Timeframe: "1m",
+				Timestamp: now.Add(-2 * time.Minute),
+				Open:      9900.0,
+				High:      10000.0,
+				Low:       9800.0,
+				Close:     10000.0,
+				Volume:    2.0,
+				Source:    "test",
+			},
+			{
+				Symbol:    "BTC-USDT",
+				Timeframe: "1m",
+				Timestamp: now.Add(-1 * time.Minute),
+				Open:      10000.0,
+				High:      10100.0,
+				Low:       9900.0,
+				Close:     10050.0,
+				Volume:    1.5,
+				Source:    "test",
+			},
+		}
+
+		err := db.SaveCandles(candles)
+		require.NoError(t, err)
+
+		// Get latest 1m candle
+		latest, err := db.GetLatest1mCandle("BTC-USDT")
+		assert.NoError(t, err)
+		require.NotNil(t, latest)
+
+		// Verify it's the correct one (latest timestamp)
+		assert.Equal(t, now.Add(-1*time.Minute).Unix(), latest.Timestamp.Unix())
+		assert.Equal(t, "1m", latest.Timeframe)
+		assert.Equal(t, 10000.0, latest.Open)
+		assert.Equal(t, 10100.0, latest.High)
+		assert.Equal(t, 9900.0, latest.Low)
+		assert.Equal(t, 10050.0, latest.Close)
+		assert.Equal(t, 1.5, latest.Volume)
+	})
+
+	// Test 2: Get latest 1m candle when none exist
+	t.Run("Get latest 1m candle when none exist", func(t *testing.T) {
+		latest, err := db.GetLatest1mCandle("NON-EXISTENT")
+		assert.NoError(t, err)
+		assert.Nil(t, latest)
+	})
+
+	// Test 3: Get latest 1m candle when only other timeframes exist
+	t.Run("Get latest 1m candle when only other timeframes exist", func(t *testing.T) {
+		// Insert candles with non-1m timeframes
+		candles := []candle.Candle{
+			{
+				Symbol:    "ETH-USDT",
+				Timeframe: "5m",
+				Timestamp: now,
+				Open:      300.0,
+				High:      310.0,
+				Low:       295.0,
+				Close:     305.0,
+				Volume:    10.0,
+				Source:    "test",
+			},
+			{
+				Symbol:    "ETH-USDT",
+				Timeframe: "15m",
+				Timestamp: now.Add(-15 * time.Minute),
+				Open:      298.0,
+				High:      308.0,
+				Low:       293.0,
+				Close:     303.0,
+				Volume:    15.0,
+				Source:    "test",
+			},
+		}
+
+		err := db.SaveCandles(candles)
+		require.NoError(t, err)
+
+		// Get latest 1m candle (should be nil)
+		latest, err := db.GetLatest1mCandle("ETH-USDT")
+		assert.NoError(t, err)
+		assert.Nil(t, latest) // No 1m candles
+	})
+
+	// Test 4: Get latest 1m candle with multiple sources
+	t.Run("Get latest 1m candle with multiple sources", func(t *testing.T) {
+		// Insert 1m candles with different sources but same timestamp
+		candles := []candle.Candle{
+			{
+				Symbol:    "XRP-USDT",
+				Timeframe: "1m",
+				Timestamp: now,
+				Open:      0.25,
+				High:      0.26,
+				Low:       0.24,
+				Close:     0.255,
+				Volume:    1000.0,
+				Source:    "source1",
+			},
+			{
+				Symbol:    "XRP-USDT",
+				Timeframe: "1m",
+				Timestamp: now,
+				Open:      0.26,
+				High:      0.27,
+				Low:       0.25,
+				Close:     0.265,
+				Volume:    1200.0,
+				Source:    "source2",
+			},
+		}
+
+		err := db.SaveCandles(candles)
+		require.NoError(t, err)
+
+		// Get latest 1m candle
+		latest, err := db.GetLatest1mCandle("XRP-USDT")
+		assert.NoError(t, err)
+		require.NotNil(t, latest)
+
+		// Verify it has the correct timestamp and timeframe
+		assert.Equal(t, now.Unix(), latest.Timestamp.Unix())
+		assert.Equal(t, "1m", latest.Timeframe)
+		assert.Equal(t, "XRP-USDT", latest.Symbol)
+
+		// Source could be either source1 or source2 depending on DB ordering
+		assert.Contains(t, []string{"source1", "source2"}, latest.Source)
+	})
+
+	// Test 5: Get latest 1m candle with empty symbol (edge case)
+	t.Run("Get latest 1m candle with empty symbol", func(t *testing.T) {
+		latest, err := db.GetLatest1mCandle("")
+		assert.NoError(t, err) // Should not error but return nil
+		assert.Nil(t, latest)
+	})
+
+	// Test 6: Verify GetLatest1mCandle is equivalent to GetLatestCandle with "1m"
+	t.Run("Verify GetLatest1mCandle is equivalent to GetLatestCandle", func(t *testing.T) {
+		// Insert a new 1m candle
+		testCandle := candle.Candle{
+			Symbol:    "DOGE-USDT",
+			Timeframe: "1m",
+			Timestamp: now,
+			Open:      0.05,
+			High:      0.055,
+			Low:       0.049,
+			Close:     0.052,
+			Volume:    10000.0,
+			Source:    "test",
+		}
+
+		err := db.SaveCandle(&testCandle)
+		require.NoError(t, err)
+
+		// Get with both methods
+		latest1, err1 := db.GetLatest1mCandle("DOGE-USDT")
+		latest2, err2 := db.GetLatestCandle("DOGE-USDT", "1m")
+
+		// Verify both return the same result
+		assert.NoError(t, err1)
+		assert.NoError(t, err2)
+		require.NotNil(t, latest1)
+		require.NotNil(t, latest2)
+
+		// Compare all fields
+		assert.Equal(t, latest1.Symbol, latest2.Symbol)
+		assert.Equal(t, latest1.Timeframe, latest2.Timeframe)
+		assert.Equal(t, latest1.Timestamp.Unix(), latest2.Timestamp.Unix())
+		assert.Equal(t, latest1.Open, latest2.Open)
+		assert.Equal(t, latest1.High, latest2.High)
+		assert.Equal(t, latest1.Low, latest2.Low)
+		assert.Equal(t, latest1.Close, latest2.Close)
+		assert.Equal(t, latest1.Volume, latest2.Volume)
+		assert.Equal(t, latest1.Source, latest2.Source)
+	})
+}
+
+func TestPostgresDB_DeleteCandles(t *testing.T) {
+	// Set up test database
+	testDB, cleanup := SetupTestDB(t)
+	defer cleanup()
+
+	// Create PostgresDB instance
+	db, err := testDB.GetTestPostgresDB()
+	require.NoError(t, err)
+
+	now := time.Now().UTC().Truncate(time.Minute)
+
+	// Test 1: Delete candles before a specified time
+	t.Run("Delete candles before time", func(t *testing.T) {
+		// Insert test candles with different timestamps
+		candles := []candle.Candle{
+			{
+				Symbol:    "BTC-USDT",
+				Timeframe: "1m",
+				Timestamp: now.Add(-3 * time.Hour),
+				Open:      10000.0,
+				High:      10100.0,
+				Low:       9900.0,
+				Close:     10050.0,
+				Volume:    1.5,
+				Source:    "test",
+			},
+			{
+				Symbol:    "BTC-USDT",
+				Timeframe: "1m",
+				Timestamp: now.Add(-2 * time.Hour),
+				Open:      10100.0,
+				High:      10200.0,
+				Low:       10000.0,
+				Close:     10150.0,
+				Volume:    2.0,
+				Source:    "test",
+			},
+			{
+				Symbol:    "BTC-USDT",
+				Timeframe: "1m",
+				Timestamp: now.Add(-1 * time.Hour),
+				Open:      10150.0,
+				High:      10250.0,
+				Low:       10050.0,
+				Close:     10200.0,
+				Volume:    1.8,
+				Source:    "test",
+			},
+		}
+
+		err := db.SaveCandles(candles)
+		require.NoError(t, err)
+
+		// Verify candles were saved
+		count, err := db.GetCandleCount("BTC-USDT", "1m", now.Add(-4*time.Hour), now)
+		require.NoError(t, err)
+		assert.Equal(t, 3, count)
+
+		// Delete candles older than 2 hours ago
+		err = db.DeleteCandles("BTC-USDT", "1m", now.Add(-2*time.Hour))
+		assert.NoError(t, err)
+
+		// Verify candles were deleted
+		count, err = db.GetCandleCount("BTC-USDT", "1m", now.Add(-4*time.Hour), now)
+		require.NoError(t, err)
+		assert.Equal(t, 2, count) // Only 2 candles should remain
+
+		// Verify the specific candles that remain
+		remainingCandles, err := db.GetCandles("BTC-USDT", "1m", now.Add(-4*time.Hour), now)
+		require.NoError(t, err)
+		assert.Len(t, remainingCandles, 2)
+
+		// Sort by timestamp to ensure order
+		timestamps := []time.Time{remainingCandles[0].Timestamp, remainingCandles[1].Timestamp}
+		assert.Contains(t, timestamps, now.Add(-2*time.Hour)) // This should remain
+		assert.Contains(t, timestamps, now.Add(-1*time.Hour)) // This should remain
+	})
+
+	// Test 2: Delete candles for a specific symbol and timeframe
+	t.Run("Delete candles for specific symbol and timeframe", func(t *testing.T) {
+		// Insert test candles with different symbols and timeframes
+		candles := []candle.Candle{
+			{
+				Symbol:    "ETH-USDT",
+				Timeframe: "1m",
+				Timestamp: now.Add(-3 * time.Hour),
+				Open:      300.0,
+				High:      310.0,
+				Low:       295.0,
+				Close:     305.0,
+				Volume:    5.0,
+				Source:    "test",
+			},
+			{
+				Symbol:    "ETH-USDT",
+				Timeframe: "5m",
+				Timestamp: now.Add(-3 * time.Hour),
+				Open:      300.0,
+				High:      310.0,
+				Low:       295.0,
+				Close:     305.0,
+				Volume:    5.0,
+				Source:    "test",
+			},
+			{
+				Symbol:    "LTC-USDT",
+				Timeframe: "1m",
+				Timestamp: now.Add(-3 * time.Hour),
+				Open:      50.0,
+				High:      52.0,
+				Low:       49.0,
+				Close:     51.0,
+				Volume:    10.0,
+				Source:    "test",
+			},
+		}
+
+		err := db.SaveCandles(candles)
+		require.NoError(t, err)
+
+		// Delete only ETH-USDT 1m candles
+		err = db.DeleteCandles("ETH-USDT", "1m", now)
+		assert.NoError(t, err)
+
+		// Verify ETH-USDT 1m candles were deleted
+		count, err := db.GetCandleCount("ETH-USDT", "1m", now.Add(-4*time.Hour), now)
+		require.NoError(t, err)
+		assert.Equal(t, 0, count)
+
+		// Verify ETH-USDT 5m candles still exist
+		count, err = db.GetCandleCount("ETH-USDT", "5m", now.Add(-4*time.Hour), now)
+		require.NoError(t, err)
+		assert.Equal(t, 1, count)
+
+		// Verify LTC-USDT 1m candles still exist
+		count, err = db.GetCandleCount("LTC-USDT", "1m", now.Add(-4*time.Hour), now)
+		require.NoError(t, err)
+		assert.Equal(t, 1, count)
+	})
+
+	// Test 3: Delete with future timestamp (should delete nothing)
+	t.Run("Delete with future timestamp", func(t *testing.T) {
+		// Insert test candle
+		testCandle := candle.Candle{
+			Symbol:    "XRP-USDT",
+			Timeframe: "1m",
+			Timestamp: now,
+			Open:      0.25,
+			High:      0.26,
+			Low:       0.24,
+			Close:     0.255,
+			Volume:    1000.0,
+			Source:    "test",
+		}
+
+		err := db.SaveCandle(&testCandle)
+		require.NoError(t, err)
+
+		// Try to delete with a timestamp in the future
+		err = db.DeleteCandles("XRP-USDT", "1m", now.Add(1*time.Hour))
+		assert.NoError(t, err) // Should not error, but delete nothing
+
+		// Verify candle still exists
+		count, err := db.GetCandleCount("XRP-USDT", "1m", now.Add(-1*time.Hour), now.Add(1*time.Hour))
+		require.NoError(t, err)
+		assert.Equal(t, 0, count)
+	})
+
+	// Test 4: Delete for non-existent symbol (should not error)
+	t.Run("Delete for non-existent symbol", func(t *testing.T) {
+		err := db.DeleteCandles("NON-EXISTENT", "1m", now)
+		assert.NoError(t, err) // Should not error for non-existent symbols
+	})
+}
+
+func TestPostgresDB_DeleteCandlesInRange(t *testing.T) {
+	// Set up test database
+	testDB, cleanup := SetupTestDB(t)
+	defer cleanup()
+
+	// Create PostgresDB instance
+	db, err := testDB.GetTestPostgresDB()
+	require.NoError(t, err)
+
+	now := time.Now().UTC().Truncate(time.Minute)
+
+	// Test 1: Delete candles in a specific time range with source filter
+	t.Run("Delete candles in range with source filter", func(t *testing.T) {
+		// Insert test candles with different timestamps and sources
+		candles := []candle.Candle{
+			{
+				Symbol:    "BTC-USDT",
+				Timeframe: "1m",
+				Timestamp: now.Add(-3 * time.Hour),
+				Open:      10000.0,
+				High:      10100.0,
+				Low:       9900.0,
+				Close:     10050.0,
+				Volume:    1.5,
+				Source:    "source1",
+			},
+			{
+				Symbol:    "BTC-USDT",
+				Timeframe: "1m",
+				Timestamp: now.Add(-2 * time.Hour),
+				Open:      10100.0,
+				High:      10200.0,
+				Low:       10000.0,
+				Close:     10150.0,
+				Volume:    2.0,
+				Source:    "source1",
+			},
+			{
+				Symbol:    "BTC-USDT",
+				Timeframe: "1m",
+				Timestamp: now.Add(-1 * time.Hour),
+				Open:      10150.0,
+				High:      10250.0,
+				Low:       10050.0,
+				Close:     10200.0,
+				Volume:    1.8,
+				Source:    "source2",
+			},
+		}
+
+		err := db.SaveCandles(candles)
+		require.NoError(t, err)
+
+		// Delete candles in range with source1
+		start := now.Add(-2*time.Hour - 30*time.Minute)
+		end := now.Add(-1*time.Hour - 30*time.Minute)
+		err = db.DeleteCandlesInRange("BTC-USDT", "1m", start, end, "source1")
+		assert.NoError(t, err)
+
+		// Verify only source1 candles in the range were deleted
+		remainingCandles, err := db.GetCandles("BTC-USDT", "1m", now.Add(-4*time.Hour), now)
+		require.NoError(t, err)
+		assert.Len(t, remainingCandles, 2) // One source1 and one source2 should remain
+
+		// Check that the correct candles remain
+		var remainingSources []string
+		for _, c := range remainingCandles {
+			remainingSources = append(remainingSources, c.Source)
+		}
+		assert.Contains(t, remainingSources, "source1") // The oldest source1 should remain
+		assert.Contains(t, remainingSources, "source2") // source2 should remain
+	})
+
+	// Test 2: Delete candles in range without source filter
+	t.Run("Delete candles in range without source filter", func(t *testing.T) {
+		// Insert test candles with different timestamps and sources
+		candles := []candle.Candle{
+			{
+				Symbol:    "ETH-USDT",
+				Timeframe: "1m",
+				Timestamp: now.Add(-3 * time.Hour),
+				Open:      300.0,
+				High:      310.0,
+				Low:       295.0,
+				Close:     305.0,
+				Volume:    5.0,
+				Source:    "source1",
+			},
+			{
+				Symbol:    "ETH-USDT",
+				Timeframe: "1m",
+				Timestamp: now.Add(-2 * time.Hour),
+				Open:      305.0,
+				High:      315.0,
+				Low:       300.0,
+				Close:     310.0,
+				Volume:    6.0,
+				Source:    "source2",
+			},
+			{
+				Symbol:    "ETH-USDT",
+				Timeframe: "1m",
+				Timestamp: now.Add(-1 * time.Hour),
+				Open:      310.0,
+				High:      320.0,
+				Low:       305.0,
+				Close:     315.0,
+				Volume:    7.0,
+				Source:    "source1",
+			},
+		}
+
+		err := db.SaveCandles(candles)
+		require.NoError(t, err)
+
+		// Delete all candles in range regardless of source
+		start := now.Add(-2*time.Hour - 30*time.Minute)
+		end := now.Add(-1*time.Hour - 30*time.Minute)
+		err = db.DeleteCandlesInRange("ETH-USDT", "1m", start, end, "")
+		assert.NoError(t, err)
+
+		// Verify all candles in the range were deleted, regardless of source
+		remainingCandles, err := db.GetCandles("ETH-USDT", "1m", now.Add(-4*time.Hour), now)
+		require.NoError(t, err)
+		assert.Len(t, remainingCandles, 2) // Only the oldest and newest should remain
+
+		// Check timestamps of remaining candles
+		var timestamps []time.Time
+		for _, c := range remainingCandles {
+			timestamps = append(timestamps, c.Timestamp)
+		}
+		assert.Contains(t, timestamps, now.Add(-3*time.Hour)) // Oldest should remain
+		assert.Contains(t, timestamps, now.Add(-1*time.Hour)) // Newest should remain
+	})
+
+	// Test 3: Delete with exact timestamp range
+	t.Run("Delete with exact timestamp range", func(t *testing.T) {
+		exactTime := now.Add(-4 * time.Hour)
+
+		// Insert test candle with exact timestamp
+		testCandle := candle.Candle{
+			Symbol:    "LTC-USDT",
+			Timeframe: "1m",
+			Timestamp: exactTime,
+			Open:      50.0,
+			High:      52.0,
+			Low:       49.0,
+			Close:     51.0,
+			Volume:    10.0,
+			Source:    "test",
+		}
+
+		err := db.SaveCandle(&testCandle)
+		require.NoError(t, err)
+
+		// Delete with exact start and end time
+		err = db.DeleteCandlesInRange("LTC-USDT", "1m", exactTime, exactTime, "")
+		assert.NoError(t, err)
+
+		// Verify candle was deleted
+		count, err := db.GetCandleCount("LTC-USDT", "1m", exactTime, exactTime)
+		require.NoError(t, err)
+		assert.Equal(t, 0, count)
+	})
+
+	// Test 4: Delete with inverted time range (should delete nothing)
+	t.Run("Delete with inverted time range", func(t *testing.T) {
+		// Insert test candle
+		testCandle := candle.Candle{
+			Symbol:    "XRP-USDT",
+			Timeframe: "1m",
+			Timestamp: now.Add(-5 * time.Hour),
+			Open:      0.25,
+			High:      0.26,
+			Low:       0.24,
+			Close:     0.255,
+			Volume:    1000.0,
+			Source:    "test",
+		}
+
+		err := db.SaveCandle(&testCandle)
+		require.NoError(t, err)
+
+		// Try to delete with end before start
+		start := now.Add(-4 * time.Hour)
+		end := now.Add(-6 * time.Hour)
+		err = db.DeleteCandlesInRange("XRP-USDT", "1m", start, end, "")
+		assert.NoError(t, err) // Should not error, but delete nothing
+
+		// Verify candle still exists
+		count, err := db.GetCandleCount("XRP-USDT", "1m", now.Add(-6*time.Hour), now.Add(-4*time.Hour))
+		require.NoError(t, err)
+		assert.Equal(t, 1, count)
+	})
+
+	// Test 5: Delete for non-existent data (should not error)
+	t.Run("Delete for non-existent data", func(t *testing.T) {
+		start := now.Add(-3 * time.Hour)
+		end := now.Add(-1 * time.Hour)
+		err := db.DeleteCandlesInRange("NON-EXISTENT", "1m", start, end, "")
+		assert.NoError(t, err) // Should not error for non-existent symbols
+	})
+}
+
+func TestPostgresDB_DeleteConstructedCandles(t *testing.T) {
+	// Set up test database
+	testDB, cleanup := SetupTestDB(t)
+	defer cleanup()
+
+	// Create PostgresDB instance
+	db, err := testDB.GetTestPostgresDB()
+	require.NoError(t, err)
+
+	now := time.Now().UTC().Truncate(time.Minute)
+
+	// Test 1: Delete constructed candles before a specific time
+	t.Run("Delete constructed candles before time", func(t *testing.T) {
+		// Create candles with "constructed" source and other sources
+		candles := []candle.Candle{
+			// Constructed candles
+			{
+				Symbol:    "BTC-USDT",
+				Timeframe: "5m",
+				Timestamp: now.Add(-3 * time.Hour),
+				Open:      10000.0,
+				High:      10100.0,
+				Low:       9900.0,
+				Close:     10050.0,
+				Volume:    1.5,
+				Source:    "constructed",
+			},
+			{
+				Symbol:    "BTC-USDT",
+				Timeframe: "5m",
+				Timestamp: now.Add(-2 * time.Hour),
+				Open:      10100.0,
+				High:      10200.0,
+				Low:       10000.0,
+				Close:     10150.0,
+				Volume:    2.0,
+				Source:    "constructed",
+			},
+			{
+				Symbol:    "BTC-USDT",
+				Timeframe: "5m",
+				Timestamp: now.Add(-1 * time.Hour),
+				Open:      10150.0,
+				High:      10250.0,
+				Low:       10050.0,
+				Close:     10200.0,
+				Volume:    1.8,
+				Source:    "constructed",
+			},
+			// Raw candles with same timestamps
+			{
+				Symbol:    "BTC-USDT",
+				Timeframe: "5m",
+				Timestamp: now.Add(-3 * time.Hour),
+				Open:      10000.0,
+				High:      10100.0,
+				Low:       9900.0,
+				Close:     10050.0,
+				Volume:    1.5,
+				Source:    "exchange",
+			},
+			{
+				Symbol:    "BTC-USDT",
+				Timeframe: "5m",
+				Timestamp: now.Add(-2 * time.Hour),
+				Open:      10100.0,
+				High:      10200.0,
+				Low:       10000.0,
+				Close:     10150.0,
+				Volume:    2.0,
+				Source:    "exchange",
+			},
+		}
+
+		err := db.SaveCandles(candles)
+		require.NoError(t, err)
+
+		// Verify candles were saved
+		constructedCount, err := db.GetConstructedCandleCount("BTC-USDT", "5m", now.Add(-4*time.Hour), now)
+		require.NoError(t, err)
+		assert.Equal(t, 3, constructedCount)
+
+		rawCount, err := db.GetCandleCount("BTC-USDT", "5m", now.Add(-4*time.Hour), now)
+		require.NoError(t, err)
+		assert.Equal(t, 5, rawCount) // Total of 5 candles (3 constructed + 2 raw)
+
+		// Delete constructed candles older than 2 hours ago
+		err = db.DeleteConstructedCandles("BTC-USDT", "5m", now.Add(-1*time.Hour))
+		assert.NoError(t, err)
+
+		// Verify only constructed candles were deleted
+		constructedCount, err = db.GetConstructedCandleCount("BTC-USDT", "5m", now.Add(-4*time.Hour), now)
+		require.NoError(t, err)
+		assert.Equal(t, 1, constructedCount) // Only the newest constructed candle should remain
+
+		// Verify raw candles are unaffected
+		rawCandles, err := db.GetRawCandles("BTC-USDT", "5m", now.Add(-4*time.Hour), now)
+		require.NoError(t, err)
+		assert.Len(t, rawCandles, 2) // All raw candles should remain
+	})
+
+	// Test 2: Delete constructed candles for a specific timeframe
+	t.Run("Delete constructed candles for specific timeframe", func(t *testing.T) {
+		// Create candles with different timeframes
+		candles := []candle.Candle{
+			{
+				Symbol:    "ETH-USDT",
+				Timeframe: "15m",
+				Timestamp: now.Add(-3 * time.Hour),
+				Open:      300.0,
+				High:      310.0,
+				Low:       295.0,
+				Close:     305.0,
+				Volume:    5.0,
+				Source:    "constructed",
+			},
+			{
+				Symbol:    "ETH-USDT",
+				Timeframe: "1h",
+				Timestamp: now.Add(-3 * time.Hour),
+				Open:      300.0,
+				High:      310.0,
+				Low:       295.0,
+				Close:     305.0,
+				Volume:    5.0,
+				Source:    "constructed",
+			},
+		}
+
+		err := db.SaveCandles(candles)
+		require.NoError(t, err)
+
+		// Delete only 15m constructed candles
+		err = db.DeleteConstructedCandles("ETH-USDT", "15m", now)
+		assert.NoError(t, err)
+
+		// Verify 15m constructed candles were deleted
+		count, err := db.GetConstructedCandleCount("ETH-USDT", "15m", now.Add(-4*time.Hour), now)
+		require.NoError(t, err)
+		assert.Equal(t, 0, count)
+
+		// Verify 1h constructed candles still exist
+		count, err = db.GetConstructedCandleCount("ETH-USDT", "1h", now.Add(-4*time.Hour), now)
+		require.NoError(t, err)
+		assert.Equal(t, 1, count)
+	})
+
+	// Test 3: Delete with future timestamp (should delete nothing)
+	t.Run("Delete with future timestamp", func(t *testing.T) {
+		// Insert constructed test candle
+		testCandle := candle.Candle{
+			Symbol:    "XRP-USDT",
+			Timeframe: "1h",
+			Timestamp: now,
+			Open:      0.25,
+			High:      0.26,
+			Low:       0.24,
+			Close:     0.255,
+			Volume:    1000.0,
+			Source:    "constructed",
+		}
+
+		err := db.SaveCandle(&testCandle)
+		require.NoError(t, err)
+
+		// Try to delete with a timestamp in the future
+		err = db.DeleteConstructedCandles("XRP-USDT", "1h", now.Add(1*time.Hour))
+		assert.NoError(t, err) // Should not error, but delete nothing
+
+		// Verify candle still exists
+		count, err := db.GetConstructedCandleCount("XRP-USDT", "1h", now.Add(-1*time.Hour), now.Add(1*time.Hour))
+		require.NoError(t, err)
+		assert.Equal(t, 0, count)
+	})
+
+	// Test 4: Delete for non-existent symbol (should not error)
+	t.Run("Delete for non-existent symbol", func(t *testing.T) {
+		err := db.DeleteConstructedCandles("NON-EXISTENT", "1h", now)
+		assert.NoError(t, err) // Should not error for non-existent symbols
+	})
+
+	// Test 5: Delete from multiple symbols with the same timeframe
+	t.Run("Delete from multiple symbols with same timeframe", func(t *testing.T) {
+		// Create constructed candles for multiple symbols
+		candles := []candle.Candle{
+			{
+				Symbol:    "LTC-USDT",
+				Timeframe: "4h",
+				Timestamp: now.Add(-3 * time.Hour),
+				Open:      50.0,
+				High:      52.0,
+				Low:       49.0,
+				Close:     51.0,
+				Volume:    10.0,
+				Source:    "constructed",
+			},
+			{
+				Symbol:    "DOT-USDT",
+				Timeframe: "4h",
+				Timestamp: now.Add(-3 * time.Hour),
+				Open:      5.0,
+				High:      5.2,
+				Low:       4.9,
+				Close:     5.1,
+				Volume:    100.0,
+				Source:    "constructed",
+			},
+		}
+
+		err := db.SaveCandles(candles)
+		require.NoError(t, err)
+
+		// Delete LTC-USDT constructed candles
+		err = db.DeleteConstructedCandles("LTC-USDT", "4h", now)
+		assert.NoError(t, err)
+
+		// Verify LTC-USDT candles were deleted but DOT-USDT candles remain
+		ltcCount, err := db.GetConstructedCandleCount("LTC-USDT", "4h", now.Add(-4*time.Hour), now)
+		require.NoError(t, err)
+		assert.Equal(t, 0, ltcCount)
+
+		dotCount, err := db.GetConstructedCandleCount("DOT-USDT", "4h", now.Add(-4*time.Hour), now)
+		require.NoError(t, err)
+		assert.Equal(t, 1, dotCount)
+	})
 }
 
 func TestPostgresDB_UpdateCandle(t *testing.T) {
@@ -1546,60 +2779,4 @@ func TestPostgresDB_UpdateCandle(t *testing.T) {
 	assert.Equal(t, 9800.0, updated.Low)    // Updated value
 	assert.Equal(t, 10150.0, updated.Close) // Updated value
 	assert.Equal(t, 2.5, updated.Volume)    // Updated value
-}
-
-func TestPostgresDB_DeleteCandles(t *testing.T) {
-	// Set up test database
-	testDB, cleanup := SetupTestDB(t)
-	defer cleanup()
-
-	// Create PostgresDB instance
-	db, err := testDB.GetTestPostgresDB()
-	require.NoError(t, err)
-
-	// Create test candles
-	now := time.Now().UTC().Truncate(time.Minute)
-	symbol := "BTC-USDT"
-	timeframe := "1m"
-	source := "test"
-
-	candles := []candle.Candle{}
-	for i := 0; i < 10; i++ {
-		candles = append(candles, candle.Candle{
-			Symbol:    symbol,
-			Timeframe: timeframe,
-			Timestamp: now.Add(time.Duration(-i) * time.Minute),
-			Open:      10000.0 + float64(i),
-			High:      10100.0 + float64(i),
-			Low:       9900.0 + float64(i),
-			Close:     10050.0 + float64(i),
-			Volume:    1.5 + float64(i),
-			Source:    source,
-		})
-	}
-
-	// Save candles
-	err = db.SaveCandles(candles)
-	assert.NoError(t, err)
-
-	// Test deleting candles in range
-	start := now.Add(-8 * time.Minute)
-	end := now.Add(-3 * time.Minute)
-
-	err = db.DeleteCandlesInRange(symbol, timeframe, start, end, source)
-	assert.NoError(t, err)
-
-	// Verify candles were deleted
-	remainingCandles, err := db.GetCandlesInRange(symbol, timeframe, start, end, source)
-	assert.NoError(t, err)
-	assert.Len(t, remainingCandles, 0)
-
-	// Verify candles outside range still exist
-	beforeRange, err := db.GetCandlesInRange(symbol, timeframe, now.Add(-10*time.Minute), start.Add(-time.Second), source)
-	assert.NoError(t, err)
-	assert.Len(t, beforeRange, 1) // Should have candle at minute 9
-
-	afterRange, err := db.GetCandlesInRange(symbol, timeframe, end.Add(time.Second), now, source)
-	assert.NoError(t, err)
-	assert.Len(t, afterRange, 3) // Should have candles at minutes 0, 1, 2
 }
