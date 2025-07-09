@@ -20,6 +20,22 @@ type Config struct {
 	SchemaSQL string
 }
 
+func NewConfig(connStr string, maxOpen, maxIdle int) (*Config, error) {
+	db, err := sql.Open("postgres", connStr)
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(maxOpen)
+	db.SetMaxIdleConns(maxIdle)
+	return &Config{
+		Name:      "", // TODO:
+		DB:        db,
+		ConnStr:   connStr,
+		AdminDB:   db, // TODO:
+		SchemaSQL: "", // TODO:
+	}, nil
+}
+
 // NewTestConfig creates a new database with a random name and applies the schema.
 // It returns a TestDB struct with connection details and a cleanup function.
 func NewTestConfig(t *testing.T) (*Config, func()) {
