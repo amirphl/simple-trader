@@ -1,0 +1,88 @@
+# API Keys
+wallex_api_key: "your_api_key_here"
+
+# Database Configuration
+db_conn_str: "postgres://username:password@localhost:5432/simple_trader?sslmode=disable"
+db_max_open: 10
+db_max_idle: 5
+
+# Trading Mode
+mode: "live"  # Options: live, backtest
+
+# Default Symbol and Timeframe
+symbol: "BTCIRT"
+timeframe: "1m"
+
+# Backtest Configuration
+backtest_from: "2022-01-01"  # Format: YYYY-MM-DD
+backtest_to: "2023-01-01"    # Format: YYYY-MM-DD
+
+# Default Strategy
+strategy: "sma"  # Options: sma, ema, rsi, macd, composite, rsi-obos
+
+# Order Configuration
+order_size: 0.001
+order_type: "market"  # Options: market, limit, stop-limit, oco
+limit_spread: 0.1     # Percentage (e.g., 0.1 for 0.1%)
+
+# Risk Management
+risk_percent: 1.0           # Percentage of account to risk per trade
+stop_loss_percent: 2.0      # Stop loss percentage
+trailing_stop_percent: 0.5  # Trailing stop percentage
+take_profit_percent: 3.0    # Take profit percentage
+max_daily_loss: 100.0       # Maximum daily loss in account currency
+slippage_percent: 0.05      # Slippage percentage
+commission_percent: 0.1     # Commission percentage
+
+# Notification Settings
+telegram_token: "your_telegram_bot_token"
+telegram_chat_id: "your_telegram_chat_id"
+notification_retries: 3
+notification_delay: "5s"
+
+# Multi-Symbol and Multi-Timeframe Configuration
+symbols:
+  - "BTCIRT"
+  - "ETHIRT"
+  - "LTCIRT"
+
+timeframes:
+  - "1m"
+  - "5m"
+  - "15m"
+  - "1h"
+
+# Strategy Mapping for Different Symbol/Timeframe Combinations
+strategy_map:
+  BTCIRT:
+    "1m": "ema"
+    "5m": "rsi"
+    "15m": "macd"
+  ETHIRT:
+    "1m": "sma"
+    "5m": "macd"
+    "1h": "composite"
+  LTCIRT:
+    "1m": "rsi-obos"
+    "15m": "ema"
+
+# Risk Parameters for Different Symbol/Timeframe Combinations
+risk_map:
+  BTCIRT:
+    "1m":
+      risk_percent: 1.0
+      stop_loss_percent: 2.0
+      trailing_stop_percent: 0.5
+    "5m":
+      risk_percent: 0.8
+      stop_loss_percent: 1.5
+      trailing_stop_percent: 0.3
+  ETHIRT:
+    "1m":
+      risk_percent: 0.7
+      stop_loss_percent: 1.8
+      trailing_stop_percent: 0.4
+    "5m":
+      risk_percent: 0.6
+      stop_loss_percent: 1.2
+      trailing_stop_percent: 0.2
