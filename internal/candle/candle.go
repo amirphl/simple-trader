@@ -1041,14 +1041,16 @@ func (ci *DefaultIngester) GetLatestCandleFromCache(symbol, timeframe string) (*
 	}
 
 	// Fall back to storage
-	candle, err := ci.storage.GetLatestCandle(symbol, timeframe)
+	c, err := ci.storage.GetLatestCandle(symbol, timeframe)
 	if err != nil {
 		return nil, err
 	}
 
-	ci.cache[symbol][timeframe] = candle
+	if c != nil {
+		ci.cache[symbol][timeframe] = c
+	}
 
-	return candle, nil
+	return c, nil
 }
 
 // GetCandlesFromDB retrieves candles from storage
@@ -1104,6 +1106,11 @@ func (c *Candle) IsConstructed() bool {
 	return c.Source == "constructed"
 }
 
+// IsSynthesized returns true if the candle was synthesized
+func (c *Candle) IsSynthesized() bool {
+	return c.Source == "synthetic"
+}
+
 // IsRaw returns true if the candle is raw (from exchange)
 func (c *Candle) IsRaw() bool {
 	return c.Source != "constructed"
@@ -1113,6 +1120,9 @@ func (c *Candle) IsRaw() bool {
 func (c *Candle) GetSourceType() string {
 	if c.IsConstructed() {
 		return "constructed"
+	}
+	if c.IsSynthesized() {
+		return "synthetic"
 	}
 	return "raw"
 }
