@@ -44,23 +44,23 @@ type Config struct {
 	Mode                string
 	Symbol              string
 	Timeframe           string
+	Symbols             []string
+	Timeframes          []string
 	BacktestFrom        time.Time
 	BacktestTo          time.Time
-	Strategy            string
 	OrderSize           float64
-	TelegramToken       string
-	TelegramChatID      string
+	OrderType           string
 	RiskPercent         float64
 	StopLossPercent     float64
 	TrailingStopPercent float64
 	TakeProfitPercent   float64
 	MaxDailyLoss        float64
-	OrderType           string
 	LimitSpread         float64
+	TelegramToken       string
+	TelegramChatID      string
 	NotificationRetries int
 	NotificationDelay   time.Duration
-	Symbols             []string
-	Timeframes          []string
+	Strategy            string
 	StrategyMap         map[string]map[string]string
 	RiskMap             map[string]map[string]RiskParams
 	SlippagePercent     float64
@@ -92,7 +92,7 @@ func getRiskParams(cfg Config, symbol, timeframe string) RiskParams {
 	}
 }
 
-func loadConfig() Config {
+func LoadConfig() Config {
 	mode := flag.String("mode", "live", "Mode: live or backtest")
 	symbol := flag.String("symbol", "BTCIRT", "Trading symbol")
 	timeframe := flag.String("timeframe", "1m", "Candle timeframe for backtest")
