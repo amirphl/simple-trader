@@ -30,9 +30,13 @@ type OrderResponse struct {
 	UpdatedAt time.Time
 }
 
+// TODO: Add ctx support
+
 // OrderManager interface for managing order lifecycle.
 type OrderManager interface {
 	SubmitOrder(order OrderRequest) (OrderResponse, error)
 	CancelOrder(orderID string) error
 	GetOrder(orderID string) (OrderResponse, error)
+	GetOpenOrders() ([]OrderResponse, error)
+	SaveOrder(order OrderResponse) error
 }
