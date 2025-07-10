@@ -2,8 +2,10 @@
 package candle
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"log"
 	"sort"
 	"sync"
 	"time"
@@ -57,42 +59,6 @@ func (c *Candle) IsComplete() bool {
 	return now.After(candleEnd)
 }
 
-// GetTimeframeDuration returns the duration for a given timeframe
-func GetTimeframeDuration(timeframe string) time.Duration {
-	switch timeframe {
-	case "1m":
-		return time.Minute
-	case "5m":
-		return 5 * time.Minute
-	case "15m":
-		return 15 * time.Minute
-	case "30m":
-		return 30 * time.Minute
-	case "1h":
-		return time.Hour
-	case "4h":
-		return 4 * time.Hour
-	case "1d":
-		return 24 * time.Hour
-	default:
-		return 0
-	}
-}
-
-// GetSupportedTimeframes returns all supported timeframes
-func GetSupportedTimeframes() []string {
-	return []string{"1m", "5m", "15m", "30m", "1h", "4h", "1d"}
-}
-
-func GetAggregationTimeframes() []string {
-	return []string{"5m", "15m", "30m", "1h", "4h", "1d"}
-}
-
-// IsValidTimeframe checks if a timeframe is supported
-func IsValidTimeframe(timeframe string) bool {
-	return GetTimeframeDuration(timeframe) > 0
-}
-
 // GetAggregationPath returns the path of timeframes needed to aggregate from source to target
 func GetAggregationPath(sourceTf, targetTf string) ([]string, error) {
 	if !IsValidTimeframe(sourceTf) || !IsValidTimeframe(targetTf) {
@@ -135,56 +101,64 @@ func GetAggregationPath(sourceTf, targetTf string) ([]string, error) {
 	return path, nil
 }
 
+// Storage interface for saving and retrieving candles.
+type Storage interface {
+	SaveCandle(ctx context.Context, candle *Candle) error
+	SaveCandles(ctx context.Context, candles []Candle) error
+	SaveConstructedCandles(ctx context.Context, candles []Candle) error
+	GetCandle(ctx context.Context, symbol, timeframe string, timestamp time.Time, source string) (*Candle, error)
+	GetCandles(ctx context.Context, symbol, timeframe string, start, end time.Time) ([]Candle, error)
+	GetCandlesV2(ctx context.Context, timeframe string, start, end time.Time) ([]Candle, error)
+	GetCandlesInRange(ctx context.Context, symbol, timeframe string, start, end time.Time, source string) ([]Candle, error)
+	GetConstructedCandles(ctx context.Context, symbol, timeframe string, start, end time.Time) ([]Candle, error)
+	GetRawCandles(ctx context.Context, symbol, timeframe string, start, end time.Time) ([]Candle, error)
+	GetLatestCandle(ctx context.Context, symbol, timeframe string) (*Candle, error)
+	GetLatestCandleInRange(ctx context.Context, symbol, timeframe string, start, end time.Time) (*Candle, error)
+	GetLatestConstructedCandle(ctx context.Context, symbol, timeframe string) (*Candle, error)
+	GetLatest1mCandle(ctx context.Context, symbol string) (*Candle, error)
+	DeleteCandles(ctx context.Context, symbol, timeframe string, before time.Time) error
+	DeleteCandlesInRange(ctx context.Context, symbol, timeframe string, start, end time.Time, source string) error
+	DeleteConstructedCandles(ctx context.Context, symbol, timeframe string, before time.Time) error
+	GetCandleCount(ctx context.Context, symbol, timeframe string, start, end time.Time) (int, error)
+	GetConstructedCandleCount(ctx context.Context, symbol, timeframe string, start, end time.Time) (int, error)
+	UpdateCandle(ctx context.Context, candle Candle) error
+	UpdateCandles(ctx context.Context, candle []Candle) error
+	GetAggregationStats(ctx context.Context, symbol string) (map[string]any, error)
+	GetMissingCandleRanges(ctx context.Context, symbol string, start, end time.Time) ([]struct{ Start, End time.Time }, error)
+	GetCandleSourceStats(ctx context.Context, symbol string, start, end time.Time) (map[string]any, error)
+}
+
 // Aggregator interface for candle aggregation
 type Aggregator interface {
 	Aggregate(candles []Candle, timeframe string) ([]Candle, error)
 	AggregateIncremental(newCandle Candle, existingCandles []Candle, timeframe string) ([]Candle, error)
 	AggregateFrom1m(oneMCandles []Candle, targetTimeframe string) ([]Candle, error)
-	Aggregate1mTimeRange(symbol string, start, end time.Time, targetTimeframe string, storage Storage) ([]Candle, error)
-}
-
-// Storage interface for saving and retrieving candles.
-type Storage interface {
-	SaveCandle(candle *Candle) error
-	SaveCandles(candles []Candle) error
-	SaveConstructedCandles(candles []Candle) error
-	GetCandle(symbol, timeframe string, timestamp time.Time, source string) (*Candle, error)
-	GetCandles(symbol, timeframe string, start, end time.Time) ([]Candle, error)
-	GetCandlesV2(timeframe string, start, end time.Time) ([]Candle, error)
-	GetCandlesInRange(symbol, timeframe string, start, end time.Time, source string) ([]Candle, error)
-	GetConstructedCandles(symbol, timeframe string, start, end time.Time) ([]Candle, error)
-	GetRawCandles(symbol, timeframe string, start, end time.Time) ([]Candle, error)
-	GetLatestCandle(symbol, timeframe string) (*Candle, error)
-	GetLatestCandleInRange(symbol, timeframe string, start, end time.Time) (*Candle, error)
-	GetLatestConstructedCandle(symbol, timeframe string) (*Candle, error)
-	GetLatest1mCandle(symbol string) (*Candle, error)
-	DeleteCandles(symbol, timeframe string, before time.Time) error
-	DeleteCandlesInRange(symbol, timeframe string, start, end time.Time, source string) error
-	DeleteConstructedCandles(symbol, timeframe string, before time.Time) error
-	GetCandleCount(symbol, timeframe string, start, end time.Time) (int, error)
-	GetConstructedCandleCount(symbol, timeframe string, start, end time.Time) (int, error)
-	UpdateCandle(candle Candle) error
-	UpdateCandles(candle []Candle) error
-	GetAggregationStats(symbol string) (map[string]any, error)
-	GetMissingCandleRanges(symbol string, start, end time.Time) ([]struct{ Start, End time.Time }, error)
-	GetCandleSourceStats(symbol string, start, end time.Time) (map[string]any, error)
+	Aggregate1mTimeRange(ctx context.Context, symbol string, start, end time.Time, targetTimeframe string) ([]Candle, error)
 }
 
 type Ingester interface {
-	IngestCandle(c Candle) error
-	IngestRaw1mCandles(candles []Candle) error
-	BulkAggregateFrom1m(symbol string, start, end time.Time) error
-	BulkAggregateAllSymbolsFrom1m(start, end time.Time) error
-	GetLatestCandleFromCache(symbol, timeframe string) (*Candle, error)
-	GetCandlesFromDB(symbol, timeframe string, start, end time.Time) ([]Candle, error)
-	CleanupOldData(symbol, timeframe string, retentionDays int) error
+	IngestCandle(ctx context.Context, c Candle) error
+	IngestRaw1mCandles(ctx context.Context, candles []Candle) error
+	AggregateSymbolToHigherTimeframes(ctx context.Context, symbol string) error
+	BulkAggregateFrom1m(ctx context.Context, symbol string, start, end time.Time) error
+	BulkAggregateAllSymbolsFrom1m(ctx context.Context, start, end time.Time) error
+	GetLatestCandle(ctx context.Context, symbol, timeframe string) (*Candle, error)
+	CleanupOldData(ctx context.Context, symbol, timeframe string, retentionDays int) error
 
-	// NOTE: Don't use.
-	AggregateToHigherTimeframes(c Candle) error
+	Subscribe() <-chan []Candle
+	Unsubscribe(ch chan []Candle)
 }
 
 type DefaultAggregator struct {
-	mu sync.RWMutex
+	mu      sync.RWMutex
+	storage Storage
+}
+
+// NewAggregator creates a new aggregator
+func NewAggregator(storage Storage) Aggregator {
+	return &DefaultAggregator{
+		storage: storage,
+	}
 }
 
 // Aggregate aggregates candles to a higher timeframe
@@ -269,9 +243,9 @@ func (a *DefaultAggregator) AggregateFrom1m(oneMCandles []Candle, targetTimefram
 }
 
 // Aggregate1mTimeRange aggregates 1m candles from storage for a specific time range
-func (a *DefaultAggregator) Aggregate1mTimeRange(symbol string, start, end time.Time, targetTimeframe string, storage Storage) ([]Candle, error) {
+func (a *DefaultAggregator) Aggregate1mTimeRange(ctx context.Context, symbol string, start, end time.Time, targetTimeframe string) ([]Candle, error) {
 	// Get 1m candles for the time range
-	oneMCandles, err := storage.GetCandles(symbol, "1m", start, end)
+	oneMCandles, err := a.storage.GetCandles(ctx, symbol, "1m", start, end)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get 1m candles: %w", err)
 	}
@@ -285,7 +259,7 @@ func (a *DefaultAggregator) Aggregate1mTimeRange(symbol string, start, end time.
 }
 
 // AggregateIncremental efficiently aggregates a new candle with existing candles
-// WARN: Take care.
+// ISSUE: Review this code before use.
 func (a *DefaultAggregator) AggregateIncremental(newCandle Candle, existingCandles []Candle, timeframe string) ([]Candle, error) {
 	if err := newCandle.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid new candle: %w", err)
@@ -348,53 +322,70 @@ func (a *DefaultAggregator) AggregateIncremental(newCandle Candle, existingCandl
 
 // DefaultIngester handles real-time candle ingestion and aggregation
 type DefaultIngester struct {
-	storage    Storage
-	aggregator Aggregator
-	mu         sync.RWMutex
-	cache      map[string]map[string]*Candle // symbol -> timeframe -> latest candle
+	storage     Storage
+	aggregator  Aggregator
+	cache       map[string]map[string]*Candle // symbol -> timeframe -> latest candle
+	subscribers []chan []Candle               // TODO: Lifetime management
+	mu          sync.RWMutex
 }
 
 // NewCandleIngester creates a new ingester with configuration
-func NewCandleIngester(storage Storage, aggregator Aggregator) Ingester {
+func NewCandleIngester(storage Storage) Ingester {
 	return &DefaultIngester{
 		storage:    storage,
-		aggregator: aggregator,
+		aggregator: NewAggregator(storage),
 		cache:      make(map[string]map[string]*Candle),
 	}
 }
 
-// TODO: Transactional
-
 // IngestCandle processes a new candle and triggers aggregation for higher timeframes
-func (ci *DefaultIngester) IngestCandle(c Candle) error {
+func (ci *DefaultIngester) IngestCandle(ctx context.Context, c Candle) error {
 	if err := c.Validate(); err != nil {
 		return fmt.Errorf("invalid candle: %w", err)
 	}
+
+	dur := GetTimeframeDuration(c.Timeframe)
+	if dur == 0 {
+		return nil
+	}
+	c.Timestamp = c.Timestamp.Truncate(dur)
 
 	ci.mu.Lock()
 	defer ci.mu.Unlock()
 
 	// Save the original candle
-	if err := ci.storage.SaveCandles([]Candle{c}); err != nil {
+	if err := ci.storage.SaveCandles(ctx, []Candle{c}); err != nil {
 		return fmt.Errorf("failed to save candle: %w", err)
 	}
 
-	// Update cache
+	// If this is a base timeframe (1m), aggregate to higher timeframes
+	if c.Timeframe == "1m" {
+		return ci.AggregateSymbolToHigherTimeframes(ctx, c.Symbol)
+	}
+
+	// ISSUE: This is not Transactional.
 	if ci.cache[c.Symbol] == nil {
 		ci.cache[c.Symbol] = make(map[string]*Candle)
 	}
 	ci.cache[c.Symbol][c.Timeframe] = &c
 
-	// If this is a base timeframe (1m), aggregate to higher timeframes
 	if c.Timeframe == "1m" {
-		return ci.AggregateToHigherTimeframes(c)
+		// ISSUE: This is not Transactional.
+		for _, ch := range ci.subscribers {
+			// Non-blocking send to avoid blocking on slow receivers
+			select {
+			case ch <- []Candle{c}:
+			default:
+				fmt.Println("Warning: subscriber channel is full, skipping")
+			}
+		}
 	}
 
 	return nil
 }
 
 // IngestRaw1mCandles efficiently ingests raw 1m candles and triggers aggregation
-func (ci *DefaultIngester) IngestRaw1mCandles(candles []Candle) error {
+func (ci *DefaultIngester) IngestRaw1mCandles(ctx context.Context, candles []Candle) error {
 	if len(candles) == 0 {
 		return nil
 	}
@@ -420,6 +411,8 @@ func (ci *DefaultIngester) IngestRaw1mCandles(candles []Candle) error {
 			continue
 		}
 
+		c.Timestamp = c.Timestamp.Truncate(time.Minute)
+
 		oneMCandles = append(oneMCandles, *c)
 		symbols[c.Symbol] = true
 
@@ -434,11 +427,17 @@ func (ci *DefaultIngester) IngestRaw1mCandles(candles []Candle) error {
 	}
 
 	// Save raw 1m candles in one batch operation
-	if err := ci.storage.SaveCandles(oneMCandles); err != nil {
+	if err := ci.storage.SaveCandles(ctx, oneMCandles); err != nil {
 		return fmt.Errorf("failed to save raw 1m candles: %w", err)
 	}
 
-	// Update cache with only the latest candle per symbol
+	for symbol := range symbols {
+		if err := ci.AggregateSymbolToHigherTimeframes(ctx, symbol); err != nil {
+			return fmt.Errorf("failed to aggregate symbol %s: %w", symbol, err)
+		}
+	}
+
+	// ISSUE: This is not Transactional.
 	for symbol, latestCandle := range latestBySymbol {
 		if ci.cache[symbol] == nil {
 			ci.cache[symbol] = make(map[string]*Candle)
@@ -446,194 +445,38 @@ func (ci *DefaultIngester) IngestRaw1mCandles(candles []Candle) error {
 		ci.cache[symbol]["1m"] = latestCandle
 	}
 
-	// Trigger aggregation for each symbol
-	var aggregationErrors []error
-	for symbol := range symbols {
-		if err := ci.aggregateSymbolToHigherTimeframesV2(symbol); err != nil {
-			// Collect errors but continue processing other symbols
-			aggregationErrors = append(aggregationErrors, fmt.Errorf("failed to aggregate symbol %s: %w", symbol, err))
-		}
-	}
-
-	// Report aggregation errors if any occurred
-	if len(aggregationErrors) > 0 {
-		errMsg := "aggregation errors occurred:"
-		for _, err := range aggregationErrors {
-			errMsg += "\n" + err.Error()
-		}
-		return errors.New(errMsg)
-	}
-
-	return nil
-}
-
-func (ci *DefaultIngester) AggregateToHigherTimeframes(c Candle) error {
-	// Get all supported timeframes that are larger than 1m
-	higherTimeframes := GetAggregationTimeframes()
-
-	// Pre-calculate all bucket start times
-	bucketStarts := make(map[string]time.Time)
-	bucketEnds := make(map[string]time.Time)
-	for _, timeframe := range higherTimeframes {
-		dur := GetTimeframeDuration(timeframe)
-		if dur == 0 {
-			continue
-		}
-		bucketStarts[timeframe] = c.Timestamp.Truncate(dur)
-		bucketEnds[timeframe] = bucketStarts[timeframe].Add(dur)
-	}
-
-	// Get all 1m candles for the largest timeframe (which contains all smaller ones)
-	// This reduces multiple database queries to just one
-	largestTimeframe := "1d" // Assuming this is the largest
-	start := bucketStarts[largestTimeframe]
-	end := bucketEnds[largestTimeframe]
-	allOneMins, err := ci.storage.GetCandles(c.Symbol, "1m", start, end)
-	if err != nil {
-		return fmt.Errorf("failed to get 1m candles: %w", err)
-	}
-
-	if len(allOneMins) == 0 {
-		return nil // No candles to aggregate
-	}
-
-	// Get all existing latest candles in one batch query if possible
-	// ISSUE: Batch opt
-	latestCandles := make(map[string]*Candle)
-	for _, timeframe := range higherTimeframes {
-		latest, err := ci.storage.GetLatestCandle(c.Symbol, timeframe)
-		if err != nil {
-			return fmt.Errorf("failed to get latest %s candle: %w", timeframe, err)
-		}
-		latestCandles[timeframe] = latest
-	}
-
-	// Prepare batch updates
-	var updatedCandles []Candle
-	var newCandles []Candle
-
-	for _, timeframe := range higherTimeframes {
-		dur := GetTimeframeDuration(timeframe)
-		if dur == 0 {
-			continue
-		}
-
-		bucketStart := bucketStarts[timeframe]
-		bucketEnd := bucketEnds[timeframe]
-
-		// Filter 1m candles for this bucket
-		var oneMins []Candle
-
-		// ISSUE: Optimize
-		for _, candle := range allOneMins {
-			if !candle.Timestamp.Before(bucketStart) && candle.Timestamp.Before(bucketEnd) {
-				oneMins = append(oneMins, candle)
-			}
-		}
-
-		if len(oneMins) == 0 {
-			// ISSUE:
-			continue
-		}
-
-		latestAgg := latestCandles[timeframe]
-
-		// If we have a latest aggregated candle and it's for the same bucket, update it
-		if latestAgg != nil && latestAgg.Timestamp.Equal(bucketStart) {
-			// Recalculate the entire candle from 1m data for accuracy
-			// ISSUE: What about applying to latestAgg itself?
-			aggregated, err := ci.aggregator.AggregateFrom1m(oneMins, timeframe)
-			if err != nil {
-				return fmt.Errorf("failed to aggregate to %s: %w", timeframe, err)
-			}
-
-			if len(aggregated) > 0 {
-				// Update existing candle with recalculated values
-				updatedCandle := aggregated[0]
-				updatedCandle.Timestamp = latestAgg.Timestamp // Ensure timestamp is preserved
-
-				// Add to batch update
-				updatedCandles = append(updatedCandles, updatedCandle)
-
-				// Update cache
-				if ci.cache[c.Symbol] == nil {
-					ci.cache[c.Symbol] = make(map[string]*Candle)
-				}
-				ci.cache[c.Symbol][timeframe] = &updatedCandle
-			}
-		} else {
-			// Create new aggregated candle
-			// ISSUE: What about applying the 1m candle itself?
-			aggregated, err := ci.aggregator.AggregateFrom1m(oneMins, timeframe)
-			if err != nil {
-				return fmt.Errorf("failed to aggregate to %s: %w", timeframe, err)
-			}
-
-			if len(aggregated) > 0 {
-				// Add to batch insert
-				newCandles = append(newCandles, aggregated...)
-
-				// Update cache
-				if ci.cache[c.Symbol] == nil {
-					ci.cache[c.Symbol] = make(map[string]*Candle)
-				}
-				ci.cache[c.Symbol][timeframe] = &aggregated[len(aggregated)-1]
-			}
-		}
-	}
-
-	// ISSUE: Transactional batch update and insert
-
-	// Perform batch database operations
-	if len(updatedCandles) > 0 {
-		if err := ci.storage.UpdateCandles(updatedCandles); err != nil {
-			return fmt.Errorf("failed to update candles: %w", err)
-		}
-	}
-
-	if len(newCandles) > 0 {
-		if err := ci.storage.SaveConstructedCandles(newCandles); err != nil {
-			return fmt.Errorf("failed to save constructed candles: %w", err)
+	// ISSUE: This is not Transactional.
+	for _, ch := range ci.subscribers {
+		// Non-blocking send to avoid blocking on slow receivers
+		select {
+		case ch <- oneMCandles:
+		default:
+			fmt.Println("Warning: subscriber channel is full, skipping")
 		}
 	}
 
 	return nil
 }
 
-// aggregateSymbolToHigherTimeframes aggregates all 1m candles for a symbol to higher timeframes
-func (ci *DefaultIngester) aggregateSymbolToHigherTimeframes(symbol string) error {
-	// Get the latest 1m candle to determine the time range
-	latest1m, err := ci.storage.GetLatest1mCandle(symbol)
+// AggregateSymbolToHigherTimeframes aggregates all 1m candles for a symbol to higher timeframes
+func (ci *DefaultIngester) AggregateSymbolToHigherTimeframes(ctx context.Context, symbol string) error {
+	latest5m, err := ci.storage.GetLatestCandle(ctx, symbol, "5m")
 	if err != nil {
-		return fmt.Errorf("failed to get latest 1m candle: %w", err)
+		return fmt.Errorf("failed to get latest 5m candle: %w", err)
 	}
 
-	if latest1m == nil {
-		return nil // No 1m candles to aggregate
+	now := time.Now().UTC()
+	var startTime time.Time
+
+	if latest5m != nil {
+		startTime = latest5m.Timestamp.Truncate(24 * time.Hour)
+	} else {
+		// 7 years ago
+		startTime = now.AddDate(-7, 0, 0).Truncate(24 * time.Hour)
 	}
 
-	// Aggregate to all higher timeframes
-	higherTimeframes := GetAggregationTimeframes()
-
-	// Pre-calculate bucket times for all timeframes
-	bucketStarts := make(map[string]time.Time)
-	bucketEnds := make(map[string]time.Time)
-
-	for _, timeframe := range higherTimeframes {
-		dur := GetTimeframeDuration(timeframe)
-		if dur == 0 {
-			continue
-		}
-		bucketStarts[timeframe] = latest1m.Timestamp.Truncate(dur)
-		bucketEnds[timeframe] = bucketStarts[timeframe].Add(dur)
-	}
-
-	// Get 1m candles for the largest timeframe (which contains all smaller ones)
-	largestTimeframe := "1d" // Assuming this is the largest
-	start := bucketStarts[largestTimeframe]
-	end := bucketEnds[largestTimeframe]
-
-	allOneMins, err := ci.storage.GetCandles(symbol, "1m", start, end)
+	// Get all 1m candles for the time range
+	allOneMins, err := ci.storage.GetCandles(ctx, symbol, "1m", startTime, now)
 	if err != nil {
 		return fmt.Errorf("failed to get 1m candles: %w", err)
 	}
@@ -642,19 +485,9 @@ func (ci *DefaultIngester) aggregateSymbolToHigherTimeframes(symbol string) erro
 		return nil
 	}
 
-	// Get all existing latest candles in one batch if possible
-	// If the storage interface doesn't support batch operations, we'll do it one by one
-	latestCandles := make(map[string]*Candle)
-	for _, timeframe := range higherTimeframes {
-		latest, err := ci.storage.GetLatestCandle(symbol, timeframe)
-		if err != nil {
-			return fmt.Errorf("failed to get latest %s candle: %w", timeframe, err)
-		}
-		latestCandles[timeframe] = latest
-	}
-
+	// Aggregate to all higher timeframes
+	higherTimeframes := GetAggregationTimeframes()
 	// Prepare batch updates
-	var updatedCandles []Candle
 	var newCandles []Candle
 
 	for _, timeframe := range higherTimeframes {
@@ -663,181 +496,28 @@ func (ci *DefaultIngester) aggregateSymbolToHigherTimeframes(symbol string) erro
 			continue
 		}
 
-		bucketStart := bucketStarts[timeframe]
-		bucketEnd := bucketEnds[timeframe]
-
-		// Filter 1m candles for this bucket
-		var oneMins []Candle
-		for i := range allOneMins {
-			candle := allOneMins[i]
-			if !candle.Timestamp.Before(bucketStart) && candle.Timestamp.Before(bucketEnd) {
-				oneMins = append(oneMins, candle)
-			}
-		}
-
-		if len(oneMins) == 0 {
-			continue
-		}
-
-		// Aggregate to the target timeframe
-		aggregated, err := ci.aggregator.AggregateFrom1m(oneMins, timeframe)
+		// Aggregate candles for this bucket
+		aggregated, err := ci.aggregator.AggregateFrom1m(allOneMins, timeframe)
 		if err != nil {
-			return fmt.Errorf("failed to aggregate to %s: %w", timeframe, err)
+			return fmt.Errorf("failed to aggregate to %s for bucket %v: %w", timeframe, timeframe, err)
 		}
 
 		if len(aggregated) == 0 {
 			continue
 		}
 
-		latestAgg := latestCandles[timeframe]
-
-		// Check if we need to update an existing candle or create a new one
-		if latestAgg != nil && latestAgg.Timestamp.Equal(bucketStart) {
-			// Update existing candle
-			updatedCandle := aggregated[0]
-			updatedCandle.Timestamp = latestAgg.Timestamp // Ensure timestamp is preserved
-			updatedCandles = append(updatedCandles, updatedCandle)
-		} else {
-			// Add new candles
-			newCandles = append(newCandles, aggregated...)
-		}
-
-		// Update cache with the latest aggregated candle
-		if ci.cache[symbol] == nil {
-			ci.cache[symbol] = make(map[string]*Candle)
-		}
-		ci.cache[symbol][timeframe] = &aggregated[len(aggregated)-1]
-	}
-
-	// ISSUE: Transactional batch update and insert
-
-	// Perform batch database operations
-	if len(updatedCandles) > 0 {
-		if err := ci.storage.UpdateCandles(updatedCandles); err != nil {
-			return fmt.Errorf("failed to update candles: %w", err)
-		}
-	}
-
-	if len(newCandles) > 0 {
-		if err := ci.storage.SaveConstructedCandles(newCandles); err != nil {
-			return fmt.Errorf("failed to save constructed candles: %w", err)
-		}
-	}
-
-	return nil
-}
-
-// aggregateSymbolToHigherTimeframesV2 aggregates all 1m candles for a symbol to higher timeframes
-// ISSUE: There is still opportunities for optimization
-// ISSUE: Not works for 23:55 - 00:15
-func (ci *DefaultIngester) aggregateSymbolToHigherTimeframesV2(symbol string) error {
-	// Get the latest 1m candle to determine the end time
-	latest1m, err := ci.storage.GetLatest1mCandle(symbol)
-	if err != nil {
-		return fmt.Errorf("failed to get latest 1m candle: %w", err)
-	}
-
-	if latest1m == nil {
-		return nil // No 1m candles to aggregate
-	}
-
-	oneDayDur := GetTimeframeDuration("1d")
-	startTime := latest1m.Timestamp.Truncate(oneDayDur)
-
-	// Get all 1m candles for the time range
-	allOneMins, err := ci.storage.GetCandles(symbol, "1m", startTime, latest1m.Timestamp)
-	if err != nil {
-		return fmt.Errorf("failed to get 1m candles: %w", err)
-	}
-
-	if len(allOneMins) == 0 {
-		return nil
-	}
-
-	// Aggregate to all higher timeframes
-	higherTimeframes := GetAggregationTimeframes()
-
-	// Prepare batch updates
-	var updatedCandles []Candle
-	var newCandles []Candle
-
-	for _, timeframe := range higherTimeframes {
-		dur := GetTimeframeDuration(timeframe)
-		if dur == 0 {
-			continue
-		}
-
-		// Round down to the nearest timeframe boundary for start time
-		firstBucketStart := startTime
-
-		idx := 0
-
-		var latestAggCandle Candle
-
-		// ISSUE: Single iteration is enough. Inefficient.
-		// Generate all bucket start times in the range
-		for bucketStart := firstBucketStart; !bucketStart.After(latest1m.Timestamp); bucketStart = bucketStart.Add(dur) {
-			bucketEnd := bucketStart.Add(dur)
-
-			// Filter 1m candles for this bucket
-			var bucketCandles []Candle
-			for ; idx < len(allOneMins) && allOneMins[idx].Timestamp.Before(bucketEnd); idx++ {
-				bucketCandles = append(bucketCandles, allOneMins[idx])
-			}
-
-			if len(bucketCandles) == 0 {
-				continue
-			}
-
-			// Aggregate candles for this bucket
-			aggregated, err := ci.aggregator.AggregateFrom1m(bucketCandles, timeframe)
-			if err != nil {
-				return fmt.Errorf("failed to aggregate to %s for bucket %v: %w",
-					timeframe, bucketStart, err)
-			}
-
-			if len(aggregated) == 0 {
-				continue
-			}
-
-			// ISSUE: Even no need to query. Just insert.
-			// Check if we need to update an existing candle or create a new one
-			existingCandle, err := ci.storage.GetLatestCandleInRange(
-				symbol, timeframe, bucketStart, bucketStart)
-			if err != nil {
-				return fmt.Errorf("failed to check for existing candle: %w", err)
-			}
-
-			if existingCandle != nil && existingCandle.Timestamp.Equal(bucketStart) {
-				// Update existing candle
-				updatedCandle := aggregated[0]
-				updatedCandle.Timestamp = existingCandle.Timestamp // Ensure timestamp is preserved
-				updatedCandles = append(updatedCandles, updatedCandle)
-			} else {
-				// Add new candle
-				newCandles = append(newCandles, aggregated...)
-			}
-
-			latestAggCandle = aggregated[len(aggregated)-1]
-		}
+		newCandles = append(newCandles, aggregated...)
 
 		if ci.cache[symbol] == nil {
 			ci.cache[symbol] = make(map[string]*Candle)
 		}
+		latestAggCandle := aggregated[len(aggregated)-1]
 		ci.cache[symbol][timeframe] = &latestAggCandle
 	}
 
-	// ISSUE: Transactional batch update and insert
-
-	// Perform batch database operations
-	if len(updatedCandles) > 0 {
-		if err := ci.storage.UpdateCandles(updatedCandles); err != nil {
-			return fmt.Errorf("failed to update candles: %w", err)
-		}
-	}
-
+	// NOTE: Very important: In case of conflict, it updates the candle.
 	if len(newCandles) > 0 {
-		if err := ci.storage.SaveConstructedCandles(newCandles); err != nil {
+		if err := ci.storage.SaveConstructedCandles(ctx, newCandles); err != nil {
 			return fmt.Errorf("failed to save constructed candles: %w", err)
 		}
 	}
@@ -846,11 +526,17 @@ func (ci *DefaultIngester) aggregateSymbolToHigherTimeframesV2(symbol string) er
 }
 
 // BulkAggregateFrom1m performs bulk aggregation of 1m candles to all higher timeframes
-// NOTE: start-time must be 00:00
-// NOTE: end-time must be the timestamp of the last 1m candle seen
-func (ci *DefaultIngester) BulkAggregateFrom1m(symbol string, start, end time.Time) error {
+// NOTE: It Truncates start to 00:00
+// NOTE: It Truncates end   to 00:00
+func (ci *DefaultIngester) BulkAggregateFrom1m(ctx context.Context, symbol string, start, end time.Time) error {
+	start = start.Truncate(24 * time.Hour)
+	end = end.Truncate(24 * time.Hour)
+
+	ci.mu.Lock()
+	defer ci.mu.Unlock()
+
 	// Get all 1m candles for the time range in one database query
-	oneMCandles, err := ci.storage.GetCandles(symbol, "1m", start, end)
+	oneMCandles, err := ci.storage.GetCandles(ctx, symbol, "1m", start, end)
 	if err != nil {
 		return fmt.Errorf("failed to get 1m candles: %w", err)
 	}
@@ -865,9 +551,6 @@ func (ci *DefaultIngester) BulkAggregateFrom1m(symbol string, start, end time.Ti
 	// Use a map to collect all constructed candles for batch saving
 	allConstructedCandles := make([]Candle, 0)
 
-	// Track errors but continue processing
-	var aggregationErrors []error
-
 	for _, timeframe := range higherTimeframes {
 		// Skip invalid timeframes
 		if GetTimeframeDuration(timeframe) == 0 {
@@ -877,40 +560,32 @@ func (ci *DefaultIngester) BulkAggregateFrom1m(symbol string, start, end time.Ti
 		// Aggregate candles for this timeframe
 		aggregated, err := ci.aggregator.AggregateFrom1m(oneMCandles, timeframe)
 		if err != nil {
-			aggregationErrors = append(aggregationErrors, fmt.Errorf("failed to aggregate to %s: %w", timeframe, err))
+			return fmt.Errorf("failed to aggregate to %s: %w", timeframe, err)
+		}
+
+		if len(aggregated) == 0 {
 			continue
 		}
 
-		if len(aggregated) > 0 {
-			// Add to batch for saving later
-			allConstructedCandles = append(allConstructedCandles, aggregated...)
+		// Add to batch for saving later
+		allConstructedCandles = append(allConstructedCandles, aggregated...)
 
-			// Update cache with latest candle
-			if ci.cache[symbol] == nil {
-				ci.cache[symbol] = make(map[string]*Candle)
-			}
-			latestCandle := aggregated[len(aggregated)-1]
-			ci.cache[symbol][timeframe] = &latestCandle
-
-			// Log the aggregation result
-			fmt.Printf("Aggregated %d %s constructed candles for %s\n", len(aggregated), timeframe, symbol)
+		// Update cache with latest candle
+		if ci.cache[symbol] == nil {
+			ci.cache[symbol] = make(map[string]*Candle)
 		}
+		latestCandle := aggregated[len(aggregated)-1]
+		ci.cache[symbol][timeframe] = &latestCandle
+
+		// Log the aggregation result
+		log.Printf("Aggregated %d %s constructed candles for %s\n", len(aggregated), timeframe, symbol)
 	}
 
 	// Save all constructed candles in one batch operation
 	if len(allConstructedCandles) > 0 {
-		if err := ci.storage.SaveConstructedCandles(allConstructedCandles); err != nil {
+		if err := ci.storage.SaveConstructedCandles(ctx, allConstructedCandles); err != nil {
 			return fmt.Errorf("failed to save constructed candles: %w", err)
 		}
-	}
-
-	// Report any errors that occurred during aggregation
-	if len(aggregationErrors) > 0 {
-		errMsg := "some aggregation operations failed:"
-		for _, err := range aggregationErrors {
-			errMsg += "\n" + err.Error()
-		}
-		return errors.New(errMsg)
 	}
 
 	return nil
@@ -918,11 +593,18 @@ func (ci *DefaultIngester) BulkAggregateFrom1m(symbol string, start, end time.Ti
 
 // BulkAggregateAllSymbolsFrom1m performs bulk aggregation for all symbols in a given time range
 // using the optimized GetCandlesV2 function which doesn't filter by symbol
-// NOTE: start-time must be 00:00
-// NOTE: end-time must be the timestamp of the last 1m candle seen
-func (ci *DefaultIngester) BulkAggregateAllSymbolsFrom1m(start, end time.Time) error {
+// NOTE: It Truncates start to 00:00
+// NOTE: It Truncates end   to 00:00
+func (ci *DefaultIngester) BulkAggregateAllSymbolsFrom1m(ctx context.Context, start, end time.Time) error {
+	start = start.Truncate(24 * time.Hour)
+	end = end.Truncate(24 * time.Hour)
+
+	// NOTE: Don't lock here.
+	// ci.mu.Lock()
+	// defer ci.mu.Unlock()
+
 	// Get all 1m candles across all symbols in the time range
-	allCandles, err := ci.storage.GetCandlesV2("1m", start, end)
+	allCandles, err := ci.storage.GetCandlesV2(ctx, "1m", start, end)
 	if err != nil {
 		return fmt.Errorf("failed to get 1m candles: %w", err)
 	}
@@ -947,14 +629,12 @@ func (ci *DefaultIngester) BulkAggregateAllSymbolsFrom1m(start, end time.Time) e
 	// Process each symbol
 	for symbol, candles := range symbolCandles {
 		wg.Add(1)
+
 		go func(symbol string, candles []Candle) {
 			defer wg.Done()
 
 			// Aggregate to all higher timeframes
 			allConstructedCandles := make([]Candle, 0, len(candles)) // Pre-allocate with estimated capacity
-
-			// Track errors but continue processing
-			var symbolErrors []error
 
 			for _, timeframe := range higherTimeframes {
 				// Skip invalid timeframes
@@ -965,43 +645,36 @@ func (ci *DefaultIngester) BulkAggregateAllSymbolsFrom1m(start, end time.Time) e
 				// Aggregate candles for this timeframe
 				aggregated, err := ci.aggregator.AggregateFrom1m(candles, timeframe)
 				if err != nil {
-					symbolErrors = append(symbolErrors, fmt.Errorf("failed to aggregate %s to %s: %w", symbol, timeframe, err))
+					errorCh <- fmt.Errorf("failed to aggregate %s to %s: %w", symbol, timeframe, err)
+					return
+				}
+
+				if len(aggregated) == 0 {
 					continue
 				}
 
-				if len(aggregated) > 0 {
-					// Add to batch for saving later
-					allConstructedCandles = append(allConstructedCandles, aggregated...)
+				// Add to batch for saving later
+				allConstructedCandles = append(allConstructedCandles, aggregated...)
 
-					// Update cache with latest candle
-					ci.mu.Lock()
-					if ci.cache[symbol] == nil {
-						ci.cache[symbol] = make(map[string]*Candle)
-					}
-					latestCandle := aggregated[len(aggregated)-1]
-					ci.cache[symbol][timeframe] = &latestCandle
-					ci.mu.Unlock()
-
-					// Log the aggregation result
-					fmt.Printf("Aggregated %d %s constructed candles for %s\n", len(aggregated), timeframe, symbol)
+				// Update cache with latest candle
+				ci.mu.Lock()
+				if ci.cache[symbol] == nil {
+					ci.cache[symbol] = make(map[string]*Candle)
 				}
+				latestCandle := aggregated[len(aggregated)-1]
+				ci.cache[symbol][timeframe] = &latestCandle
+				ci.mu.Unlock()
+
+				// Log the aggregation result
+				log.Printf("Aggregated %d %s constructed candles for %s\n", len(aggregated), timeframe, symbol)
 			}
 
 			// Save all constructed candles for this symbol in one batch operation
 			if len(allConstructedCandles) > 0 {
-				if err := ci.storage.SaveConstructedCandles(allConstructedCandles); err != nil {
+				if err := ci.storage.SaveConstructedCandles(ctx, allConstructedCandles); err != nil {
 					errorCh <- fmt.Errorf("failed to save constructed candles for %s: %w", symbol, err)
 					return
 				}
-			}
-
-			// Report any errors that occurred during aggregation for this symbol
-			if len(symbolErrors) > 0 {
-				errMsg := fmt.Sprintf("aggregation errors for symbol %s:", symbol)
-				for _, err := range symbolErrors {
-					errMsg += "\n" + err.Error()
-				}
-				errorCh <- errors.New(errMsg)
 			}
 		}(symbol, candles)
 	}
@@ -1028,8 +701,8 @@ func (ci *DefaultIngester) BulkAggregateAllSymbolsFrom1m(start, end time.Time) e
 	return nil
 }
 
-// GetLatestCandleFromCache returns the latest candle for a symbol and timeframe
-func (ci *DefaultIngester) GetLatestCandleFromCache(symbol, timeframe string) (*Candle, error) {
+// GetLatestCandle returns the latest candle for a symbol and timeframe
+func (ci *DefaultIngester) GetLatestCandle(ctx context.Context, symbol, timeframe string) (*Candle, error) {
 	ci.mu.RLock()
 	defer ci.mu.RUnlock()
 
@@ -1041,7 +714,7 @@ func (ci *DefaultIngester) GetLatestCandleFromCache(symbol, timeframe string) (*
 	}
 
 	// Fall back to storage
-	c, err := ci.storage.GetLatestCandle(symbol, timeframe)
+	c, err := ci.storage.GetLatestCandle(ctx, symbol, timeframe)
 	if err != nil {
 		return nil, err
 	}
@@ -1053,15 +726,32 @@ func (ci *DefaultIngester) GetLatestCandleFromCache(symbol, timeframe string) (*
 	return c, nil
 }
 
-// GetCandlesFromDB retrieves candles from storage
-func (ci *DefaultIngester) GetCandlesFromDB(symbol, timeframe string, start, end time.Time) ([]Candle, error) {
-	return ci.storage.GetCandles(symbol, timeframe, start, end)
+// CleanupOldData removes old candles to prevent database bloat
+func (ci *DefaultIngester) CleanupOldData(ctx context.Context, symbol, timeframe string, retentionDays int) error {
+	cutoff := time.Now().AddDate(0, 0, -retentionDays)
+	return ci.storage.DeleteCandles(ctx, symbol, timeframe, cutoff)
 }
 
-// CleanupOldData removes old candles to prevent database bloat
-func (ci *DefaultIngester) CleanupOldData(symbol, timeframe string, retentionDays int) error {
-	cutoff := time.Now().AddDate(0, 0, -retentionDays)
-	return ci.storage.DeleteCandles(symbol, timeframe, cutoff)
+func (ci *DefaultIngester) Subscribe() <-chan []Candle {
+	ci.mu.Lock()
+	defer ci.mu.Unlock()
+
+	ch := make(chan []Candle, 10) // buffered channel
+	ci.subscribers = append(ci.subscribers, ch)
+	return ch
+}
+
+func (ci *DefaultIngester) Unsubscribe(ch chan []Candle) {
+	ci.mu.Lock()
+	defer ci.mu.Unlock()
+
+	for i, sub := range ci.subscribers {
+		if sub == ch {
+			close(sub)
+			ci.subscribers = append(ci.subscribers[:i], ci.subscribers[i+1:]...)
+			break
+		}
+	}
 }
 
 // ParseTimeframe parses timeframe string (e.g., "5m", "1h") to time.Duration
@@ -1084,6 +774,63 @@ func ParseTimeframe(timeframe string) (time.Duration, error) {
 	default:
 		return 0, errors.New("unsupported timeframe")
 	}
+}
+
+// GetTimeframeDuration returns the duration for a given timeframe
+func GetTimeframeDuration(timeframe string) time.Duration {
+	switch timeframe {
+	case "1m":
+		return time.Minute
+	case "5m":
+		return 5 * time.Minute
+	case "15m":
+		return 15 * time.Minute
+	case "30m":
+		return 30 * time.Minute
+	case "1h":
+		return time.Hour
+	case "4h":
+		return 4 * time.Hour
+	case "1d":
+		return 24 * time.Hour
+	default:
+		return 0
+	}
+}
+
+func TimeframeMinutes(timeframe string) int {
+	switch timeframe {
+	case "1m":
+		return 1
+	case "5m":
+		return 5
+	case "15m":
+		return 15
+	case "30m":
+		return 30
+	case "1h":
+		return 60
+	case "4h":
+		return 4 * 60
+	case "1d":
+		return 24 * 4 * 60
+	default:
+		return 0
+	}
+}
+
+// GetSupportedTimeframes returns all supported timeframes
+func GetSupportedTimeframes() []string {
+	return []string{"1m", "5m", "15m", "30m", "1h", "4h", "1d"}
+}
+
+func GetAggregationTimeframes() []string {
+	return []string{"5m", "15m", "30m", "1h", "4h", "1d"}
+}
+
+// IsValidTimeframe checks if a timeframe is supported
+func IsValidTimeframe(timeframe string) bool {
+	return GetTimeframeDuration(timeframe) > 0
 }
 
 // Helper functions
