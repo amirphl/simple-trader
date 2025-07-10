@@ -2,25 +2,32 @@
 package exchange
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/amirphl/simple-trader/internal/candle"
 	"github.com/amirphl/simple-trader/internal/market"
+	"github.com/amirphl/simple-trader/internal/notifier"
 	"github.com/amirphl/simple-trader/internal/order"
 	wallex "github.com/wallexchange/wallex-go"
 )
 
+// TODO: Use context
+
 type WallexExchange struct {
-	client *wallex.Client
+	client   *wallex.Client
+	notifier notifier.Notifier
 }
 
-func NewWallexExchange(apiKey string) *WallexExchange {
+func NewWallexExchange(apiKey string, n notifier.Notifier) *WallexExchange {
 	return &WallexExchange{
-		client: wallex.New(wallex.ClientOptions{APIKey: apiKey}),
+		client:   wallex.New(wallex.ClientOptions{APIKey: apiKey}),
+		notifier: n,
 	}
 }
 
@@ -50,25 +57,33 @@ func retry(attempts int, sleep time.Duration, fn func() error) error {
 	return errors.New("all retry attempts failed")
 }
 
-func (w *WallexExchange) FetchCandles(symbol string, timeframe string, start, end int64) ([]candle.Candle, error) {
+func (w *WallexExchange) FetchCandles(ctx context.Context, symbol string, timeframe string, start, end int64) ([]candle.Candle, error) {
 	// Validate timeframe
 	if !candle.IsValidTimeframe(timeframe) {
 		return nil, fmt.Errorf("unsupported timeframe: %s", timeframe)
 	}
 
 	var wallexCandles []*wallex.Candle
-	err := retry(3, 2*time.Second, func() error {
-		from := time.Unix(start, 0)
-		to := time.Unix(end, 0)
-		var err error
-		wallexCandles, err = w.client.Candles(symbol, timeframe, from, to)
+
+	select {
+	case <-ctx.Done():
+		log.Printf("Exchange %s FetchCandles timeout", w.Name())
+		return nil, ctx.Err()
+
+	default:
+		err := retry(3, 2*time.Second, func() error {
+			from := time.Unix(start, 0)
+			to := time.Unix(end, 0)
+			var err error
+			wallexCandles, err = w.client.Candles(symbol, timeframe, from, to)
+			if err != nil {
+				return fmt.Errorf("fetching candles: %w", err)
+			}
+			return nil
+		})
 		if err != nil {
-			return fmt.Errorf("fetching candles: %w", err)
+			return nil, fmt.Errorf("wallex FetchCandles failed: %w", err)
 		}
-		return nil
-	})
-	if err != nil {
-		return nil, fmt.Errorf("wallex FetchCandles failed: %w", err)
 	}
 
 	var candles []candle.Candle
@@ -104,10 +119,10 @@ func (w *WallexExchange) FetchCandles(symbol string, timeframe string, start, en
 }
 
 // FetchCandlesWithRetry fetches candles with configurable retry logic
-func (w *WallexExchange) FetchCandlesWithRetry(symbol string, timeframe string, start, end int64, maxRetries int, retryDelay time.Duration) ([]candle.Candle, error) {
+func (w *WallexExchange) FetchCandlesWithRetry(ctx context.Context, symbol string, timeframe string, start, end int64, maxRetries int, retryDelay time.Duration) ([]candle.Candle, error) {
 	var lastErr error
 	for attempt := 1; attempt <= maxRetries; attempt++ {
-		candles, err := w.FetchCandles(symbol, timeframe, start, end)
+		candles, err := w.FetchCandles(ctx, symbol, timeframe, start, end)
 		if err == nil {
 			return candles, nil
 		}
@@ -122,7 +137,7 @@ func (w *WallexExchange) FetchCandlesWithRetry(symbol string, timeframe string, 
 }
 
 // FetchLatestCandles fetches the most recent candles for a symbol and timeframe
-func (w *WallexExchange) FetchLatestCandles(symbol string, timeframe string, count int) ([]candle.Candle, error) {
+func (w *WallexExchange) FetchLatestCandles(ctx context.Context, symbol string, timeframe string, count int) ([]candle.Candle, error) {
 	end := time.Now()
 	duration := candle.GetTimeframeDuration(timeframe)
 	if duration == 0 {
@@ -132,7 +147,7 @@ func (w *WallexExchange) FetchLatestCandles(symbol string, timeframe string, cou
 	// Calculate start time based on count and timeframe
 	start := end.Add(-duration * time.Duration(count))
 
-	return w.FetchCandles(symbol, timeframe, start.Unix(), end.Unix())
+	return w.FetchCandles(ctx, symbol, timeframe, start.Unix(), end.Unix())
 }
 
 func (w *WallexExchange) FetchOrderBook(symbol string) (market.OrderBook, error) {
@@ -193,7 +208,7 @@ func (w *WallexExchange) SubmitOrder(req order.OrderRequest) (order.OrderRespons
 
 	return order.OrderResponse{
 		OrderID:   resp.ClientOrderID,
-		Status:    resp.Status,
+		Status:    strings.ToUpper(resp.Status),
 		FilledQty: float64Ptr(resp.ExecutedQty),
 		AvgPrice:  float64Ptr(resp.ExecutedPrice),
 		Timestamp: resp.CreatedAt,
@@ -203,6 +218,22 @@ func (w *WallexExchange) SubmitOrder(req order.OrderRequest) (order.OrderRespons
 		Price:     req.Price,
 		Quantity:  req.Quantity,
 	}, nil
+}
+
+func (w *WallexExchange) SubmitOrderWithRetry(req order.OrderRequest, maxAttempts int, delay time.Duration) (order.OrderResponse, error) {
+	var resp order.OrderResponse
+	var err error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		resp, err = w.SubmitOrder(req)
+		if err == nil {
+			return resp, nil
+		}
+		msg := fmt.Sprintf("Order submission failed (attempt %d/%d): %v", attempt, maxAttempts, err)
+		log.Print(msg)
+		w.notifier.SendWithRetry(msg)
+		time.Sleep(delay)
+	}
+	return resp, err
 }
 
 func (w *WallexExchange) CancelOrder(orderID string) error {
@@ -225,7 +256,7 @@ func (w *WallexExchange) GetOrderStatus(orderID string) (order.OrderResponse, er
 	}
 	return order.OrderResponse{
 		OrderID:   resp.ClientOrderID,
-		Status:    resp.Status,
+		Status:    strings.ToUpper(resp.Status),
 		FilledQty: float64Ptr(resp.ExecutedQty),
 		AvgPrice:  float64Ptr(resp.ExecutedPrice),
 		Timestamp: resp.CreatedAt,
