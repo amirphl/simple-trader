@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -35,11 +36,14 @@ func TestPostgresDB_SaveCandle(t *testing.T) {
 			Source:    "test",
 		}
 
-		err := db.SaveCandle(c)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveCandle(ctx, c)
 		assert.NoError(t, err)
 
 		// Verify the candle was saved
-		retrieved, err := db.GetCandle(c.Symbol, c.Timeframe, c.Timestamp, c.Source)
+		retrieved, err := db.GetCandle(ctx, c.Symbol, c.Timeframe, c.Timestamp, c.Source)
 		assert.NoError(t, err)
 		assert.NotNil(t, retrieved)
 		assert.Equal(t, c.Symbol, retrieved.Symbol)
@@ -67,7 +71,10 @@ func TestPostgresDB_SaveCandle(t *testing.T) {
 			Source:    "test",
 		}
 
-		err := db.SaveCandle(c)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveCandle(ctx, c)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "candle timestamp is zero")
 	})
@@ -87,7 +94,10 @@ func TestPostgresDB_SaveCandle(t *testing.T) {
 			Source:    "test",
 		}
 
-		err := db.SaveCandle(c)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveCandle(ctx, c)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "candle prices must be positive")
 	})
@@ -107,7 +117,10 @@ func TestPostgresDB_SaveCandle(t *testing.T) {
 			Source:    "test",
 		}
 
-		err := db.SaveCandle(c)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveCandle(ctx, c)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "candle high cannot be less than low")
 	})
@@ -127,7 +140,10 @@ func TestPostgresDB_SaveCandle(t *testing.T) {
 			Source:    "test",
 		}
 
-		err := db.SaveCandle(c)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveCandle(ctx, c)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "candle open price must be between high and low")
 	})
@@ -147,7 +163,10 @@ func TestPostgresDB_SaveCandle(t *testing.T) {
 			Source:    "test",
 		}
 
-		err := db.SaveCandle(c)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveCandle(ctx, c)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "candle close price must be between high and low")
 	})
@@ -167,7 +186,10 @@ func TestPostgresDB_SaveCandle(t *testing.T) {
 			Source:    "test",
 		}
 
-		err := db.SaveCandle(c)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveCandle(ctx, c)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "candle volume cannot be negative")
 	})
@@ -187,7 +209,10 @@ func TestPostgresDB_SaveCandle(t *testing.T) {
 			Source:    "test",
 		}
 
-		err := db.SaveCandle(c)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveCandle(ctx, c)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "candle symbol cannot be empty")
 	})
@@ -207,7 +232,10 @@ func TestPostgresDB_SaveCandle(t *testing.T) {
 			Source:    "test",
 		}
 
-		err := db.SaveCandle(c)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveCandle(ctx, c)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "candle timeframe cannot be empty")
 	})
@@ -227,11 +255,14 @@ func TestPostgresDB_SaveCandle(t *testing.T) {
 			Source:    "test",
 		}
 
-		err := db.SaveCandle(c)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveCandle(ctx, c)
 		assert.NoError(t, err) // Should accept extreme values as long as they're valid
 
 		// Verify the candle was saved
-		retrieved, err := db.GetCandle(c.Symbol, c.Timeframe, c.Timestamp, c.Source)
+		retrieved, err := db.GetCandle(ctx, c.Symbol, c.Timeframe, c.Timestamp, c.Source)
 		assert.NoError(t, err)
 		assert.NotNil(t, retrieved)
 		assert.Equal(t, c.Open, retrieved.Open)
@@ -256,11 +287,14 @@ func TestPostgresDB_SaveCandle(t *testing.T) {
 			Source:    "test",
 		}
 
-		err := db.SaveCandle(c)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveCandle(ctx, c)
 		assert.NoError(t, err)
 
 		// Verify the candle was saved
-		retrieved, err := db.GetCandle(c.Symbol, c.Timeframe, c.Timestamp, c.Source)
+		retrieved, err := db.GetCandle(ctx, c.Symbol, c.Timeframe, c.Timestamp, c.Source)
 		assert.NoError(t, err)
 		assert.NotNil(t, retrieved)
 		assert.Equal(t, c.Symbol, retrieved.Symbol)
@@ -282,7 +316,10 @@ func TestPostgresDB_SaveCandle(t *testing.T) {
 			Source:    "test",
 		}
 
-		err := db.SaveCandle(c)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveCandle(ctx, c)
 		assert.Error(t, err) // Should fail due to symbol length constraint
 		assert.Contains(t, err.Error(), "value too long for type character varying")
 	})
@@ -337,12 +374,15 @@ func TestPostgresDB_SaveCandles(t *testing.T) {
 			},
 		}
 
-		err := db.SaveCandles(candles)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveCandles(ctx, candles)
 		assert.NoError(t, err)
 
 		// Verify all candles were saved
 		for _, c := range candles {
-			retrieved, err := db.GetCandle(c.Symbol, c.Timeframe, c.Timestamp, c.Source)
+			retrieved, err := db.GetCandle(ctx, c.Symbol, c.Timeframe, c.Timestamp, c.Source)
 			assert.NoError(t, err)
 			assert.NotNil(t, retrieved)
 			assert.Equal(t, c.Symbol, retrieved.Symbol)
@@ -360,7 +400,10 @@ func TestPostgresDB_SaveCandles(t *testing.T) {
 	// Test 2: Save empty slice
 	t.Run("Empty slice", func(t *testing.T) {
 		candles := []candle.Candle{}
-		err := db.SaveCandles(candles)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveCandles(ctx, candles)
 		assert.NoError(t, err) // Should not error with empty slice
 	})
 
@@ -392,7 +435,10 @@ func TestPostgresDB_SaveCandles(t *testing.T) {
 			},
 		}
 
-		err := db.SaveCandles(candles)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveCandles(ctx, candles)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "candle prices must be positive")
 	})
@@ -416,13 +462,16 @@ func TestPostgresDB_SaveCandles(t *testing.T) {
 			}
 		}
 
-		err := db.SaveCandles(candles)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveCandles(ctx, candles)
 		assert.NoError(t, err)
 
 		// Verify a sample of candles were saved
 		for i := 0; i < 10; i += 10 {
 			c := candles[i]
-			retrieved, err := db.GetCandle(c.Symbol, c.Timeframe, c.Timestamp, c.Source)
+			retrieved, err := db.GetCandle(ctx, c.Symbol, c.Timeframe, c.Timestamp, c.Source)
 			assert.NoError(t, err)
 			assert.NotNil(t, retrieved)
 			assert.Equal(t, c.Open, retrieved.Open)
@@ -463,16 +512,19 @@ func TestPostgresDB_SaveCandles(t *testing.T) {
 			Source:    "test",
 		}
 
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
 		// Save first candle
-		err := db.SaveCandles([]candle.Candle{c1})
+		err := db.SaveCandles(ctx, []candle.Candle{c1})
 		assert.NoError(t, err)
 
 		// Save second candle (should update the first)
-		err = db.SaveCandles([]candle.Candle{c2})
+		err = db.SaveCandles(ctx, []candle.Candle{c2})
 		assert.NoError(t, err)
 
 		// Verify the candle was updated
-		retrieved, err := db.GetCandle(c1.Symbol, c1.Timeframe, c1.Timestamp, c1.Source)
+		retrieved, err := db.GetCandle(ctx, c1.Symbol, c1.Timeframe, c1.Timestamp, c1.Source)
 		assert.NoError(t, err)
 		assert.NotNil(t, retrieved)
 		assert.Equal(t, c2.High, retrieved.High) // Should have updated values
@@ -520,12 +572,15 @@ func TestPostgresDB_SaveCandles(t *testing.T) {
 			},
 		}
 
-		err := db.SaveCandles(candles)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveCandles(ctx, candles)
 		assert.NoError(t, err)
 
 		// Verify all candles were saved
 		for _, c := range candles {
-			retrieved, err := db.GetCandle(c.Symbol, c.Timeframe, c.Timestamp, c.Source)
+			retrieved, err := db.GetCandle(ctx, c.Symbol, c.Timeframe, c.Timestamp, c.Source)
 			assert.NoError(t, err)
 			assert.NotNil(t, retrieved)
 			assert.Equal(t, c.Timeframe, retrieved.Timeframe)
@@ -571,12 +626,15 @@ func TestPostgresDB_SaveConstructedCandles(t *testing.T) {
 			},
 		}
 
-		err := db.SaveConstructedCandles(candles)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveConstructedCandles(ctx, candles)
 		assert.NoError(t, err)
 
 		// Verify all candles were saved with "constructed" source
 		for _, c := range candles {
-			retrieved, err := db.GetCandle(c.Symbol, c.Timeframe, c.Timestamp, "constructed")
+			retrieved, err := db.GetCandle(ctx, c.Symbol, c.Timeframe, c.Timestamp, "constructed")
 			assert.NoError(t, err)
 			assert.NotNil(t, retrieved)
 			assert.Equal(t, "constructed", retrieved.Source)
@@ -594,7 +652,10 @@ func TestPostgresDB_SaveConstructedCandles(t *testing.T) {
 	// Test 2: Save empty constructed candles slice
 	t.Run("Empty constructed candles slice", func(t *testing.T) {
 		candles := []candle.Candle{}
-		err := db.SaveConstructedCandles(candles)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveConstructedCandles(ctx, candles)
 		assert.NoError(t, err) // Should not error with empty slice
 	})
 
@@ -626,7 +687,10 @@ func TestPostgresDB_SaveConstructedCandles(t *testing.T) {
 			},
 		}
 
-		err := db.SaveConstructedCandles(candles)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveConstructedCandles(ctx, candles)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "candle prices must be positive")
 	})
@@ -648,7 +712,10 @@ func TestPostgresDB_SaveConstructedCandles(t *testing.T) {
 			Source:    "raw",
 		}
 
-		err := db.SaveCandle(&rawCandle)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveCandle(ctx, &rawCandle)
 		assert.NoError(t, err)
 
 		// Save a constructed candle with same symbol/timeframe/timestamp
@@ -664,17 +731,17 @@ func TestPostgresDB_SaveConstructedCandles(t *testing.T) {
 			Source:    "original", // Will be changed to "constructed"
 		}
 
-		err = db.SaveConstructedCandles([]candle.Candle{constructedCandle})
+		err = db.SaveConstructedCandles(ctx, []candle.Candle{constructedCandle})
 		assert.NoError(t, err)
 
 		// Verify both candles exist with different sources
-		rawRetrieved, err := db.GetCandle(rawCandle.Symbol, rawCandle.Timeframe, rawCandle.Timestamp, "raw")
+		rawRetrieved, err := db.GetCandle(ctx, rawCandle.Symbol, rawCandle.Timeframe, rawCandle.Timestamp, "raw")
 		assert.NoError(t, err)
 		assert.NotNil(t, rawRetrieved)
 		assert.Equal(t, "raw", rawRetrieved.Source)
 		assert.Equal(t, rawCandle.High, rawRetrieved.High)
 
-		constructedRetrieved, err := db.GetCandle(constructedCandle.Symbol, constructedCandle.Timeframe, constructedCandle.Timestamp, "constructed")
+		constructedRetrieved, err := db.GetCandle(ctx, constructedCandle.Symbol, constructedCandle.Timeframe, constructedCandle.Timestamp, "constructed")
 		assert.NoError(t, err)
 		assert.NotNil(t, constructedRetrieved)
 		assert.Equal(t, "constructed", constructedRetrieved.Source)
@@ -686,7 +753,7 @@ func TestPostgresDB_SaveConstructedCandles(t *testing.T) {
 		now := time.Now().UTC().Truncate(time.Minute)
 		candles := make([]candle.Candle, 50)
 
-		for i := 0; i < 50; i++ {
+		for i := range 50 {
 			candles[i] = candle.Candle{
 				Symbol:    "BTC-USDT",
 				Timeframe: "5m",
@@ -700,13 +767,16 @@ func TestPostgresDB_SaveConstructedCandles(t *testing.T) {
 			}
 		}
 
-		err := db.SaveConstructedCandles(candles)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveConstructedCandles(ctx, candles)
 		assert.NoError(t, err)
 
 		// Verify a sample of candles were saved with "constructed" source
 		for i := 0; i < 10; i += 10 {
 			c := candles[i]
-			retrieved, err := db.GetCandle(c.Symbol, c.Timeframe, c.Timestamp, "constructed")
+			retrieved, err := db.GetCandle(ctx, c.Symbol, c.Timeframe, c.Timestamp, "constructed")
 			assert.NoError(t, err)
 			assert.NotNil(t, retrieved)
 			assert.Equal(t, "constructed", retrieved.Source)
@@ -779,12 +849,15 @@ func TestPostgresDB_SaveConstructedCandles(t *testing.T) {
 			},
 		}
 
-		err := db.SaveConstructedCandles(candles)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveConstructedCandles(ctx, candles)
 		assert.NoError(t, err)
 
 		// Verify all candles were saved with "constructed" source
 		for _, c := range candles {
-			retrieved, err := db.GetCandle(c.Symbol, c.Timeframe, c.Timestamp, "constructed")
+			retrieved, err := db.GetCandle(ctx, c.Symbol, c.Timeframe, c.Timestamp, "constructed")
 			assert.NoError(t, err)
 			assert.NotNil(t, retrieved)
 			assert.Equal(t, "constructed", retrieved.Source)
@@ -818,12 +891,15 @@ func TestPostgresDB_GetCandle(t *testing.T) {
 		Source:    "test",
 	}
 
-	err = db.SaveCandle(&testCandle)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	err = db.SaveCandle(ctx, &testCandle)
 	require.NoError(t, err)
 
 	// Test 1: Get existing candle
 	t.Run("Get existing candle", func(t *testing.T) {
-		c, err := db.GetCandle("BTC-USDT", "1m", now, "test")
+		c, err := db.GetCandle(ctx, "BTC-USDT", "1m", now, "test")
 		assert.NoError(t, err)
 		assert.NotNil(t, c)
 		assert.Equal(t, "BTC-USDT", c.Symbol)
@@ -839,21 +915,21 @@ func TestPostgresDB_GetCandle(t *testing.T) {
 
 	// Test 2: Get non-existent candle
 	t.Run("Get non-existent candle", func(t *testing.T) {
-		c, err := db.GetCandle("BTC-USDT", "1m", now.Add(time.Hour), "test")
+		c, err := db.GetCandle(ctx, "BTC-USDT", "1m", now.Add(time.Hour), "test")
 		assert.NoError(t, err)
 		assert.Nil(t, c)
 	})
 
 	// Test 3: Get candle with different source
 	t.Run("Get candle with wrong source", func(t *testing.T) {
-		c, err := db.GetCandle("BTC-USDT", "1m", now, "wrong-source")
+		c, err := db.GetCandle(ctx, "BTC-USDT", "1m", now, "wrong-source")
 		assert.NoError(t, err)
 		assert.Nil(t, c)
 	})
 
 	// Test 4: Get candle with invalid parameters
 	t.Run("Get candle with empty symbol", func(t *testing.T) {
-		c, err := db.GetCandle("", "1m", now, "test")
+		c, err := db.GetCandle(ctx, "", "1m", now, "test")
 		assert.NoError(t, err)
 		assert.Nil(t, c)
 	})
@@ -908,7 +984,10 @@ func TestPostgresDB_GetCandles(t *testing.T) {
 		},
 	}
 
-	err = db.SaveCandles(candles)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	err = db.SaveCandles(ctx, candles)
 	require.NoError(t, err)
 
 	// Test 1: Get multiple candles for one symbol
@@ -916,7 +995,7 @@ func TestPostgresDB_GetCandles(t *testing.T) {
 		start := now.Add(-5 * time.Minute)
 		end := now.Add(5 * time.Minute)
 
-		result, err := db.GetCandles("BTC-USDT", "1m", start, end)
+		result, err := db.GetCandles(ctx, "BTC-USDT", "1m", start, end)
 		assert.NoError(t, err)
 		assert.Len(t, result, 2)
 
@@ -929,7 +1008,7 @@ func TestPostgresDB_GetCandles(t *testing.T) {
 		start := now.Add(-5 * time.Hour)
 		end := now.Add(-1 * time.Hour)
 
-		result, err := db.GetCandles("BTC-USDT", "1m", start, end)
+		result, err := db.GetCandles(ctx, "BTC-USDT", "1m", start, end)
 		assert.NoError(t, err)
 		assert.Empty(t, result)
 	})
@@ -939,7 +1018,7 @@ func TestPostgresDB_GetCandles(t *testing.T) {
 		start := now.Add(5 * time.Minute)
 		end := now.Add(-5 * time.Minute)
 
-		result, err := db.GetCandles("BTC-USDT", "1m", start, end)
+		result, err := db.GetCandles(ctx, "BTC-USDT", "1m", start, end)
 		assert.NoError(t, err)
 		assert.Empty(t, result)
 	})
@@ -949,7 +1028,7 @@ func TestPostgresDB_GetCandles(t *testing.T) {
 		start := now.Add(-5 * time.Minute)
 		end := now.Add(5 * time.Minute)
 
-		result, err := db.GetCandles("BTC-USDT", "5m", start, end)
+		result, err := db.GetCandles(ctx, "BTC-USDT", "5m", start, end)
 		assert.NoError(t, err)
 		assert.Empty(t, result)
 	})
@@ -1015,7 +1094,10 @@ func TestPostgresDB_GetCandlesV2(t *testing.T) {
 		},
 	}
 
-	err = db.SaveCandles(candles)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	err = db.SaveCandles(ctx, candles)
 	require.NoError(t, err)
 
 	// Test 1: Get all candles with specific timeframe
@@ -1023,7 +1105,7 @@ func TestPostgresDB_GetCandlesV2(t *testing.T) {
 		start := now.Add(-5 * time.Minute)
 		end := now.Add(5 * time.Minute)
 
-		result, err := db.GetCandlesV2("1m", start, end)
+		result, err := db.GetCandlesV2(ctx, "1m", start, end)
 		assert.NoError(t, err)
 		assert.Len(t, result, 3)
 
@@ -1042,7 +1124,7 @@ func TestPostgresDB_GetCandlesV2(t *testing.T) {
 		start := now.Add(-5 * time.Minute)
 		end := now.Add(5 * time.Minute)
 
-		result, err := db.GetCandlesV2("15m", start, end)
+		result, err := db.GetCandlesV2(ctx, "15m", start, end)
 		assert.NoError(t, err)
 		assert.Empty(t, result)
 	})
@@ -1052,7 +1134,7 @@ func TestPostgresDB_GetCandlesV2(t *testing.T) {
 		start := now.Add(-1 * time.Second)
 		end := now.Add(1 * time.Second)
 
-		result, err := db.GetCandlesV2("1m", start, end)
+		result, err := db.GetCandlesV2(ctx, "1m", start, end)
 		assert.NoError(t, err)
 		// May return results if now is exactly on a minute boundary
 		for _, c := range result {
@@ -1065,7 +1147,7 @@ func TestPostgresDB_GetCandlesV2(t *testing.T) {
 		start := now.Add(-365 * 24 * time.Hour) // 1 year ago
 		end := now.Add(365 * 24 * time.Hour)    // 1 year in future
 
-		result, err := db.GetCandlesV2("1m", start, end)
+		result, err := db.GetCandlesV2(ctx, "1m", start, end)
 		assert.NoError(t, err)
 		assert.GreaterOrEqual(t, len(result), 3) // At least our 3 candles should be there
 
@@ -1124,7 +1206,10 @@ func TestPostgresDB_GetCandlesInRange(t *testing.T) {
 		},
 	}
 
-	err = db.SaveCandles(candles)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	err = db.SaveCandles(ctx, candles)
 	require.NoError(t, err)
 
 	// Test 1: Get candles with source filter
@@ -1132,7 +1217,7 @@ func TestPostgresDB_GetCandlesInRange(t *testing.T) {
 		start := now.Add(-5 * time.Minute)
 		end := now.Add(5 * time.Minute)
 
-		result, err := db.GetCandlesInRange("BTC-USDT", "1m", start, end, "test1")
+		result, err := db.GetCandlesInRange(ctx, "BTC-USDT", "1m", start, end, "test1")
 		assert.NoError(t, err)
 		assert.Len(t, result, 2)
 
@@ -1146,7 +1231,7 @@ func TestPostgresDB_GetCandlesInRange(t *testing.T) {
 		start := now.Add(-5 * time.Minute)
 		end := now.Add(5 * time.Minute)
 
-		result, err := db.GetCandlesInRange("BTC-USDT", "1m", start, end, "")
+		result, err := db.GetCandlesInRange(ctx, "BTC-USDT", "1m", start, end, "")
 		assert.NoError(t, err)
 		assert.Len(t, result, 3)
 	})
@@ -1156,7 +1241,7 @@ func TestPostgresDB_GetCandlesInRange(t *testing.T) {
 		start := now.Add(-5 * time.Minute)
 		end := now.Add(5 * time.Minute)
 
-		result, err := db.GetCandlesInRange("BTC-USDT", "1m", start, end, "non-existent")
+		result, err := db.GetCandlesInRange(ctx, "BTC-USDT", "1m", start, end, "non-existent")
 		assert.NoError(t, err)
 		assert.Empty(t, result)
 	})
@@ -1166,7 +1251,7 @@ func TestPostgresDB_GetCandlesInRange(t *testing.T) {
 		start := now.Add(-time.Minute)
 		end := now.Add(-time.Minute)
 
-		result, err := db.GetCandlesInRange("BTC-USDT", "1m", start, end, "")
+		result, err := db.GetCandlesInRange(ctx, "BTC-USDT", "1m", start, end, "")
 		assert.NoError(t, err)
 		assert.Len(t, result, 1)
 		assert.Equal(t, start.Unix(), result[0].Timestamp.Unix())
@@ -1222,7 +1307,10 @@ func TestPostgresDB_GetConstructedCandles(t *testing.T) {
 		},
 	}
 
-	err = db.SaveCandles(candles)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	err = db.SaveCandles(ctx, candles)
 	require.NoError(t, err)
 
 	// Test 1: Get constructed candles for BTC
@@ -1230,7 +1318,7 @@ func TestPostgresDB_GetConstructedCandles(t *testing.T) {
 		start := now.Add(-5 * time.Minute)
 		end := now.Add(5 * time.Minute)
 
-		result, err := db.GetConstructedCandles("BTC-USDT", "1m", start, end)
+		result, err := db.GetConstructedCandles(ctx, "BTC-USDT", "1m", start, end)
 		assert.NoError(t, err)
 		assert.Len(t, result, 1)
 		assert.Equal(t, "constructed", result[0].Source)
@@ -1242,7 +1330,7 @@ func TestPostgresDB_GetConstructedCandles(t *testing.T) {
 		start := now.Add(-5 * time.Minute)
 		end := now.Add(5 * time.Minute)
 
-		result, err := db.GetConstructedCandles("ETH-USDT", "1m", start, end)
+		result, err := db.GetConstructedCandles(ctx, "ETH-USDT", "1m", start, end)
 		assert.NoError(t, err)
 		assert.Len(t, result, 1)
 		assert.Equal(t, "constructed", result[0].Source)
@@ -1254,7 +1342,7 @@ func TestPostgresDB_GetConstructedCandles(t *testing.T) {
 		start := now.Add(-5 * time.Minute)
 		end := now.Add(5 * time.Minute)
 
-		result, err := db.GetConstructedCandles("LTC-USDT", "1m", start, end)
+		result, err := db.GetConstructedCandles(ctx, "LTC-USDT", "1m", start, end)
 		assert.NoError(t, err)
 		assert.Empty(t, result)
 	})
@@ -1264,7 +1352,7 @@ func TestPostgresDB_GetConstructedCandles(t *testing.T) {
 		start := now.Add(-5 * time.Minute)
 		end := now.Add(5 * time.Minute)
 
-		result, err := db.GetConstructedCandles("BTC-USDT", "5m", start, end)
+		result, err := db.GetConstructedCandles(ctx, "BTC-USDT", "5m", start, end)
 		assert.NoError(t, err)
 		assert.Empty(t, result)
 	})
@@ -1330,7 +1418,10 @@ func TestPostgresDB_GetRawCandles(t *testing.T) {
 		},
 	}
 
-	err = db.SaveCandles(candles)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	err = db.SaveCandles(ctx, candles)
 	require.NoError(t, err)
 
 	// Test 1: Get raw candles for BTC
@@ -1338,7 +1429,7 @@ func TestPostgresDB_GetRawCandles(t *testing.T) {
 		start := now.Add(-5 * time.Minute)
 		end := now.Add(5 * time.Minute)
 
-		result, err := db.GetRawCandles("BTC-USDT", "1m", start, end)
+		result, err := db.GetRawCandles(ctx, "BTC-USDT", "1m", start, end)
 		assert.NoError(t, err)
 		assert.Len(t, result, 2)
 
@@ -1353,7 +1444,7 @@ func TestPostgresDB_GetRawCandles(t *testing.T) {
 		start := now.Add(-5 * time.Minute)
 		end := now.Add(5 * time.Minute)
 
-		result, err := db.GetRawCandles("ETH-USDT", "1m", start, end)
+		result, err := db.GetRawCandles(ctx, "ETH-USDT", "1m", start, end)
 		assert.NoError(t, err)
 		assert.Len(t, result, 1)
 		assert.NotEqual(t, "constructed", result[0].Source)
@@ -1365,7 +1456,7 @@ func TestPostgresDB_GetRawCandles(t *testing.T) {
 		start := now.Add(-5 * time.Minute)
 		end := now.Add(5 * time.Minute)
 
-		result, err := db.GetRawCandles("LTC-USDT", "1m", start, end)
+		result, err := db.GetRawCandles(ctx, "LTC-USDT", "1m", start, end)
 		assert.NoError(t, err)
 		assert.Empty(t, result)
 	})
@@ -1375,7 +1466,7 @@ func TestPostgresDB_GetRawCandles(t *testing.T) {
 		start := now.Add(-5 * time.Minute)
 		end := now.Add(5 * time.Minute)
 
-		result, err := db.GetRawCandles("BTC-USDT", "5m", start, end)
+		result, err := db.GetRawCandles(ctx, "BTC-USDT", "5m", start, end)
 		assert.NoError(t, err)
 		assert.Empty(t, result)
 	})
@@ -1386,12 +1477,12 @@ func TestPostgresDB_GetRawCandles(t *testing.T) {
 		end := now.Add(5 * time.Minute)
 
 		// Get all candles
-		allCandles, err := db.GetCandles("BTC-USDT", "1m", start, end)
+		allCandles, err := db.GetCandles(ctx, "BTC-USDT", "1m", start, end)
 		assert.NoError(t, err)
 		assert.Len(t, allCandles, 3) // Should include constructed ones
 
 		// Get raw candles
-		rawCandles, err := db.GetRawCandles("BTC-USDT", "1m", start, end)
+		rawCandles, err := db.GetRawCandles(ctx, "BTC-USDT", "1m", start, end)
 		assert.NoError(t, err)
 		assert.Len(t, rawCandles, 2) // Should exclude constructed ones
 
@@ -1453,11 +1544,14 @@ func TestPostgresDB_GetLatestCandle(t *testing.T) {
 			},
 		}
 
-		err := db.SaveCandles(candles)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveCandles(ctx, candles)
 		require.NoError(t, err)
 
 		// Get latest candle
-		latest, err := db.GetLatestCandle("BTC-USDT", "1m")
+		latest, err := db.GetLatestCandle(ctx, "BTC-USDT", "1m")
 		assert.NoError(t, err)
 		require.NotNil(t, latest)
 
@@ -1472,7 +1566,10 @@ func TestPostgresDB_GetLatestCandle(t *testing.T) {
 
 	// Test 2: Get latest candle when none exist
 	t.Run("Get latest when none exist", func(t *testing.T) {
-		latest, err := db.GetLatestCandle("NON-EXISTENT", "1m")
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		latest, err := db.GetLatestCandle(ctx, "NON-EXISTENT", "1m")
 		assert.NoError(t, err)
 		assert.Nil(t, latest)
 	})
@@ -1516,11 +1613,14 @@ func TestPostgresDB_GetLatestCandle(t *testing.T) {
 			},
 		}
 
-		err := db.SaveCandles(candles)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveCandles(ctx, candles)
 		require.NoError(t, err)
 
 		// Get latest 5m candle
-		latest, err := db.GetLatestCandle("ETH-USDT", "5m")
+		latest, err := db.GetLatestCandle(ctx, "ETH-USDT", "5m")
 		assert.NoError(t, err)
 		require.NotNil(t, latest)
 
@@ -1558,11 +1658,14 @@ func TestPostgresDB_GetLatestCandle(t *testing.T) {
 			},
 		}
 
-		err := db.SaveCandles(candles)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveCandles(ctx, candles)
 		require.NoError(t, err)
 
 		// Get latest candle (should be the latest regardless of source)
-		latest, err := db.GetLatestCandle("LTC-USDT", "1m")
+		latest, err := db.GetLatestCandle(ctx, "LTC-USDT", "1m")
 		assert.NoError(t, err)
 		require.NotNil(t, latest)
 
@@ -1577,7 +1680,10 @@ func TestPostgresDB_GetLatestCandle(t *testing.T) {
 
 	// Test 5: Get latest with empty string parameters (edge case)
 	t.Run("Get latest with empty params", func(t *testing.T) {
-		latest, err := db.GetLatestCandle("", "")
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		latest, err := db.GetLatestCandle(ctx, "", "")
 		assert.NoError(t, err) // Should not error but return nil
 		assert.Nil(t, latest)
 	})
@@ -1634,7 +1740,10 @@ func TestPostgresDB_GetLatestCandleInRange(t *testing.T) {
 			},
 		}
 
-		err := db.SaveCandles(candles)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveCandles(ctx, candles)
 		require.NoError(t, err)
 
 		// Define range to include only the middle candle
@@ -1642,7 +1751,7 @@ func TestPostgresDB_GetLatestCandleInRange(t *testing.T) {
 		end := now.Add(-2*time.Hour + 10*time.Minute)
 
 		// Get latest candle in range
-		latest, err := db.GetLatestCandleInRange("BTC-USDT", "1m", start, end)
+		latest, err := db.GetLatestCandleInRange(ctx, "BTC-USDT", "1m", start, end)
 		assert.NoError(t, err)
 		require.NotNil(t, latest)
 
@@ -1660,8 +1769,11 @@ func TestPostgresDB_GetLatestCandleInRange(t *testing.T) {
 		start := now.Add(-30 * time.Minute)
 		end := now.Add(-15 * time.Minute)
 
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
 		// Get latest candle in range
-		latest, err := db.GetLatestCandleInRange("BTC-USDT", "1m", start, end)
+		latest, err := db.GetLatestCandleInRange(ctx, "BTC-USDT", "1m", start, end)
 		assert.NoError(t, err)
 		assert.Nil(t, latest) // No candles in range
 	})
@@ -1683,7 +1795,10 @@ func TestPostgresDB_GetLatestCandleInRange(t *testing.T) {
 			Source:    "test",
 		}
 
-		err := db.SaveCandle(&testCandle)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveCandle(ctx, &testCandle)
 		require.NoError(t, err)
 
 		// Define range with exact start and end time
@@ -1691,7 +1806,7 @@ func TestPostgresDB_GetLatestCandleInRange(t *testing.T) {
 		end := exactTime
 
 		// Get latest candle in range
-		latest, err := db.GetLatestCandleInRange("ETH-USDT", "1m", start, end)
+		latest, err := db.GetLatestCandleInRange(ctx, "ETH-USDT", "1m", start, end)
 		assert.NoError(t, err)
 		require.NotNil(t, latest)
 
@@ -1706,8 +1821,11 @@ func TestPostgresDB_GetLatestCandleInRange(t *testing.T) {
 		start := now
 		end := now.Add(-1 * time.Hour)
 
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
 		// Get latest candle in range (should return nil)
-		latest, err := db.GetLatestCandleInRange("BTC-USDT", "1m", start, end)
+		latest, err := db.GetLatestCandleInRange(ctx, "BTC-USDT", "1m", start, end)
 		assert.NoError(t, err)
 		assert.Nil(t, latest) // Invalid range, should return nil
 	})
@@ -1742,7 +1860,10 @@ func TestPostgresDB_GetLatestCandleInRange(t *testing.T) {
 			},
 		}
 
-		err := db.SaveCandles(candles)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveCandles(ctx, candles)
 		require.NoError(t, err)
 
 		// Define range to include this timestamp
@@ -1750,7 +1871,7 @@ func TestPostgresDB_GetLatestCandleInRange(t *testing.T) {
 		end := sameTime.Add(10 * time.Minute)
 
 		// Get latest candle in range
-		latest, err := db.GetLatestCandleInRange("XRP-USDT", "1m", start, end)
+		latest, err := db.GetLatestCandleInRange(ctx, "XRP-USDT", "1m", start, end)
 		assert.NoError(t, err)
 		require.NotNil(t, latest)
 
@@ -1814,11 +1935,14 @@ func TestPostgresDB_GetLatestConstructedCandle(t *testing.T) {
 			},
 		}
 
-		err := db.SaveCandles(candles)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveCandles(ctx, candles)
 		require.NoError(t, err)
 
 		// Get latest constructed candle
-		latest, err := db.GetLatestConstructedCandle("BTC-USDT", "1h")
+		latest, err := db.GetLatestConstructedCandle(ctx, "BTC-USDT", "1h")
 		assert.NoError(t, err)
 		require.NotNil(t, latest)
 
@@ -1833,7 +1957,10 @@ func TestPostgresDB_GetLatestConstructedCandle(t *testing.T) {
 
 	// Test 2: Get latest constructed candle when none exist
 	t.Run("Get latest constructed candle when none exist", func(t *testing.T) {
-		latest, err := db.GetLatestConstructedCandle("NON-EXISTENT", "1h")
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		latest, err := db.GetLatestConstructedCandle(ctx, "NON-EXISTENT", "1h")
 		assert.NoError(t, err)
 		assert.Nil(t, latest)
 	})
@@ -1877,11 +2004,14 @@ func TestPostgresDB_GetLatestConstructedCandle(t *testing.T) {
 			},
 		}
 
-		err := db.SaveCandles(candles)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveCandles(ctx, candles)
 		require.NoError(t, err)
 
 		// Get latest 4h constructed candle
-		latest, err := db.GetLatestConstructedCandle("ETH-USDT", "4h")
+		latest, err := db.GetLatestConstructedCandle(ctx, "ETH-USDT", "4h")
 		assert.NoError(t, err)
 		require.NotNil(t, latest)
 
@@ -1920,18 +2050,24 @@ func TestPostgresDB_GetLatestConstructedCandle(t *testing.T) {
 			},
 		}
 
-		err := db.SaveCandles(candles)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveCandles(ctx, candles)
 		require.NoError(t, err)
 
 		// Get latest constructed candle (should be nil)
-		latest, err := db.GetLatestConstructedCandle("LTC-USDT", "1h")
+		latest, err := db.GetLatestConstructedCandle(ctx, "LTC-USDT", "1h")
 		assert.NoError(t, err)
 		assert.Nil(t, latest) // No constructed candles
 	})
 
 	// Test 5: Get latest constructed with empty string parameters (edge case)
 	t.Run("Get latest constructed with empty params", func(t *testing.T) {
-		latest, err := db.GetLatestConstructedCandle("", "")
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		latest, err := db.GetLatestConstructedCandle(ctx, "", "")
 		assert.NoError(t, err) // Should not error but return nil
 		assert.Nil(t, latest)
 	})
@@ -1988,11 +2124,14 @@ func TestPostgresDB_GetLatest1mCandle(t *testing.T) {
 			},
 		}
 
-		err := db.SaveCandles(candles)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveCandles(ctx, candles)
 		require.NoError(t, err)
 
 		// Get latest 1m candle
-		latest, err := db.GetLatest1mCandle("BTC-USDT")
+		latest, err := db.GetLatest1mCandle(ctx, "BTC-USDT")
 		assert.NoError(t, err)
 		require.NotNil(t, latest)
 
@@ -2008,7 +2147,10 @@ func TestPostgresDB_GetLatest1mCandle(t *testing.T) {
 
 	// Test 2: Get latest 1m candle when none exist
 	t.Run("Get latest 1m candle when none exist", func(t *testing.T) {
-		latest, err := db.GetLatest1mCandle("NON-EXISTENT")
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		latest, err := db.GetLatest1mCandle(ctx, "NON-EXISTENT")
 		assert.NoError(t, err)
 		assert.Nil(t, latest)
 	})
@@ -2041,11 +2183,14 @@ func TestPostgresDB_GetLatest1mCandle(t *testing.T) {
 			},
 		}
 
-		err := db.SaveCandles(candles)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveCandles(ctx, candles)
 		require.NoError(t, err)
 
 		// Get latest 1m candle (should be nil)
-		latest, err := db.GetLatest1mCandle("ETH-USDT")
+		latest, err := db.GetLatest1mCandle(ctx, "ETH-USDT")
 		assert.NoError(t, err)
 		assert.Nil(t, latest) // No 1m candles
 	})
@@ -2078,11 +2223,14 @@ func TestPostgresDB_GetLatest1mCandle(t *testing.T) {
 			},
 		}
 
-		err := db.SaveCandles(candles)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveCandles(ctx, candles)
 		require.NoError(t, err)
 
 		// Get latest 1m candle
-		latest, err := db.GetLatest1mCandle("XRP-USDT")
+		latest, err := db.GetLatest1mCandle(ctx, "XRP-USDT")
 		assert.NoError(t, err)
 		require.NotNil(t, latest)
 
@@ -2097,7 +2245,10 @@ func TestPostgresDB_GetLatest1mCandle(t *testing.T) {
 
 	// Test 5: Get latest 1m candle with empty symbol (edge case)
 	t.Run("Get latest 1m candle with empty symbol", func(t *testing.T) {
-		latest, err := db.GetLatest1mCandle("")
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		latest, err := db.GetLatest1mCandle(ctx, "")
 		assert.NoError(t, err) // Should not error but return nil
 		assert.Nil(t, latest)
 	})
@@ -2117,12 +2268,15 @@ func TestPostgresDB_GetLatest1mCandle(t *testing.T) {
 			Source:    "test",
 		}
 
-		err := db.SaveCandle(&testCandle)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveCandle(ctx, &testCandle)
 		require.NoError(t, err)
 
 		// Get with both methods
-		latest1, err1 := db.GetLatest1mCandle("DOGE-USDT")
-		latest2, err2 := db.GetLatestCandle("DOGE-USDT", "1m")
+		latest1, err1 := db.GetLatest1mCandle(ctx, "DOGE-USDT")
+		latest2, err2 := db.GetLatestCandle(ctx, "DOGE-USDT", "1m")
 
 		// Verify both return the same result
 		assert.NoError(t, err1)
@@ -2194,25 +2348,28 @@ func TestPostgresDB_DeleteCandles(t *testing.T) {
 			},
 		}
 
-		err := db.SaveCandles(candles)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveCandles(ctx, candles)
 		require.NoError(t, err)
 
 		// Verify candles were saved
-		count, err := db.GetCandleCount("BTC-USDT", "1m", now.Add(-4*time.Hour), now)
+		count, err := db.GetCandleCount(ctx, "BTC-USDT", "1m", now.Add(-4*time.Hour), now)
 		require.NoError(t, err)
 		assert.Equal(t, 3, count)
 
 		// Delete candles older than 2 hours ago
-		err = db.DeleteCandles("BTC-USDT", "1m", now.Add(-2*time.Hour))
+		err = db.DeleteCandles(ctx, "BTC-USDT", "1m", now.Add(-2*time.Hour))
 		assert.NoError(t, err)
 
 		// Verify candles were deleted
-		count, err = db.GetCandleCount("BTC-USDT", "1m", now.Add(-4*time.Hour), now)
+		count, err = db.GetCandleCount(ctx, "BTC-USDT", "1m", now.Add(-4*time.Hour), now)
 		require.NoError(t, err)
 		assert.Equal(t, 2, count) // Only 2 candles should remain
 
 		// Verify the specific candles that remain
-		remainingCandles, err := db.GetCandles("BTC-USDT", "1m", now.Add(-4*time.Hour), now)
+		remainingCandles, err := db.GetCandles(ctx, "BTC-USDT", "1m", now.Add(-4*time.Hour), now)
 		require.NoError(t, err)
 		assert.Len(t, remainingCandles, 2)
 
@@ -2261,25 +2418,28 @@ func TestPostgresDB_DeleteCandles(t *testing.T) {
 			},
 		}
 
-		err := db.SaveCandles(candles)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveCandles(ctx, candles)
 		require.NoError(t, err)
 
 		// Delete only ETH-USDT 1m candles
-		err = db.DeleteCandles("ETH-USDT", "1m", now)
+		err = db.DeleteCandles(ctx, "ETH-USDT", "1m", now)
 		assert.NoError(t, err)
 
 		// Verify ETH-USDT 1m candles were deleted
-		count, err := db.GetCandleCount("ETH-USDT", "1m", now.Add(-4*time.Hour), now)
+		count, err := db.GetCandleCount(ctx, "ETH-USDT", "1m", now.Add(-4*time.Hour), now)
 		require.NoError(t, err)
 		assert.Equal(t, 0, count)
 
 		// Verify ETH-USDT 5m candles still exist
-		count, err = db.GetCandleCount("ETH-USDT", "5m", now.Add(-4*time.Hour), now)
+		count, err = db.GetCandleCount(ctx, "ETH-USDT", "5m", now.Add(-4*time.Hour), now)
 		require.NoError(t, err)
 		assert.Equal(t, 1, count)
 
 		// Verify LTC-USDT 1m candles still exist
-		count, err = db.GetCandleCount("LTC-USDT", "1m", now.Add(-4*time.Hour), now)
+		count, err = db.GetCandleCount(ctx, "LTC-USDT", "1m", now.Add(-4*time.Hour), now)
 		require.NoError(t, err)
 		assert.Equal(t, 1, count)
 	})
@@ -2299,22 +2459,28 @@ func TestPostgresDB_DeleteCandles(t *testing.T) {
 			Source:    "test",
 		}
 
-		err := db.SaveCandle(&testCandle)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveCandle(ctx, &testCandle)
 		require.NoError(t, err)
 
 		// Try to delete with a timestamp in the future
-		err = db.DeleteCandles("XRP-USDT", "1m", now.Add(1*time.Hour))
+		err = db.DeleteCandles(ctx, "XRP-USDT", "1m", now.Add(1*time.Hour))
 		assert.NoError(t, err) // Should not error, but delete nothing
 
 		// Verify candle still exists
-		count, err := db.GetCandleCount("XRP-USDT", "1m", now.Add(-1*time.Hour), now.Add(1*time.Hour))
+		count, err := db.GetCandleCount(ctx, "XRP-USDT", "1m", now.Add(-1*time.Hour), now.Add(1*time.Hour))
 		require.NoError(t, err)
 		assert.Equal(t, 0, count)
 	})
 
 	// Test 4: Delete for non-existent symbol (should not error)
 	t.Run("Delete for non-existent symbol", func(t *testing.T) {
-		err := db.DeleteCandles("NON-EXISTENT", "1m", now)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.DeleteCandles(ctx, "NON-EXISTENT", "1m", now)
 		assert.NoError(t, err) // Should not error for non-existent symbols
 	})
 }
@@ -2370,17 +2536,20 @@ func TestPostgresDB_DeleteCandlesInRange(t *testing.T) {
 			},
 		}
 
-		err := db.SaveCandles(candles)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveCandles(ctx, candles)
 		require.NoError(t, err)
 
 		// Delete candles in range with source1
 		start := now.Add(-2*time.Hour - 30*time.Minute)
 		end := now.Add(-1*time.Hour - 30*time.Minute)
-		err = db.DeleteCandlesInRange("BTC-USDT", "1m", start, end, "source1")
+		err = db.DeleteCandlesInRange(ctx, "BTC-USDT", "1m", start, end, "source1")
 		assert.NoError(t, err)
 
 		// Verify only source1 candles in the range were deleted
-		remainingCandles, err := db.GetCandles("BTC-USDT", "1m", now.Add(-4*time.Hour), now)
+		remainingCandles, err := db.GetCandles(ctx, "BTC-USDT", "1m", now.Add(-4*time.Hour), now)
 		require.NoError(t, err)
 		assert.Len(t, remainingCandles, 2) // One source1 and one source2 should remain
 
@@ -2432,17 +2601,20 @@ func TestPostgresDB_DeleteCandlesInRange(t *testing.T) {
 			},
 		}
 
-		err := db.SaveCandles(candles)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveCandles(ctx, candles)
 		require.NoError(t, err)
 
 		// Delete all candles in range regardless of source
 		start := now.Add(-2*time.Hour - 30*time.Minute)
 		end := now.Add(-1*time.Hour - 30*time.Minute)
-		err = db.DeleteCandlesInRange("ETH-USDT", "1m", start, end, "")
+		err = db.DeleteCandlesInRange(ctx, "ETH-USDT", "1m", start, end, "")
 		assert.NoError(t, err)
 
 		// Verify all candles in the range were deleted, regardless of source
-		remainingCandles, err := db.GetCandles("ETH-USDT", "1m", now.Add(-4*time.Hour), now)
+		remainingCandles, err := db.GetCandles(ctx, "ETH-USDT", "1m", now.Add(-4*time.Hour), now)
 		require.NoError(t, err)
 		assert.Len(t, remainingCandles, 2) // Only the oldest and newest should remain
 
@@ -2472,15 +2644,18 @@ func TestPostgresDB_DeleteCandlesInRange(t *testing.T) {
 			Source:    "test",
 		}
 
-		err := db.SaveCandle(&testCandle)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveCandle(ctx, &testCandle)
 		require.NoError(t, err)
 
 		// Delete with exact start and end time
-		err = db.DeleteCandlesInRange("LTC-USDT", "1m", exactTime, exactTime, "")
+		err = db.DeleteCandlesInRange(ctx, "LTC-USDT", "1m", exactTime, exactTime, "")
 		assert.NoError(t, err)
 
 		// Verify candle was deleted
-		count, err := db.GetCandleCount("LTC-USDT", "1m", exactTime, exactTime)
+		count, err := db.GetCandleCount(ctx, "LTC-USDT", "1m", exactTime, exactTime)
 		require.NoError(t, err)
 		assert.Equal(t, 0, count)
 	})
@@ -2500,17 +2675,20 @@ func TestPostgresDB_DeleteCandlesInRange(t *testing.T) {
 			Source:    "test",
 		}
 
-		err := db.SaveCandle(&testCandle)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveCandle(ctx, &testCandle)
 		require.NoError(t, err)
 
 		// Try to delete with end before start
 		start := now.Add(-4 * time.Hour)
 		end := now.Add(-6 * time.Hour)
-		err = db.DeleteCandlesInRange("XRP-USDT", "1m", start, end, "")
+		err = db.DeleteCandlesInRange(ctx, "XRP-USDT", "1m", start, end, "")
 		assert.NoError(t, err) // Should not error, but delete nothing
 
 		// Verify candle still exists
-		count, err := db.GetCandleCount("XRP-USDT", "1m", now.Add(-6*time.Hour), now.Add(-4*time.Hour))
+		count, err := db.GetCandleCount(ctx, "XRP-USDT", "1m", now.Add(-6*time.Hour), now.Add(-4*time.Hour))
 		require.NoError(t, err)
 		assert.Equal(t, 1, count)
 	})
@@ -2519,7 +2697,10 @@ func TestPostgresDB_DeleteCandlesInRange(t *testing.T) {
 	t.Run("Delete for non-existent data", func(t *testing.T) {
 		start := now.Add(-3 * time.Hour)
 		end := now.Add(-1 * time.Hour)
-		err := db.DeleteCandlesInRange("NON-EXISTENT", "1m", start, end, "")
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.DeleteCandlesInRange(ctx, "NON-EXISTENT", "1m", start, end, "")
 		assert.NoError(t, err) // Should not error for non-existent symbols
 	})
 }
@@ -2599,29 +2780,32 @@ func TestPostgresDB_DeleteConstructedCandles(t *testing.T) {
 			},
 		}
 
-		err := db.SaveCandles(candles)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveCandles(ctx, candles)
 		require.NoError(t, err)
 
 		// Verify candles were saved
-		constructedCount, err := db.GetConstructedCandleCount("BTC-USDT", "5m", now.Add(-4*time.Hour), now)
+		constructedCount, err := db.GetConstructedCandleCount(ctx, "BTC-USDT", "5m", now.Add(-4*time.Hour), now)
 		require.NoError(t, err)
 		assert.Equal(t, 3, constructedCount)
 
-		rawCount, err := db.GetCandleCount("BTC-USDT", "5m", now.Add(-4*time.Hour), now)
+		rawCount, err := db.GetCandleCount(ctx, "BTC-USDT", "5m", now.Add(-4*time.Hour), now)
 		require.NoError(t, err)
 		assert.Equal(t, 5, rawCount) // Total of 5 candles (3 constructed + 2 raw)
 
 		// Delete constructed candles older than 2 hours ago
-		err = db.DeleteConstructedCandles("BTC-USDT", "5m", now.Add(-1*time.Hour))
+		err = db.DeleteConstructedCandles(ctx, "BTC-USDT", "5m", now.Add(-1*time.Hour))
 		assert.NoError(t, err)
 
 		// Verify only constructed candles were deleted
-		constructedCount, err = db.GetConstructedCandleCount("BTC-USDT", "5m", now.Add(-4*time.Hour), now)
+		constructedCount, err = db.GetConstructedCandleCount(ctx, "BTC-USDT", "5m", now.Add(-4*time.Hour), now)
 		require.NoError(t, err)
 		assert.Equal(t, 1, constructedCount) // Only the newest constructed candle should remain
 
 		// Verify raw candles are unaffected
-		rawCandles, err := db.GetRawCandles("BTC-USDT", "5m", now.Add(-4*time.Hour), now)
+		rawCandles, err := db.GetRawCandles(ctx, "BTC-USDT", "5m", now.Add(-4*time.Hour), now)
 		require.NoError(t, err)
 		assert.Len(t, rawCandles, 2) // All raw candles should remain
 	})
@@ -2654,20 +2838,23 @@ func TestPostgresDB_DeleteConstructedCandles(t *testing.T) {
 			},
 		}
 
-		err := db.SaveCandles(candles)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveCandles(ctx, candles)
 		require.NoError(t, err)
 
 		// Delete only 15m constructed candles
-		err = db.DeleteConstructedCandles("ETH-USDT", "15m", now)
+		err = db.DeleteConstructedCandles(ctx, "ETH-USDT", "15m", now)
 		assert.NoError(t, err)
 
 		// Verify 15m constructed candles were deleted
-		count, err := db.GetConstructedCandleCount("ETH-USDT", "15m", now.Add(-4*time.Hour), now)
+		count, err := db.GetConstructedCandleCount(ctx, "ETH-USDT", "15m", now.Add(-4*time.Hour), now)
 		require.NoError(t, err)
 		assert.Equal(t, 0, count)
 
 		// Verify 1h constructed candles still exist
-		count, err = db.GetConstructedCandleCount("ETH-USDT", "1h", now.Add(-4*time.Hour), now)
+		count, err = db.GetConstructedCandleCount(ctx, "ETH-USDT", "1h", now.Add(-4*time.Hour), now)
 		require.NoError(t, err)
 		assert.Equal(t, 1, count)
 	})
@@ -2687,22 +2874,28 @@ func TestPostgresDB_DeleteConstructedCandles(t *testing.T) {
 			Source:    "constructed",
 		}
 
-		err := db.SaveCandle(&testCandle)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveCandle(ctx, &testCandle)
 		require.NoError(t, err)
 
 		// Try to delete with a timestamp in the future
-		err = db.DeleteConstructedCandles("XRP-USDT", "1h", now.Add(1*time.Hour))
+		err = db.DeleteConstructedCandles(ctx, "XRP-USDT", "1h", now.Add(1*time.Hour))
 		assert.NoError(t, err) // Should not error, but delete nothing
 
 		// Verify candle still exists
-		count, err := db.GetConstructedCandleCount("XRP-USDT", "1h", now.Add(-1*time.Hour), now.Add(1*time.Hour))
+		count, err := db.GetConstructedCandleCount(ctx, "XRP-USDT", "1h", now.Add(-1*time.Hour), now.Add(1*time.Hour))
 		require.NoError(t, err)
 		assert.Equal(t, 0, count)
 	})
 
 	// Test 4: Delete for non-existent symbol (should not error)
 	t.Run("Delete for non-existent symbol", func(t *testing.T) {
-		err := db.DeleteConstructedCandles("NON-EXISTENT", "1h", now)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.DeleteConstructedCandles(ctx, "NON-EXISTENT", "1h", now)
 		assert.NoError(t, err) // Should not error for non-existent symbols
 	})
 
@@ -2734,19 +2927,22 @@ func TestPostgresDB_DeleteConstructedCandles(t *testing.T) {
 			},
 		}
 
-		err := db.SaveCandles(candles)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveCandles(ctx, candles)
 		require.NoError(t, err)
 
 		// Delete LTC-USDT constructed candles
-		err = db.DeleteConstructedCandles("LTC-USDT", "4h", now)
+		err = db.DeleteConstructedCandles(ctx, "LTC-USDT", "4h", now)
 		assert.NoError(t, err)
 
 		// Verify LTC-USDT candles were deleted but DOT-USDT candles remain
-		ltcCount, err := db.GetConstructedCandleCount("LTC-USDT", "4h", now.Add(-4*time.Hour), now)
+		ltcCount, err := db.GetConstructedCandleCount(ctx, "LTC-USDT", "4h", now.Add(-4*time.Hour), now)
 		require.NoError(t, err)
 		assert.Equal(t, 0, ltcCount)
 
-		dotCount, err := db.GetConstructedCandleCount("DOT-USDT", "4h", now.Add(-4*time.Hour), now)
+		dotCount, err := db.GetConstructedCandleCount(ctx, "DOT-USDT", "4h", now.Add(-4*time.Hour), now)
 		require.NoError(t, err)
 		assert.Equal(t, 1, dotCount)
 	})
@@ -2803,18 +2999,24 @@ func TestPostgresDB_GetCandleCount(t *testing.T) {
 			},
 		}
 
-		err := db.SaveCandles(candles)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveCandles(ctx, candles)
 		require.NoError(t, err)
 
 		// Count all candles
-		count, err := db.GetCandleCount("BTC-USDT", "1m", now.Add(-4*time.Hour), now)
+		count, err := db.GetCandleCount(ctx, "BTC-USDT", "1m", now.Add(-4*time.Hour), now)
 		assert.NoError(t, err)
 		assert.Equal(t, 3, count)
 	})
 
 	// Test 2: Count candles with empty result
 	t.Run("Count with empty result", func(t *testing.T) {
-		count, err := db.GetCandleCount("NON-EXISTENT", "1m", now.Add(-4*time.Hour), now)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		count, err := db.GetCandleCount(ctx, "NON-EXISTENT", "1m", now.Add(-4*time.Hour), now)
 		assert.NoError(t, err)
 		assert.Equal(t, 0, count)
 	})
@@ -2847,11 +3049,14 @@ func TestPostgresDB_GetCandleCount(t *testing.T) {
 			},
 		}
 
-		err := db.SaveCandles(candles)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveCandles(ctx, candles)
 		require.NoError(t, err)
 
 		// Count only 5m candles
-		count, err := db.GetCandleCount("ETH-USDT", "5m", now.Add(-1*time.Hour), now.Add(1*time.Hour))
+		count, err := db.GetCandleCount(ctx, "ETH-USDT", "5m", now.Add(-1*time.Hour), now.Add(1*time.Hour))
 		assert.NoError(t, err)
 		assert.Equal(t, 1, count)
 	})
@@ -2873,11 +3078,14 @@ func TestPostgresDB_GetCandleCount(t *testing.T) {
 			Source:    "test",
 		}
 
-		err := db.SaveCandle(&testCandle)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveCandle(ctx, &testCandle)
 		require.NoError(t, err)
 
 		// Count with exact start and end time
-		count, err := db.GetCandleCount("LTC-USDT", "1m", exactTime, exactTime)
+		count, err := db.GetCandleCount(ctx, "LTC-USDT", "1m", exactTime, exactTime)
 		assert.NoError(t, err)
 		assert.Equal(t, 1, count)
 	})
@@ -2889,7 +3097,10 @@ func TestPostgresDB_GetCandleCount(t *testing.T) {
 		end := now.Add(-1 * time.Hour)
 
 		// Should return 0 for inverted range
-		count, err := db.GetCandleCount("BTC-USDT", "1m", start, end)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		count, err := db.GetCandleCount(ctx, "BTC-USDT", "1m", start, end)
 		assert.NoError(t, err)
 		assert.Equal(t, 0, count)
 	})
@@ -2924,11 +3135,14 @@ func TestPostgresDB_GetCandleCount(t *testing.T) {
 			},
 		}
 
-		err := db.SaveCandles(candles)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveCandles(ctx, candles)
 		require.NoError(t, err)
 
 		// Count should include both sources
-		count, err := db.GetCandleCount("XRP-USDT", "1m", sameTime.Add(-1*time.Minute), sameTime.Add(1*time.Minute))
+		count, err := db.GetCandleCount(ctx, "XRP-USDT", "1m", sameTime.Add(-1*time.Minute), sameTime.Add(1*time.Minute))
 		assert.NoError(t, err)
 		assert.Equal(t, 2, count)
 	})
@@ -2985,23 +3199,29 @@ func TestPostgresDB_GetConstructedCandleCount(t *testing.T) {
 			},
 		}
 
-		err := db.SaveCandles(candles)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveCandles(ctx, candles)
 		require.NoError(t, err)
 
 		// Count only constructed candles
-		count, err := db.GetConstructedCandleCount("BTC-USDT", "1h", now.Add(-4*time.Hour), now)
+		count, err := db.GetConstructedCandleCount(ctx, "BTC-USDT", "1h", now.Add(-4*time.Hour), now)
 		assert.NoError(t, err)
 		assert.Equal(t, 2, count)
 
 		// Verify total count includes all candles
-		totalCount, err := db.GetCandleCount("BTC-USDT", "1h", now.Add(-4*time.Hour), now)
+		totalCount, err := db.GetCandleCount(ctx, "BTC-USDT", "1h", now.Add(-4*time.Hour), now)
 		assert.NoError(t, err)
 		assert.Equal(t, 3, totalCount)
 	})
 
 	// Test 2: Count constructed candles with empty result
 	t.Run("Count constructed with empty result", func(t *testing.T) {
-		count, err := db.GetConstructedCandleCount("NON-EXISTENT", "1h", now.Add(-4*time.Hour), now)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		count, err := db.GetConstructedCandleCount(ctx, "NON-EXISTENT", "1h", now.Add(-4*time.Hour), now)
 		assert.NoError(t, err)
 		assert.Equal(t, 0, count)
 	})
@@ -3034,11 +3254,14 @@ func TestPostgresDB_GetConstructedCandleCount(t *testing.T) {
 			},
 		}
 
-		err := db.SaveCandles(candles)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveCandles(ctx, candles)
 		require.NoError(t, err)
 
 		// Count only 4h constructed candles
-		count, err := db.GetConstructedCandleCount("ETH-USDT", "4h", now.Add(-1*time.Hour), now.Add(1*time.Hour))
+		count, err := db.GetConstructedCandleCount(ctx, "ETH-USDT", "4h", now.Add(-1*time.Hour), now.Add(1*time.Hour))
 		assert.NoError(t, err)
 		assert.Equal(t, 1, count)
 	})
@@ -3060,11 +3283,14 @@ func TestPostgresDB_GetConstructedCandleCount(t *testing.T) {
 			Source:    "constructed",
 		}
 
-		err := db.SaveCandle(&testCandle)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveCandle(ctx, &testCandle)
 		require.NoError(t, err)
 
 		// Count with exact start and end time
-		count, err := db.GetConstructedCandleCount("LTC-USDT", "1h", exactTime, exactTime)
+		count, err := db.GetConstructedCandleCount(ctx, "LTC-USDT", "1h", exactTime, exactTime)
 		assert.NoError(t, err)
 		assert.Equal(t, 1, count)
 	})
@@ -3097,11 +3323,14 @@ func TestPostgresDB_GetConstructedCandleCount(t *testing.T) {
 			},
 		}
 
-		err := db.SaveCandles(candles)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveCandles(ctx, candles)
 		require.NoError(t, err)
 
 		// Count constructed candles (should be 0)
-		count, err := db.GetConstructedCandleCount("XRP-USDT", "1h", now.Add(-2*time.Hour), now.Add(1*time.Hour))
+		count, err := db.GetConstructedCandleCount(ctx, "XRP-USDT", "1h", now.Add(-2*time.Hour), now.Add(1*time.Hour))
 		assert.NoError(t, err)
 		assert.Equal(t, 0, count)
 	})
@@ -3134,7 +3363,10 @@ func TestPostgresDB_UpdateCandle(t *testing.T) {
 			Source:    "test",
 		}
 
-		err := db.SaveCandle(&initialCandle)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveCandle(ctx, &initialCandle)
 		require.NoError(t, err)
 
 		// Create updated candle with same key but different values
@@ -3151,11 +3383,11 @@ func TestPostgresDB_UpdateCandle(t *testing.T) {
 		}
 
 		// Update the candle
-		err = db.UpdateCandle(updatedCandle)
+		err = db.UpdateCandle(ctx, updatedCandle)
 		assert.NoError(t, err)
 
 		// Verify candle was updated
-		retrievedCandle, err := db.GetCandle("BTC-USDT", "1m", now, "test")
+		retrievedCandle, err := db.GetCandle(ctx, "BTC-USDT", "1m", now, "test")
 		require.NoError(t, err)
 		require.NotNil(t, retrievedCandle)
 
@@ -3180,8 +3412,11 @@ func TestPostgresDB_UpdateCandle(t *testing.T) {
 			Source:    "test",
 		}
 
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
 		// Try to update non-existent candle
-		err = db.UpdateCandle(nonExistentCandle)
+		err = db.UpdateCandle(ctx, nonExistentCandle)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "no candle found to update")
 	})
@@ -3201,7 +3436,10 @@ func TestPostgresDB_UpdateCandle(t *testing.T) {
 			Source:    "test",
 		}
 
-		err := db.SaveCandle(&initialCandle)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveCandle(ctx, &initialCandle)
 		require.NoError(t, err)
 
 		// Create invalid candle (negative price)
@@ -3218,7 +3456,7 @@ func TestPostgresDB_UpdateCandle(t *testing.T) {
 		}
 
 		// Try to update with invalid data
-		err = db.UpdateCandle(invalidCandle)
+		err = db.UpdateCandle(ctx, invalidCandle)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid candle for update")
 	})
@@ -3238,7 +3476,10 @@ func TestPostgresDB_UpdateCandle(t *testing.T) {
 			Source:    "source1",
 		}
 
-		err := db.SaveCandle(&initialCandle)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveCandle(ctx, &initialCandle)
 		require.NoError(t, err)
 
 		// Create updated candle with source2 (different primary key)
@@ -3255,7 +3496,7 @@ func TestPostgresDB_UpdateCandle(t *testing.T) {
 		}
 
 		// Try to update - should fail as this is effectively a new candle
-		err = db.UpdateCandle(updatedCandle)
+		err = db.UpdateCandle(ctx, updatedCandle)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "no candle found to update")
 	})
@@ -3301,7 +3542,10 @@ func TestPostgresDB_UpdateCandles(t *testing.T) {
 			},
 		}
 
-		err := db.SaveCandles(initialCandles)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveCandles(ctx, initialCandles)
 		require.NoError(t, err)
 
 		// Create updated candles
@@ -3331,12 +3575,12 @@ func TestPostgresDB_UpdateCandles(t *testing.T) {
 		}
 
 		// Update the candles
-		err = db.UpdateCandles(updatedCandles)
+		err = db.UpdateCandles(ctx, updatedCandles)
 		assert.NoError(t, err)
 
 		// Verify candles were updated
 		for _, updatedCandle := range updatedCandles {
-			retrievedCandle, err := db.GetCandle(updatedCandle.Symbol, updatedCandle.Timeframe, updatedCandle.Timestamp, updatedCandle.Source)
+			retrievedCandle, err := db.GetCandle(ctx, updatedCandle.Symbol, updatedCandle.Timeframe, updatedCandle.Timestamp, updatedCandle.Source)
 			require.NoError(t, err)
 			require.NotNil(t, retrievedCandle)
 
@@ -3352,8 +3596,11 @@ func TestPostgresDB_UpdateCandles(t *testing.T) {
 	t.Run("Update with empty slice", func(t *testing.T) {
 		emptyCandles := []candle.Candle{}
 
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
 		// Update with empty slice
-		err = db.UpdateCandles(emptyCandles)
+		err = db.UpdateCandles(ctx, emptyCandles)
 		assert.NoError(t, err) // Should not error with empty slice
 	})
 
@@ -3373,8 +3620,11 @@ func TestPostgresDB_UpdateCandles(t *testing.T) {
 			},
 		}
 
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
 		// Try to update non-existent candles
-		err = db.UpdateCandles(nonExistentCandles)
+		err = db.UpdateCandles(ctx, nonExistentCandles)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "no candles were updated")
 	})
@@ -3394,7 +3644,10 @@ func TestPostgresDB_UpdateCandles(t *testing.T) {
 			Source:    "test",
 		}
 
-		err := db.SaveCandle(&existingCandle)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveCandle(ctx, &existingCandle)
 		require.NoError(t, err)
 
 		// Create mix of existing and non-existent candles
@@ -3425,11 +3678,11 @@ func TestPostgresDB_UpdateCandles(t *testing.T) {
 
 		// Try to update mixed candles
 		// This should succeed because at least one candle was updated
-		err = db.UpdateCandles(mixedCandles)
+		err = db.UpdateCandles(ctx, mixedCandles)
 		assert.NoError(t, err)
 
 		// Verify the existing candle was updated
-		retrievedCandle, err := db.GetCandle("ETH-USDT", "1m", now, "test")
+		retrievedCandle, err := db.GetCandle(ctx, "ETH-USDT", "1m", now, "test")
 		require.NoError(t, err)
 		require.NotNil(t, retrievedCandle)
 
@@ -3455,7 +3708,10 @@ func TestPostgresDB_UpdateCandles(t *testing.T) {
 			Source:    "test",
 		}
 
-		err := db.SaveCandle(&validCandle)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := db.SaveCandle(ctx, &validCandle)
 		require.NoError(t, err)
 
 		// Try to update with invalid data
@@ -3474,7 +3730,7 @@ func TestPostgresDB_UpdateCandles(t *testing.T) {
 		}
 
 		// Update should fail validation
-		err = db.UpdateCandles(invalidCandles)
+		err = db.UpdateCandles(ctx, invalidCandles)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid candle for update")
 	})

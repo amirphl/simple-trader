@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -14,6 +15,9 @@ import (
 	_ "github.com/lib/pq"
 )
 
+// TODO: TX from context
+// If exists use it otherwise only create for insert, update, and delete.
+
 type Default struct {
 	db *sql.DB
 }
@@ -23,7 +27,7 @@ func New(c conf.Config) (*Default, error) {
 }
 
 // SaveCandle saves a single candle to the database
-func (p *Default) SaveCandle(c *candle.Candle) error {
+func (p *Default) SaveCandle(ctx context.Context, c *candle.Candle) error {
 	// Validate candle before saving
 	if err := c.Validate(); err != nil {
 		return fmt.Errorf("invalid candle for %s %s at %s: %w", c.Symbol, c.Timeframe, c.Timestamp, err)
@@ -43,7 +47,7 @@ func (p *Default) SaveCandle(c *candle.Candle) error {
 	return nil
 }
 
-func (p *Default) SaveCandles(candles []candle.Candle) error {
+func (p *Default) SaveCandles(ctx context.Context, candles []candle.Candle) error {
 	if len(candles) == 0 {
 		return nil
 	}
@@ -70,7 +74,7 @@ func (p *Default) SaveCandles(candles []candle.Candle) error {
 	query := `INSERT INTO candles (symbol, timeframe, timestamp, open, high, low, close, volume, source)
 		VALUES `
 
-	args := []interface{}{}
+	args := []any{}
 	paramCount := 0
 
 	for i, c := range candles {
@@ -104,7 +108,7 @@ func (p *Default) SaveCandles(candles []candle.Candle) error {
 }
 
 // SaveConstructedCandles efficiently saves constructed (aggregated) candles
-func (p *Default) SaveConstructedCandles(candles []candle.Candle) error {
+func (p *Default) SaveConstructedCandles(ctx context.Context, candles []candle.Candle) error {
 	if len(candles) == 0 {
 		return nil
 	}
@@ -114,12 +118,12 @@ func (p *Default) SaveConstructedCandles(candles []candle.Candle) error {
 		candles[i].Source = "constructed"
 	}
 
-	return p.SaveCandles(candles)
+	return p.SaveCandles(ctx, candles)
 }
 
 // SaveRaw1mCandles efficiently saves raw 1m candles with optimized batch processing
 // TODO: TX
-func (p *Default) SaveRaw1mCandles(candles []candle.Candle) error {
+func (p *Default) SaveRaw1mCandles(ctx context.Context, candles []candle.Candle) error {
 	if len(candles) == 0 {
 		return nil
 	}
@@ -130,15 +134,15 @@ func (p *Default) SaveRaw1mCandles(candles []candle.Candle) error {
 		}
 	}
 
-	return p.SaveCandles(candles)
+	return p.SaveCandles(ctx, candles)
 }
 
 // Get1mCandlesForAggregation efficiently retrieves 1m candles for aggregation
-func (p *Default) Get1mCandlesForAggregation(symbol string, start, end time.Time) ([]candle.Candle, error) {
+func (p *Default) Get1mCandlesForAggregation(ctx context.Context, symbol string, start, end time.Time) ([]candle.Candle, error) {
 	rows, err := p.db.Query(`
 		SELECT timestamp, open, high, low, close, volume, symbol, timeframe, source 
 		FROM candles 
-		WHERE symbol=$1 AND timeframe='1m' AND timestamp >= $2 AND timestamp <= $3 
+		WHERE symbol=$1 AND timeframe='1m' AND timestamp >= $2 AND timestamp < $3 
 		ORDER BY timestamp ASC`,
 		symbol, start, end)
 	if err != nil {
@@ -159,11 +163,11 @@ func (p *Default) Get1mCandlesForAggregation(symbol string, start, end time.Time
 }
 
 // GetCandles retrieves candles with optimized querying
-func (p *Default) GetCandles(symbol, timeframe string, start, end time.Time) ([]candle.Candle, error) {
+func (p *Default) GetCandles(ctx context.Context, symbol, timeframe string, start, end time.Time) ([]candle.Candle, error) {
 	rows, err := p.db.Query(`
 		SELECT timestamp, open, high, low, close, volume, symbol, timeframe, source 
 		FROM candles 
-		WHERE symbol=$1 AND timeframe=$2 AND timestamp >= $3 AND timestamp <= $4 
+		WHERE symbol=$1 AND timeframe=$2 AND timestamp >= $3 AND timestamp < $4 
 		ORDER BY timestamp ASC`,
 		symbol, timeframe, start, end)
 	if err != nil {
@@ -186,11 +190,11 @@ func (p *Default) GetCandles(symbol, timeframe string, start, end time.Time) ([]
 
 // GetCandlesV2 retrieves candles with a specific timeframe in a time range without filtering by symbol
 // This is useful for bulk operations across all symbols
-func (p *Default) GetCandlesV2(timeframe string, start, end time.Time) ([]candle.Candle, error) {
+func (p *Default) GetCandlesV2(ctx context.Context, timeframe string, start, end time.Time) ([]candle.Candle, error) {
 	query := `
 		SELECT timestamp, open, high, low, close, volume, symbol, timeframe, source 
 		FROM candles 
-		WHERE timeframe=$1 AND timestamp >= $2 AND timestamp <= $3 
+		WHERE timeframe=$1 AND timestamp >= $2 AND timestamp < $3 
 		ORDER BY symbol, timestamp ASC`
 
 	rows, err := p.db.Query(query, timeframe, start, end)
@@ -220,11 +224,11 @@ func (p *Default) GetCandlesV2(timeframe string, start, end time.Time) ([]candle
 }
 
 // GetCandlesInRange retrieves candles in a specific time range for a symbol and timeframe
-func (p *Default) GetCandlesInRange(symbol, timeframe string, start, end time.Time, source string) ([]candle.Candle, error) {
+func (p *Default) GetCandlesInRange(ctx context.Context, symbol, timeframe string, start, end time.Time, source string) ([]candle.Candle, error) {
 	query := `
 		SELECT timestamp, open, high, low, close, volume, symbol, timeframe, source 
 		FROM candles 
-		WHERE symbol=$1 AND timeframe=$2 AND timestamp >= $3 AND timestamp <= $4`
+		WHERE symbol=$1 AND timeframe=$2 AND timestamp >= $3 AND timestamp < $4`
 	args := []any{symbol, timeframe, start, end}
 
 	if source != "" {
@@ -258,11 +262,11 @@ func (p *Default) GetCandlesInRange(symbol, timeframe string, start, end time.Ti
 }
 
 // GetConstructedCandles retrieves only constructed candles
-func (p *Default) GetConstructedCandles(symbol, timeframe string, start, end time.Time) ([]candle.Candle, error) {
+func (p *Default) GetConstructedCandles(ctx context.Context, symbol, timeframe string, start, end time.Time) ([]candle.Candle, error) {
 	rows, err := p.db.Query(`
 		SELECT timestamp, open, high, low, close, volume, symbol, timeframe, source 
 		FROM candles 
-		WHERE symbol=$1 AND timeframe=$2 AND source='constructed' AND timestamp >= $3 AND timestamp <= $4 
+		WHERE symbol=$1 AND timeframe=$2 AND source='constructed' AND timestamp >= $3 AND timestamp < $4 
 		ORDER BY timestamp ASC`,
 		symbol, timeframe, start, end)
 	if err != nil {
@@ -284,11 +288,11 @@ func (p *Default) GetConstructedCandles(symbol, timeframe string, start, end tim
 }
 
 // GetRawCandles retrieves only raw candles (not constructed)
-func (p *Default) GetRawCandles(symbol, timeframe string, start, end time.Time) ([]candle.Candle, error) {
+func (p *Default) GetRawCandles(ctx context.Context, symbol, timeframe string, start, end time.Time) ([]candle.Candle, error) {
 	rows, err := p.db.Query(`
 		SELECT timestamp, open, high, low, close, volume, symbol, timeframe, source 
 		FROM candles 
-		WHERE symbol=$1 AND timeframe=$2 AND source != 'constructed' AND timestamp >= $3 AND timestamp <= $4 
+		WHERE symbol=$1 AND timeframe=$2 AND source != 'constructed' AND timestamp >= $3 AND timestamp < $4 
 		ORDER BY timestamp ASC`,
 		symbol, timeframe, start, end)
 	if err != nil {
@@ -310,7 +314,7 @@ func (p *Default) GetRawCandles(symbol, timeframe string, start, end time.Time) 
 }
 
 // GetLatestCandle retrieves the latest candle with optimized querying
-func (p *Default) GetLatestCandle(symbol, timeframe string) (*candle.Candle, error) {
+func (p *Default) GetLatestCandle(ctx context.Context, symbol, timeframe string) (*candle.Candle, error) {
 	row := p.db.QueryRow(`
 		SELECT timestamp, open, high, low, close, volume, symbol, timeframe, source 
 		FROM candles 
@@ -331,11 +335,11 @@ func (p *Default) GetLatestCandle(symbol, timeframe string) (*candle.Candle, err
 
 // GetLatestCandleInRange retrieves the latest candle within a specific time range
 // This is useful when you need the most recent candle before a certain time
-func (p *Default) GetLatestCandleInRange(symbol, timeframe string, start, end time.Time) (*candle.Candle, error) {
+func (p *Default) GetLatestCandleInRange(ctx context.Context, symbol, timeframe string, start, end time.Time) (*candle.Candle, error) {
 	row := p.db.QueryRow(`
 		SELECT timestamp, open, high, low, close, volume, symbol, timeframe, source 
 		FROM candles 
-		WHERE symbol=$1 AND timeframe=$2 AND timestamp >= $3 AND timestamp <= $4
+		WHERE symbol=$1 AND timeframe=$2 AND timestamp >= $3 AND timestamp < $4
 		ORDER BY timestamp DESC LIMIT 1`,
 		symbol, timeframe, start, end)
 
@@ -351,7 +355,7 @@ func (p *Default) GetLatestCandleInRange(symbol, timeframe string, start, end ti
 }
 
 // GetLatestConstructedCandle retrieves the latest constructed candle
-func (p *Default) GetLatestConstructedCandle(symbol, timeframe string) (*candle.Candle, error) {
+func (p *Default) GetLatestConstructedCandle(ctx context.Context, symbol, timeframe string) (*candle.Candle, error) {
 	row := p.db.QueryRow(`
 		SELECT timestamp, open, high, low, close, volume, symbol, timeframe, source 
 		FROM candles 
@@ -371,13 +375,13 @@ func (p *Default) GetLatestConstructedCandle(symbol, timeframe string) (*candle.
 }
 
 // GetLatest1mCandle retrieves the latest 1m candle for a symbol
-func (p *Default) GetLatest1mCandle(symbol string) (*candle.Candle, error) {
-	return p.GetLatestCandle(symbol, "1m")
+func (p *Default) GetLatest1mCandle(ctx context.Context, symbol string) (*candle.Candle, error) {
+	return p.GetLatestCandle(ctx, symbol, "1m")
 }
 
 // DeleteCandle removes a specific candle
 // TODO: TX
-func (p *Default) DeleteCandle(symbol, timeframe string, timestamp time.Time, source string) error {
+func (p *Default) DeleteCandle(ctx context.Context, symbol, timeframe string, timestamp time.Time, source string) error {
 	result, err := p.db.Exec(`DELETE FROM candles WHERE symbol=$1 AND timeframe=$2 AND timestamp=$3 AND source=$4`,
 		symbol, timeframe, timestamp, source)
 	if err != nil {
@@ -393,7 +397,7 @@ func (p *Default) DeleteCandle(symbol, timeframe string, timestamp time.Time, so
 }
 
 // DeleteCandles removes old candles with optimized deletion
-func (p *Default) DeleteCandles(symbol, timeframe string, before time.Time) error {
+func (p *Default) DeleteCandles(ctx context.Context, symbol, timeframe string, before time.Time) error {
 	_, err := p.db.Exec(`DELETE FROM candles WHERE symbol=$1 AND timeframe=$2 AND timestamp < $3`,
 		symbol, timeframe, before)
 	if err != nil {
@@ -409,8 +413,8 @@ func (p *Default) DeleteCandles(symbol, timeframe string, before time.Time) erro
 }
 
 // DeleteCandlesInRange removes candles in a specific time range for a symbol and timeframe
-func (p *Default) DeleteCandlesInRange(symbol, timeframe string, start, end time.Time, source string) error {
-	query := `DELETE FROM candles WHERE symbol=$1 AND timeframe=$2 AND timestamp >= $3 AND timestamp <= $4`
+func (p *Default) DeleteCandlesInRange(ctx context.Context, symbol, timeframe string, start, end time.Time, source string) error {
+	query := `DELETE FROM candles WHERE symbol=$1 AND timeframe=$2 AND timestamp >= $3 AND timestamp < $4`
 	args := []any{symbol, timeframe, start, end}
 
 	if source != "" {
@@ -426,7 +430,7 @@ func (p *Default) DeleteCandlesInRange(symbol, timeframe string, start, end time
 }
 
 // DeleteConstructedCandles removes old constructed candles
-func (p *Default) DeleteConstructedCandles(symbol, timeframe string, before time.Time) error {
+func (p *Default) DeleteConstructedCandles(ctx context.Context, symbol, timeframe string, before time.Time) error {
 	// TODO: TX
 	_, err := p.db.Exec(`DELETE FROM candles WHERE symbol=$1 AND timeframe=$2 AND source='constructed' AND timestamp < $3`,
 		symbol, timeframe, before)
@@ -443,11 +447,11 @@ func (p *Default) DeleteConstructedCandles(symbol, timeframe string, before time
 }
 
 // GetCandleCount returns the count of candles in a time range
-func (p *Default) GetCandleCount(symbol, timeframe string, start, end time.Time) (int, error) {
+func (p *Default) GetCandleCount(ctx context.Context, symbol, timeframe string, start, end time.Time) (int, error) {
 	var count int
 	err := p.db.QueryRow(`
 		SELECT COUNT(*) FROM candles 
-		WHERE symbol=$1 AND timeframe=$2 AND timestamp >= $3 AND timestamp <= $4`,
+		WHERE symbol=$1 AND timeframe=$2 AND timestamp >= $3 AND timestamp < $4`,
 		symbol, timeframe, start, end).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get candle count: %w", err)
@@ -456,11 +460,11 @@ func (p *Default) GetCandleCount(symbol, timeframe string, start, end time.Time)
 }
 
 // GetConstructedCandleCount returns the count of constructed candles
-func (p *Default) GetConstructedCandleCount(symbol, timeframe string, start, end time.Time) (int, error) {
+func (p *Default) GetConstructedCandleCount(ctx context.Context, symbol, timeframe string, start, end time.Time) (int, error) {
 	var count int
 	err := p.db.QueryRow(`
 		SELECT COUNT(*) FROM candles 
-		WHERE symbol=$1 AND timeframe=$2 AND source='constructed' AND timestamp >= $3 AND timestamp <= $4`,
+		WHERE symbol=$1 AND timeframe=$2 AND source='constructed' AND timestamp >= $3 AND timestamp < $4`,
 		symbol, timeframe, start, end).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get constructed candle count: %w", err)
@@ -470,7 +474,7 @@ func (p *Default) GetConstructedCandleCount(symbol, timeframe string, start, end
 
 // UpdateCandle updates an existing candle
 // TODO: TX
-func (p *Default) UpdateCandle(c candle.Candle) error {
+func (p *Default) UpdateCandle(ctx context.Context, c candle.Candle) error {
 	if err := c.Validate(); err != nil {
 		return fmt.Errorf("invalid candle for update: %w", err)
 	}
@@ -493,7 +497,7 @@ func (p *Default) UpdateCandle(c candle.Candle) error {
 }
 
 // UpdateCandles updates multiple candles in a single transaction using a bulk update approach
-func (p *Default) UpdateCandles(candles []candle.Candle) error {
+func (p *Default) UpdateCandles(ctx context.Context, candles []candle.Candle) error {
 	if len(candles) == 0 {
 		return nil
 	}
@@ -592,11 +596,11 @@ func (p *Default) UpdateCandles(candles []candle.Candle) error {
 }
 
 // GetAggregationStats returns statistics useful for aggregation
-func (p *Default) GetAggregationStats(symbol string) (map[string]any, error) {
+func (p *Default) GetAggregationStats(ctx context.Context, symbol string) (map[string]any, error) {
 	stats := make(map[string]any)
 
 	// Get latest 1m candle
-	latest1m, err := p.GetLatest1mCandle(symbol)
+	latest1m, err := p.GetLatest1mCandle(ctx, symbol)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get latest 1m candle: %w", err)
 	}
@@ -615,7 +619,7 @@ func (p *Default) GetAggregationStats(symbol string) (map[string]any, error) {
 	start := end.Add(-24 * time.Hour)
 
 	for _, timeframe := range timeframes {
-		count, err := p.GetCandleCount(symbol, timeframe, start, end)
+		count, err := p.GetCandleCount(ctx, symbol, timeframe, start, end)
 		if err != nil {
 			continue // Skip if error
 		}
@@ -626,7 +630,7 @@ func (p *Default) GetAggregationStats(symbol string) (map[string]any, error) {
 }
 
 // GetMissingCandleRanges identifies gaps in 1m candle data
-func (p *Default) GetMissingCandleRanges(symbol string, start, end time.Time) ([]struct{ Start, End time.Time }, error) {
+func (p *Default) GetMissingCandleRanges(ctx context.Context, symbol string, start, end time.Time) ([]struct{ Start, End time.Time }, error) {
 	// Query for gaps in 1m candles
 	rows, err := p.db.Query(`
 		WITH time_series AS (
@@ -634,7 +638,7 @@ func (p *Default) GetMissingCandleRanges(symbol string, start, end time.Time) ([
 		),
 		actual_candles AS (
 			SELECT timestamp FROM candles 
-			WHERE symbol=$3 AND timeframe='1m' AND timestamp >= $1 AND timestamp <= $2
+			WHERE symbol=$3 AND timeframe='1m' AND timestamp >= $1 AND timestamp < $2
 		)
 		SELECT 
 			ts.expected_time as gap_start,
@@ -662,14 +666,14 @@ func (p *Default) GetMissingCandleRanges(symbol string, start, end time.Time) ([
 }
 
 // GetCandleSourceStats returns statistics about candle sources
-func (p *Default) GetCandleSourceStats(symbol string, start, end time.Time) (map[string]any, error) {
+func (p *Default) GetCandleSourceStats(ctx context.Context, symbol string, start, end time.Time) (map[string]any, error) {
 	stats := make(map[string]any)
 
 	// Get source distribution
 	rows, err := p.db.Query(`
 		SELECT source, timeframe, COUNT(*) as count
 		FROM candles 
-		WHERE symbol=$1 AND timestamp >= $2 AND timestamp <= $3
+		WHERE symbol=$1 AND timestamp >= $2 AND timestamp < $3
 		GROUP BY source, timeframe
 		ORDER BY source, timeframe`,
 		symbol, start, end)
@@ -699,7 +703,7 @@ func (p *Default) GetCandleSourceStats(symbol string, start, end time.Time) (map
 
 	err = p.db.QueryRow(`
 		SELECT COUNT(*) FROM candles 
-		WHERE symbol=$1 AND source='constructed' AND timestamp >= $2 AND timestamp <= $3`,
+		WHERE symbol=$1 AND source='constructed' AND timestamp >= $2 AND timestamp < $3`,
 		symbol, start, end).Scan(&constructedCount)
 	if err != nil {
 		constructedCount = 0
@@ -707,7 +711,7 @@ func (p *Default) GetCandleSourceStats(symbol string, start, end time.Time) (map
 
 	err = p.db.QueryRow(`
 		SELECT COUNT(*) FROM candles 
-		WHERE symbol=$1 AND source != 'constructed' AND timestamp >= $2 AND timestamp <= $3`,
+		WHERE symbol=$1 AND source != 'constructed' AND timestamp >= $2 AND timestamp < $3`,
 		symbol, start, end).Scan(&rawCount)
 	if err != nil {
 		rawCount = 0
@@ -720,7 +724,7 @@ func (p *Default) GetCandleSourceStats(symbol string, start, end time.Time) (map
 	return stats, nil
 }
 
-func (p *Default) SaveOrderBook(ob market.OrderBook) error {
+func (p *Default) SaveOrderBook(ctx context.Context, ob market.OrderBook) error {
 	tx, err := p.db.Begin()
 	if err != nil {
 		return err
@@ -735,8 +739,8 @@ func (p *Default) SaveOrderBook(ob market.OrderBook) error {
 	return tx.Commit()
 }
 
-func (p *Default) GetOrderBooks(symbol string, start, end time.Time) ([]market.OrderBook, error) {
-	rows, err := p.db.Query(`SELECT symbol, timestamp, bids, asks FROM orderbooks WHERE symbol=$1 AND timestamp >= $2 AND timestamp <= $3 ORDER BY timestamp ASC`, symbol, start, end)
+func (p *Default) GetOrderBooks(ctx context.Context, symbol string, start, end time.Time) ([]market.OrderBook, error) {
+	rows, err := p.db.Query(`SELECT symbol, timestamp, bids, asks FROM orderbooks WHERE symbol=$1 AND timestamp >= $2 AND timestamp < $3 ORDER BY timestamp ASC`, symbol, start, end)
 	if err != nil {
 		return nil, err
 	}
@@ -755,13 +759,13 @@ func (p *Default) GetOrderBooks(symbol string, start, end time.Time) ([]market.O
 	return obs, nil
 }
 
-func (p *Default) DeleteOrderBooks(symbol string, before time.Time) error {
+func (p *Default) DeleteOrderBooks(ctx context.Context, symbol string, before time.Time) error {
 	// TODO: TX
 	_, err := p.db.Exec(`DELETE FROM orderbooks WHERE symbol=$1 AND timestamp < $2`, symbol, before)
 	return err
 }
 
-func (p *Default) SaveTicks(ticks []market.Tick) error {
+func (p *Default) SaveTicks(ctx context.Context, ticks []market.Tick) error {
 	tx, err := p.db.Begin()
 	if err != nil {
 		return err
@@ -782,8 +786,8 @@ func (p *Default) SaveTicks(ticks []market.Tick) error {
 	return tx.Commit()
 }
 
-func (p *Default) GetTicks(symbol string, start, end time.Time) ([]market.Tick, error) {
-	rows, err := p.db.Query(`SELECT symbol, price, quantity, side, timestamp FROM ticks WHERE symbol=$1 AND timestamp >= $2 AND timestamp <= $3 ORDER BY timestamp ASC`, symbol, start, end)
+func (p *Default) GetTicks(ctx context.Context, symbol string, start, end time.Time) ([]market.Tick, error) {
+	rows, err := p.db.Query(`SELECT symbol, price, quantity, side, timestamp FROM ticks WHERE symbol=$1 AND timestamp >= $2 AND timestamp < $3 ORDER BY timestamp ASC`, symbol, start, end)
 	if err != nil {
 		return nil, err
 	}
@@ -799,13 +803,13 @@ func (p *Default) GetTicks(symbol string, start, end time.Time) ([]market.Tick, 
 	return ticks, nil
 }
 
-func (p *Default) DeleteTicks(symbol string, before time.Time) error {
+func (p *Default) DeleteTicks(ctx context.Context, symbol string, before time.Time) error {
 	// TODO: TX
 	_, err := p.db.Exec(`DELETE FROM ticks WHERE symbol=$1 AND timestamp < $2`, symbol, before)
 	return err
 }
 
-func (p *Default) SaveOrder(o order.OrderResponse) error {
+func (p *Default) SaveOrder(ctx context.Context, o order.OrderResponse) error {
 	// TODO: TX
 	_, err := p.db.Exec(`INSERT INTO orders (order_id, symbol, side, type, price, quantity, status, filled_qty, avg_price, created_at, updated_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
@@ -814,7 +818,7 @@ func (p *Default) SaveOrder(o order.OrderResponse) error {
 	return err
 }
 
-func (p *Default) GetOrder(orderID string) (order.OrderResponse, error) {
+func (p *Default) GetOrder(ctx context.Context, orderID string) (order.OrderResponse, error) {
 	row := p.db.QueryRow(`SELECT order_id, symbol, side, type, price, quantity, status, filled_qty, avg_price, created_at, updated_at FROM orders WHERE order_id=$1`, orderID)
 	var o order.OrderResponse
 	if err := row.Scan(&o.OrderID, &o.Symbol, &o.Side, &o.Type, &o.Price, &o.Quantity, &o.Status, &o.FilledQty, &o.AvgPrice, &o.Timestamp, &o.UpdatedAt); err != nil {
@@ -823,26 +827,26 @@ func (p *Default) GetOrder(orderID string) (order.OrderResponse, error) {
 	return o, nil
 }
 
-func (p *Default) UpdateOrderStatus(orderID, status string, filledQty, avgPrice float64, updatedAt time.Time) error {
+func (p *Default) UpdateOrderStatus(ctx context.Context, orderID, status string, filledQty, avgPrice float64, updatedAt time.Time) error {
 	// TODO: TX
 	_, err := p.db.Exec(`UPDATE orders SET status=$1, filled_qty=$2, avg_price=$3, updated_at=$4 WHERE order_id=$5`, status, filledQty, avgPrice, updatedAt, orderID)
 	return err
 }
 
-func (p *Default) DeleteOrder(orderID string) error {
+func (p *Default) DeleteOrder(ctx context.Context, orderID string) error {
 	// TODO: TX
 	_, err := p.db.Exec(`DELETE FROM orders WHERE order_id=$1`, orderID)
 	return err
 }
 
-func (p *Default) LogEvent(event journal.Event) error {
+func (p *Default) LogEvent(ctx context.Context, event journal.Event) error {
 	data, _ := json.Marshal(event.Data)
 	// TODO: TX
 	_, err := p.db.Exec(`INSERT INTO events (time, type, description, data) VALUES ($1,$2,$3,$4)`, event.Time, event.Type, event.Description, data)
 	return err
 }
 
-func (p *Default) GetEvents(eventType string, start, end time.Time) ([]journal.Event, error) {
+func (p *Default) GetEvents(ctx context.Context, eventType string, start, end time.Time) ([]journal.Event, error) {
 	rows, err := p.db.Query(`SELECT time, type, description, data FROM events WHERE type=$1 AND time >= $2 AND time <= $3 ORDER BY time ASC`, eventType, start, end)
 	if err != nil {
 		return nil, err
@@ -861,13 +865,13 @@ func (p *Default) GetEvents(eventType string, start, end time.Time) ([]journal.E
 	return events, nil
 }
 
-func (p *Default) DeleteEvents(eventType string, before time.Time) error {
+func (p *Default) DeleteEvents(ctx context.Context, eventType string, before time.Time) error {
 	// TODO: TX
 	_, err := p.db.Exec(`DELETE FROM events WHERE type=$1 AND time < $2`, eventType, before)
 	return err
 }
 
-func (p *Default) SaveState(state map[string]any) error {
+func (p *Default) SaveState(ctx context.Context, state map[string]any) error {
 	tx, err := p.db.Begin()
 	if err != nil {
 		return err
@@ -883,7 +887,7 @@ func (p *Default) SaveState(state map[string]any) error {
 	return tx.Commit()
 }
 
-func (p *Default) LoadState() (map[string]any, error) {
+func (p *Default) LoadState(ctx context.Context) (map[string]any, error) {
 	rows, err := p.db.Query(`SELECT key, value FROM state`)
 	if err != nil {
 		return nil, err
@@ -903,15 +907,15 @@ func (p *Default) LoadState() (map[string]any, error) {
 	return state, nil
 }
 
-func (p *Default) DeleteState(key string) error {
+func (p *Default) DeleteState(ctx context.Context, key string) error {
 	// TODO: TX
 	_, err := p.db.Exec(`DELETE FROM state WHERE key=$1`, key)
 	return err
 }
 
 // GetOpenOrders retrieves all open orders (not filled/canceled/expired) from the DB
-func (p *Default) GetOpenOrders() ([]order.OrderResponse, error) {
-	rows, err := p.db.Query(`SELECT order_id, symbol, side, type, price, quantity, status, filled_qty, avg_price, created_at, updated_at FROM orders WHERE status NOT IN ('FILLED', 'CANCELED', 'EXPIRED', 'filled', 'canceled', 'expired')`)
+func (p *Default) GetOpenOrders(ctx context.Context) ([]order.OrderResponse, error) {
+	rows, err := p.db.Query(`SELECT order_id, symbol, side, type, price, quantity, status, filled_qty, avg_price, created_at, updated_at FROM orders WHERE status NOT IN ('FILLED', 'CANCELED', 'EXPIRED')`)
 	if err != nil {
 		return nil, err
 	}
@@ -928,7 +932,7 @@ func (p *Default) GetOpenOrders() ([]order.OrderResponse, error) {
 }
 
 // GetCandle retrieves a single candle by symbol, timeframe, timestamp, and source
-func (p *Default) GetCandle(symbol, timeframe string, timestamp time.Time, source string) (*candle.Candle, error) {
+func (p *Default) GetCandle(ctx context.Context, symbol, timeframe string, timestamp time.Time, source string) (*candle.Candle, error) {
 	row := p.db.QueryRow(`
 		SELECT timestamp, open, high, low, close, volume, symbol, timeframe, source 
 		FROM candles 
