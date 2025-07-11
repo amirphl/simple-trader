@@ -1,8 +1,9 @@
-// Package config
+// Package config provides configuration management for the trading system
 package config
 
 import (
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"strconv"
@@ -12,75 +13,47 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-/*
-YAML config example:
-wallex_api_key: "..."
-db_conn_str: "..."
-db_max_open: 10
-db_max_idle: 5
-mode: "live"
-symbols: ["BTCIRT", "ETHIRT"]
-timeframes: ["1m", "5m"]
-strategy_map:
-  BTCIRT:
-    1m: "ema"
-    5m: "rsi"
-  ETHIRT:
-    1m: "macd"
-risk_map:
-  BTCIRT:
-    1m: { risk_percent: 1.0, stop_loss_percent: 2.0, trailing_stop_percent: 0.5 }
-    5m: { risk_percent: 0.5, stop_loss_percent: 1.5, trailing_stop_percent: 0.2 }
-  ETHIRT:
-    1m: { risk_percent: 0.7, stop_loss_percent: 1.0, trailing_stop_percent: 0.3 }
-...
-*/
-
+// Config holds all application configuration parameters
 type Config struct {
-	WallexAPIKey        string
-	DBConnStr           string
-	DBMaxOpen           int
-	DBMaxIdle           int
-	Mode                string
-	Symbol              string
-	Timeframe           string
-	Symbols             []string
-	Timeframes          []string
-	BacktestFrom        time.Time
-	BacktestTo          time.Time
-	OrderSize           float64
-	OrderType           string
-	RiskPercent         float64
-	StopLossPercent     float64
-	TrailingStopPercent float64
-	TakeProfitPercent   float64
-	MaxDailyLoss        float64
-	LimitSpread         float64
-	TelegramToken       string
-	TelegramChatID      string
-	NotificationRetries int
-	NotificationDelay   time.Duration
-	Strategy            string
-	StrategyMap         map[string]map[string]string
-	RiskMap             map[string]map[string]RiskParams
-	SlippagePercent     float64
-	CommissionPercent   float64
+	WallexAPIKey        string                `yaml:"wallex_api_key"`
+	DBConnStr           string                `yaml:"db_conn_str"`
+	DBMaxOpen           int                   `yaml:"db_max_open"`
+	DBMaxIdle           int                   `yaml:"db_max_idle"`
+	Mode                string                `yaml:"mode"`
+	Symbols             []string              `yaml:"symbols"`
+	Strategies          []string              `yaml:"strategies"`
+	BacktestFrom        time.Time             `yaml:"backtest_from"`
+	BacktestTo          time.Time             `yaml:"backtest_to"`
+	OrderSize           float64               `yaml:"order_size"`
+	OrderType           string                `yaml:"order_type"`
+	RiskPercent         float64               `yaml:"risk_percent"`
+	StopLossPercent     float64               `yaml:"stop_loss_percent"`
+	TrailingStopPercent float64               `yaml:"trailing_stop_percent"`
+	TakeProfitPercent   float64               `yaml:"take_profit_percent"`
+	MaxDailyLoss        float64               `yaml:"max_daily_loss"`
+	LimitSpread         float64               `yaml:"limit_spread"`
+	TelegramToken       string                `yaml:"telegram_token"`
+	TelegramChatID      string                `yaml:"telegram_chat_id"`
+	NotificationRetries int                   `yaml:"notification_retries"`
+	NotificationDelay   time.Duration         `yaml:"notification_delay"`
+	RiskMap             map[string]RiskParams `yaml:"risk_map"`
+	SlippagePercent     float64               `yaml:"slippage_percent"`
+	CommissionPercent   float64               `yaml:"commission_percent"`
 }
 
+// RiskParams defines risk management parameters for trading strategies
 type RiskParams struct {
-	RiskPercent         float64
-	StopLossPercent     float64
-	TrailingStopPercent float64
+	RiskPercent         float64 `yaml:"risk_percent"`
+	StopLossPercent     float64 `yaml:"stop_loss_percent"`
+	TrailingStopPercent float64 `yaml:"trailing_stop_percent"`
 }
 
-// getRiskParams returns risk parameters for a specific symbol and timeframe
-func getRiskParams(cfg Config, symbol, timeframe string) RiskParams {
-	// Check if we have specific risk parameters for this symbol/timeframe
+// GetRiskParams returns risk parameters for a specific strategy
+func GetRiskParams(cfg Config, stratName string) RiskParams {
+	// Check if we have specific risk parameters for this strategy
 	if cfg.RiskMap != nil {
-		if symbolRisk, exists := cfg.RiskMap[symbol]; exists {
-			if timeframeRisk, exists := symbolRisk[timeframe]; exists {
-				return timeframeRisk
-			}
+		if params, exists := cfg.RiskMap[stratName]; exists {
+			return params
 		}
 	}
 
@@ -92,13 +65,12 @@ func getRiskParams(cfg Config, symbol, timeframe string) RiskParams {
 	}
 }
 
-func LoadConfig() Config {
+// LoadConfig loads configuration from command-line flags, environment variables, and/or a YAML config file
+func LoadConfig() (Config, error) {
+	// Define command-line flags
 	mode := flag.String("mode", "live", "Mode: live or backtest")
-	symbol := flag.String("symbol", "BTCIRT", "Trading symbol")
-	timeframe := flag.String("timeframe", "1m", "Candle timeframe for backtest")
 	from := flag.String("from", time.Now().AddDate(-2, 0, 0).Format("2006-01-02"), "Backtest start date (YYYY-MM-DD)")
 	to := flag.String("to", time.Now().Format("2006-01-02"), "Backtest end date (YYYY-MM-DD)")
-	strategyName := flag.String("strategy", "sma", "Strategy: sma or ema or rsi or macd or composite or rsi-obos")
 	orderSize := flag.Float64("order-size", 0.001, "Order size (quantity) for live trading")
 	telegramToken := flag.String("telegram-token", "", "Telegram bot token for notifications")
 	telegramChatID := flag.String("telegram-chat", "", "Telegram chat ID for notifications")
@@ -111,68 +83,83 @@ func LoadConfig() Config {
 	limitSpread := flag.Float64("limit-spread", 0.0, "Limit order spread as percent (e.g., 0.1 for 0.1%)")
 	notificationRetries := flag.Int("notification-retries", 3, "Number of notification send attempts")
 	notificationDelay := flag.Duration("notification-delay", 5*time.Second, "Delay between notification retries (e.g., 5s)")
-	symbolsFlag := flag.String("symbols", "BTCIRT", "Comma-separated list of trading symbols")
-	timeframesFlag := flag.String("timeframes", "1m", "Comma-separated list of candle timeframes")
-	strategyMapFlag := flag.String("strategy-map", "", "Comma-separated symbol:timeframe:strategy triples (e.g., BTCIRT:1m:ema,ETHIRT:5m:rsi)")
-	riskMapFlag := flag.String("risk-map", "", "Comma-separated symbol:timeframe:risk:stoploss:trailing triples (e.g., BTCIRT:1m:1.0:2.0:0.5)")
+	symbols := flag.String("symbols", "btc-usdt", "Comma-separated list of trading symbols")
+	strategies := flag.String("strategies", "rsi", "Comma-separated list of strategies")
+	riskMapFlag := flag.String("risk-map", "", "Comma-separated strategy:risk:stoploss:trailing triples (e.g., rsi:1.0:2.0:0.5)")
 	slippagePercent := flag.Float64("slippage-percent", 0.0, "Slippage percent per trade (e.g., 0.05 for 0.05%)")
 	commissionPercent := flag.Float64("commission-percent", 0.0, "Commission percent per trade (e.g., 0.1 for 0.1%)")
 	configFile := flag.String("config", "", "Path to YAML config file")
+
 	flag.Parse()
-	fromTime, _ := time.Parse("2006-01-02", *from)
-	toTime, _ := time.Parse("2006-01-02", *to)
-	strategyMap := make(map[string]map[string]string)
-	if *strategyMapFlag != "" {
-		for triple := range strings.SplitSeq(*strategyMapFlag, ",") {
-			parts := strings.Split(triple, ":")
-			if len(parts) == 3 {
-				sym, timeframe, strat := parts[0], parts[1], parts[2]
-				if _, ok := strategyMap[sym]; !ok {
-					strategyMap[sym] = make(map[string]string)
-				}
-				strategyMap[sym][timeframe] = strat
-			}
-		}
+
+	// Parse dates
+	fromTime, err := time.Parse("2006-01-02", *from)
+	if err != nil {
+		return Config{}, fmt.Errorf("invalid from date format: %w", err)
 	}
-	riskMap := make(map[string]map[string]RiskParams)
+
+	toTime, err := time.Parse("2006-01-02", *to)
+	if err != nil {
+		return Config{}, fmt.Errorf("invalid to date format: %w", err)
+	}
+
+	// Parse risk map
+	riskMap := make(map[string]RiskParams)
 	if *riskMapFlag != "" {
-		for triple := range strings.SplitSeq(*riskMapFlag, ",") {
+		for _, triple := range strings.Split(*riskMapFlag, ",") {
 			parts := strings.Split(triple, ":")
-			if len(parts) == 5 {
-				sym, timeframe := parts[0], parts[1]
-				risk, _ := strconv.ParseFloat(parts[2], 64)
-				sl, _ := strconv.ParseFloat(parts[3], 64)
-				trailing, _ := strconv.ParseFloat(parts[4], 64)
-				if _, ok := riskMap[sym]; !ok {
-					riskMap[sym] = make(map[string]RiskParams)
+			if len(parts) == 4 {
+				stratName := parts[0]
+
+				risk, err := strconv.ParseFloat(parts[1], 64)
+				if err != nil {
+					return Config{}, fmt.Errorf("invalid risk value for strategy %s: %w", stratName, err)
 				}
-				riskMap[sym][timeframe] = RiskParams{risk, sl, trailing}
+
+				sl, err := strconv.ParseFloat(parts[2], 64)
+				if err != nil {
+					return Config{}, fmt.Errorf("invalid stop loss value for strategy %s: %w", stratName, err)
+				}
+
+				trailing, err := strconv.ParseFloat(parts[3], 64)
+				if err != nil {
+					return Config{}, fmt.Errorf("invalid trailing stop value for strategy %s: %w", stratName, err)
+				}
+
+				riskMap[stratName] = RiskParams{
+					RiskPercent:         risk,
+					StopLossPercent:     sl,
+					TrailingStopPercent: trailing,
+				}
 			}
 		}
 	}
+
+	// Load from YAML file if specified
 	if *configFile != "" {
 		data, err := os.ReadFile(*configFile)
 		if err != nil {
-			log.Fatalf("Failed to read config file: %v", err)
+			return Config{}, fmt.Errorf("failed to read config file: %w", err)
 		}
+
 		var fileCfg Config
 		err = yaml.Unmarshal(data, &fileCfg)
 		if err != nil {
-			log.Fatalf("Failed to parse config file: %v", err)
+			return Config{}, fmt.Errorf("failed to parse config file: %w", err)
 		}
-		return fileCfg
+
+		return fileCfg, nil
 	}
+
+	// Create config from flags and environment variables
 	return Config{
 		WallexAPIKey:        os.Getenv("WALLEX_API_KEY"),
 		DBConnStr:           os.Getenv("DB_CONN_STR"),
 		DBMaxOpen:           10,
 		DBMaxIdle:           5,
 		Mode:                *mode,
-		Symbol:              *symbol,
-		Timeframe:           *timeframe,
 		BacktestFrom:        fromTime,
 		BacktestTo:          toTime,
-		Strategy:            *strategyName,
 		OrderSize:           *orderSize,
 		TelegramToken:       *telegramToken,
 		TelegramChatID:      *telegramChatID,
@@ -185,11 +172,19 @@ func LoadConfig() Config {
 		LimitSpread:         *limitSpread,
 		NotificationRetries: *notificationRetries,
 		NotificationDelay:   *notificationDelay,
-		Symbols:             strings.Split(*symbolsFlag, ","),
-		Timeframes:          strings.Split(*timeframesFlag, ","),
-		StrategyMap:         strategyMap,
+		Symbols:             strings.Split(*symbols, ","),
+		Strategies:          strings.Split(*strategies, ","),
 		RiskMap:             riskMap,
 		SlippagePercent:     *slippagePercent,
 		CommissionPercent:   *commissionPercent,
+	}, nil
+}
+
+// MustLoadConfig loads configuration and panics on error
+func MustLoadConfig() Config {
+	cfg, err := LoadConfig()
+	if err != nil {
+		log.Fatalf("Failed to load configuration: %v", err)
 	}
+	return cfg
 }
