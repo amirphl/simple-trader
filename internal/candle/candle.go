@@ -244,6 +244,11 @@ func (a *DefaultAggregator) AggregateFrom1m(oneMCandles []Candle, targetTimefram
 
 // Aggregate1mTimeRange aggregates 1m candles from storage for a specific time range
 func (a *DefaultAggregator) Aggregate1mTimeRange(ctx context.Context, symbol string, start, end time.Time, targetTimeframe string) ([]Candle, error) {
+	// Check if storage is nil
+	if a.storage == nil {
+		return nil, fmt.Errorf("storage is nil, aggregator not properly initialized")
+	}
+
 	// Get 1m candles for the time range
 	oneMCandles, err := a.storage.GetCandles(ctx, symbol, "1m", start, end)
 	if err != nil {
