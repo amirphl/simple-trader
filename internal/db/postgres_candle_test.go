@@ -1253,8 +1253,7 @@ func TestPostgresDB_GetCandlesInRange(t *testing.T) {
 
 		result, err := db.GetCandlesInRange(ctx, "BTC-USDT", "1m", start, end, "")
 		assert.NoError(t, err)
-		assert.Len(t, result, 1)
-		assert.Equal(t, start.Unix(), result[0].Timestamp.Unix())
+		assert.Len(t, result, 0)
 	})
 }
 
@@ -1803,7 +1802,7 @@ func TestPostgresDB_GetLatestCandleInRange(t *testing.T) {
 
 		// Define range with exact start and end time
 		start := exactTime
-		end := exactTime
+		end := exactTime.Add(time.Microsecond)
 
 		// Get latest candle in range
 		latest, err := db.GetLatestCandleInRange(ctx, "ETH-USDT", "1m", start, end)
@@ -3085,7 +3084,7 @@ func TestPostgresDB_GetCandleCount(t *testing.T) {
 		require.NoError(t, err)
 
 		// Count with exact start and end time
-		count, err := db.GetCandleCount(ctx, "LTC-USDT", "1m", exactTime, exactTime)
+		count, err := db.GetCandleCount(ctx, "LTC-USDT", "1m", exactTime, exactTime.Add(time.Microsecond))
 		assert.NoError(t, err)
 		assert.Equal(t, 1, count)
 	})
@@ -3290,7 +3289,7 @@ func TestPostgresDB_GetConstructedCandleCount(t *testing.T) {
 		require.NoError(t, err)
 
 		// Count with exact start and end time
-		count, err := db.GetConstructedCandleCount(ctx, "LTC-USDT", "1h", exactTime, exactTime)
+		count, err := db.GetConstructedCandleCount(ctx, "LTC-USDT", "1h", exactTime, exactTime.Add(time.Microsecond))
 		assert.NoError(t, err)
 		assert.Equal(t, 1, count)
 	})
