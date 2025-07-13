@@ -50,3 +50,20 @@ func (t *TelegramNotifier) SendWithRetry(msg string) error {
 	fmt.Printf("ESCALATION: Notification send failed after %d attempts: %v\n", t.MaxAttempts, err)
 	return err
 }
+
+func (t *TelegramNotifier) RetryWithNotification(action func() error, description string) error {
+	var err error
+	for attempt := 1; attempt <= t.MaxAttempts; attempt++ {
+		err = action()
+		if err == nil {
+			return nil
+		}
+		log.Printf("%s failed (attempt %d/%d): %v", description, attempt, t.MaxAttempts, err)
+		msg := fmt.Sprintf("[ERROR RETRY]\nContext: %s\nAttempt: %d/%d\nError: %v\nTime: %s", description, attempt, t.MaxAttempts, err, time.Now().Format(time.RFC3339))
+		t.SendWithRetry(msg)
+		time.Sleep(t.Delay)
+	}
+	msg := fmt.Sprintf("[ERROR PERMANENT]\nContext: %s\nError: %v\nTime: %s", description, err, time.Now().Format(time.RFC3339))
+	t.SendWithRetry(msg)
+	return err
+}
