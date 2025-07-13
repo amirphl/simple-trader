@@ -1,7 +1,10 @@
 // Package journal
 package journal
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 // Event represents a journaled event.
 type Event struct {
@@ -13,6 +16,6 @@ type Event struct {
 
 // Journaler interface for journaling events.
 type Journaler interface {
-	LogEvent(event Event) error
-	GetEvents(eventType string, start, end time.Time) ([]Event, error)
+	LogEvent(ctx context.Context, event Event) error
+	GetEvents(ctx context.Context, eventType string, start, end time.Time) ([]Event, error)
 }
