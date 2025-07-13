@@ -312,7 +312,7 @@ func (p *Position) executeTakeProfit(signal strategy.Signal) {
 	p.updateLiveStats(signal)
 }
 
-// executeManualExit executes a manual exit order
+// executeManualExit executes a manual exit order for both long and short positions
 func (p *Position) executeManualExit(signal strategy.Signal) {
 	orderReq := p.createExitOrder(signal, "manual_exit")
 	orderResp, err := p.Exchange.SubmitOrderWithRetry(orderReq, p.OrderSpec.MaxAttemps, p.OrderSpec.Delay)
@@ -748,6 +748,7 @@ func (p *Position) flush() error {
 	return nil
 }
 
+// TODO:
 // ResetDailyStats resets daily trading statistics
 func (p *Position) ResetDailyStats() {
 	p.mu.Lock()
