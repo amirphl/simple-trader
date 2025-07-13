@@ -190,6 +190,29 @@ func (w *WallexExchange) FetchTick(symbol string) (market.Tick, error) {
 	}, nil
 }
 
+func (w *WallexExchange) FetchTicks(symbol string, from, to time.Time) ([]market.Tick, error) {
+	trades, err := w.client.MarketTrades(symbol)
+	if err != nil {
+		return nil, err
+	}
+	var ticks []market.Tick
+	for _, t := range trades {
+		if t.Timestamp.Before(from) || t.Timestamp.After(to) {
+			continue
+		}
+		price, _ := strconv.ParseFloat(string(t.Price), 64)
+		qty, _ := strconv.ParseFloat(string(t.Quantity), 64)
+		ticks = append(ticks, market.Tick{
+			Symbol:    symbol,
+			Price:     price,
+			Quantity:  qty,
+			Side:      "", // Wallex may not provide side; TODO: map if available
+			Timestamp: t.Timestamp,
+		})
+	}
+	return ticks, nil
+}
+
 func (w *WallexExchange) SubmitOrder(req order.OrderRequest) (order.OrderResponse, error) {
 	price := strconv.FormatFloat(req.Price, 'f', 8, 64)
 	qty := strconv.FormatFloat(req.Quantity, 'f', 8, 64)

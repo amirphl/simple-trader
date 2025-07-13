@@ -24,6 +24,6 @@ type Exchange interface {
 	CancelOrder(orderID string) error
 	FetchTick(symbol string) (market.Tick, error)
 	// Add more methods as needed for extensibility
-	FetchTicks(symbol string, from, to int64) ([]market.Tick, error)
+	FetchTicks(symbol string, from, to time.Time) ([]market.Tick, error)
 	GetOrderStatus(orderID string) (order.OrderResponse, error)
 }
