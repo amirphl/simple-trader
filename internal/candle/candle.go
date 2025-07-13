@@ -146,7 +146,7 @@ type Ingester interface {
 	CleanupOldData(ctx context.Context, symbol, timeframe string, retentionDays int) error
 
 	Subscribe() <-chan []Candle
-	Unsubscribe(ch chan []Candle)
+	Unsubscribe(ch <-chan []Candle)
 }
 
 type DefaultAggregator struct {
@@ -746,7 +746,7 @@ func (ci *DefaultIngester) Subscribe() <-chan []Candle {
 	return ch
 }
 
-func (ci *DefaultIngester) Unsubscribe(ch chan []Candle) {
+func (ci *DefaultIngester) Unsubscribe(ch <-chan []Candle) {
 	ci.mu.Lock()
 	defer ci.mu.Unlock()
 

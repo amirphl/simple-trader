@@ -21,7 +21,7 @@ type IngestionService interface {
 	Stop()
 	GetIngestionStats() map[string]any
 	Subscribe() <-chan []Candle
-	UnSubscribe(ch chan []Candle)
+	UnSubscribe(ch <-chan []Candle)
 }
 
 // DefaultIngestionService handles real-time candle ingestion with automatic aggregation
@@ -56,7 +56,7 @@ func DefaultIngestionConfig() IngestionConfig {
 		RetentionDays:   30,
 		MaxRetries:      3,
 		RetryDelay:      3 * time.Second,
-		DelayUpperbound: 30 * time.Second,
+		DelayUpperbound: 20 * time.Second,
 		EnableCleanup:   false,
 		CleanupCycle:    24 * time.Hour, // TODO:Increase value.
 	}
@@ -128,6 +128,8 @@ func (is *DefaultIngestionService) Stop() {
 		is.wg.Wait()
 		close(done)
 	}()
+
+	// TODO: Close Subscriber channels?
 
 	// Wait for either completion or timeout
 	select {
@@ -716,6 +718,6 @@ func (is *DefaultIngestionService) Subscribe() <-chan []Candle {
 	return is.ingester.Subscribe()
 }
 
-func (is *DefaultIngestionService) UnSubscribe(ch chan []Candle) {
+func (is *DefaultIngestionService) UnSubscribe(ch <-chan []Candle) {
 	is.ingester.Unsubscribe(ch)
 }
