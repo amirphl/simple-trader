@@ -16,7 +16,7 @@ type TelegramNotifier struct {
 	Delay       time.Duration
 }
 
-func NewTelegramNotifier(token, chatID string, maxAttemps int, delay time.Duration) *TelegramNotifier {
+func NewTelegramNotifier(token, chatID string, maxAttemps int, delay time.Duration) Notifier {
 	return &TelegramNotifier{Token: token, ChatID: chatID, MaxAttempts: maxAttemps, Delay: delay}
 }
 

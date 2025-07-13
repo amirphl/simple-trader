@@ -24,7 +24,7 @@ type WallexExchange struct {
 	notifier notifier.Notifier
 }
 
-func NewWallexExchange(apiKey string, n notifier.Notifier) *WallexExchange {
+func NewWallexExchange(apiKey string, n notifier.Notifier) Exchange {
 	return &WallexExchange{
 		client:   wallex.New(wallex.ClientOptions{APIKey: apiKey}),
 		notifier: n,
