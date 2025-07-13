@@ -206,22 +206,23 @@ func (p *Position) handleActivePosition(signal strategy.Signal) {
 		}
 	}
 
-	// Handle take profit (uncommented and improved)
+	// Handle take profit
 	if p.TakeProfitPercent > 0 && p.shouldTriggerTakeProfit(signal) {
 		p.executeTakeProfit(signal)
 		return
 	}
 
-	// Handle manual sell signal
-	if signal.Action == "sell" && p.Side == "buy" {
-		p.executeManualSell(signal)
+	// Handle manual exit signals
+	if (signal.Action == "sell" && p.Side == "buy") || (signal.Action == "buy" && p.Side == "sell") {
+		p.executeManualExit(signal)
 	}
 }
 
 // handleInactivePosition manages inactive positions
 func (p *Position) handleInactivePosition(signal strategy.Signal) {
-	// TODO: What if this is the second buy?
-	if signal.Action == "buy" {
+	// Support both buy and sell signals for futures trading
+	if signal.Action == "buy" || signal.Action == "sell" {
+		// TODO: What if this is the second buy?
 		p.executeBuy(signal)
 	}
 }
@@ -311,9 +312,9 @@ func (p *Position) executeTakeProfit(signal strategy.Signal) {
 	p.updateLiveStats(signal)
 }
 
-// executeManualSell executes a manual sell order
-func (p *Position) executeManualSell(signal strategy.Signal) {
-	orderReq := p.createExitOrder(signal, "manual_sell")
+// executeManualExit executes a manual exit order
+func (p *Position) executeManualExit(signal strategy.Signal) {
+	orderReq := p.createExitOrder(signal, "manual_exit")
 	orderResp, err := p.Exchange.SubmitOrderWithRetry(orderReq, p.OrderSpec.MaxAttemps, p.OrderSpec.Delay)
 	if err != nil {
 		p.handleOrderError(err, "order_submission", signal.StrategyName)
@@ -322,7 +323,7 @@ func (p *Position) executeManualSell(signal strategy.Signal) {
 
 	p.handleOrderSuccess(orderResp, signal, "Manual")
 	p.onPositionClose(signal)
-	// p.updateLiveStats(signal) // TODO:
+	p.updateLiveStats(signal)
 }
 
 // executeBuy executes a buy order
@@ -333,14 +334,16 @@ func (p *Position) executeBuy(signal strategy.Signal) {
 		return
 	}
 
-	orderReq := p.createBuyOrder(signal)
+	// Support both long and short positions based on signal
+	side := signal.Action
+	orderReq := p.createEntryOrder(signal, side)
 	orderResp, err := p.Exchange.SubmitOrderWithRetry(orderReq, p.OrderSpec.MaxAttemps, p.OrderSpec.Delay)
 	if err != nil {
 		p.handleOrderError(err, "order_submission", signal.StrategyName)
 		return
 	}
 
-	p.handleBuySuccess(orderResp, signal, orderReq.Quantity)
+	p.handleEntrySuccess(orderResp, signal, orderReq.Quantity, side)
 }
 
 // createExitOrder creates an exit order based on position side
@@ -373,8 +376,8 @@ func (p *Position) createExitOrder(signal strategy.Signal, orderType string) ord
 	return orderReq
 }
 
-// createBuyOrder creates a buy order with proper position sizing
-func (p *Position) createBuyOrder(signal strategy.Signal) order.OrderRequest {
+// createEntryOrder creates an entry order (buy or sell for futures)
+func (p *Position) createEntryOrder(signal strategy.Signal, side string) order.OrderRequest {
 	// Calculate position size based on risk
 	riskAmount := p.Balance * p.RiskParams.RiskPercent / 100
 	stopLossAmount := signal.TriggerPrice * p.RiskParams.StopLossPercent / 100
@@ -392,18 +395,22 @@ func (p *Position) createBuyOrder(signal strategy.Signal) order.OrderRequest {
 	case "limit":
 		orderReq = order.OrderRequest{
 			Symbol:   p.Symbol,
-			Side:     "buy",
+			Side:     side,
 			Type:     "limit",
 			Price:    signal.TriggerPrice,
 			Quantity: orderSize,
 		}
 		if p.LimitSpread > 0 {
-			orderReq.Price = signal.TriggerPrice * (1 - p.LimitSpread/100)
+			if side == "buy" {
+				orderReq.Price = signal.TriggerPrice * (1 - p.LimitSpread/100)
+			} else {
+				orderReq.Price = signal.TriggerPrice * (1 + p.LimitSpread/100)
+			}
 		}
 	case "stop-limit":
 		orderReq = order.OrderRequest{
 			Symbol:    p.Symbol,
-			Side:      "buy",
+			Side:      side,
 			Type:      "stop-limit",
 			Price:     signal.TriggerPrice,
 			StopPrice: signal.TriggerPrice * 1.001,
@@ -412,14 +419,14 @@ func (p *Position) createBuyOrder(signal strategy.Signal) order.OrderRequest {
 	case "oco":
 		limitOrder := order.OrderRequest{
 			Symbol:   p.Symbol,
-			Side:     "buy",
+			Side:     side,
 			Type:     "limit",
 			Price:    signal.TriggerPrice,
 			Quantity: orderSize,
 		}
 		stopOrder := order.OrderRequest{
 			Symbol:    p.Symbol,
-			Side:      "buy",
+			Side:      side,
 			Type:      "stop-limit",
 			Price:     signal.TriggerPrice,
 			StopPrice: signal.TriggerPrice * 1.001,
@@ -427,7 +434,7 @@ func (p *Position) createBuyOrder(signal strategy.Signal) order.OrderRequest {
 		}
 		orderReq = order.OrderRequest{
 			Symbol:      p.Symbol,
-			Side:        "buy",
+			Side:        side,
 			Type:        "limit",
 			Price:       signal.TriggerPrice,
 			Quantity:    orderSize,
@@ -437,7 +444,7 @@ func (p *Position) createBuyOrder(signal strategy.Signal) order.OrderRequest {
 	default:
 		orderReq = order.OrderRequest{
 			Symbol:   p.Symbol,
-			Side:     "buy",
+			Side:     side,
 			Type:     "market",
 			Price:    0,
 			Quantity: orderSize,
@@ -445,6 +452,38 @@ func (p *Position) createBuyOrder(signal strategy.Signal) order.OrderRequest {
 	}
 
 	return orderReq
+}
+
+// handleEntrySuccess handles successful entry order execution (buy or sell)
+func (p *Position) handleEntrySuccess(orderResp order.OrderResponse, signal strategy.Signal, orderSize float64, side string) {
+	log.Printf("[%s %s] Order submitted: %+v", p.Symbol, signal.StrategyName, orderResp)
+
+	if p.DB != nil {
+		p.DB.SaveOrder(orderResp)
+		p.DB.LogEvent(journal.Event{
+			Time:        time.Now(),
+			Type:        "order",
+			Description: "order_submitted",
+			Data:        map[string]any{"symbol": p.Symbol, "strategy_name": signal.StrategyName, "order": orderResp},
+		})
+	}
+
+	// Update position
+	p.Side = side
+	p.Entry = signal.TriggerPrice
+	p.Size = orderSize
+	p.OrderID = orderResp.OrderID
+	p.Active = true
+	p.Time = time.Now()
+
+	// Reduce balance
+	p.Balance -= signal.TriggerPrice * orderSize
+
+	if p.Notifier != nil {
+		msg := fmt.Sprintf("[ORDER FILLED]\nSide: %s\nSymbol: %s\nQty: %.4f\nPrice: %.2f\nType: %s\nOrderID: %s\nEvent: Manual\nTime: %s",
+			side, p.Symbol, orderSize, signal.TriggerPrice, p.OrderSpec.Type, orderResp.OrderID, time.Now().Format(time.RFC3339))
+		p.Notifier.SendWithRetry(msg)
+	}
 }
 
 // handleOrderError handles order execution errors
