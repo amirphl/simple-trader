@@ -765,6 +765,27 @@ func (p *Default) DeleteOrderBooks(ctx context.Context, symbol string, before ti
 	return err
 }
 
+func (p *Default) SaveTick(ctx context.Context, tick market.Tick) error {
+	tx, err := p.db.Begin()
+	if err != nil {
+		return err
+	}
+	stmt, err := tx.Prepare(`INSERT INTO ticks (symbol, price, quantity, side, timestamp) VALUES ($1,$2,$3,$4,$5)`)
+	if err != nil {
+		tx.Rollback()
+		return err
+	}
+	defer stmt.Close()
+	_, err = stmt.Exec(tick.Symbol, tick.Price, tick.Quantity, tick.Side, tick.Timestamp)
+	if err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	return tx.Commit()
+}
+
+// TODO: Batch
 func (p *Default) SaveTicks(ctx context.Context, ticks []market.Tick) error {
 	tx, err := p.db.Begin()
 	if err != nil {
@@ -825,6 +846,28 @@ func (p *Default) GetOrder(ctx context.Context, orderID string) (order.OrderResp
 		return o, err
 	}
 	return o, nil
+}
+
+func (p *Default) GetOpenOrders(ctx context.Context) ([]order.OrderResponse, error) {
+	rows, err := p.db.Query(`SELECT order_id, symbol, side, type, price, quantity, status, filled_qty, avg_price, created_at, updated_at FROM orders WHERE status NOT IN ('FILLED', 'CANCELED', 'EXPIRED')`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var orders []order.OrderResponse
+	for rows.Next() {
+		var o order.OrderResponse
+		if err := rows.Scan(&o.OrderID, &o.Symbol, &o.Side, &o.Type, &o.Price, &o.Quantity, &o.Status, &o.FilledQty, &o.AvgPrice, &o.Timestamp, &o.UpdatedAt); err != nil {
+			return nil, err
+		}
+		orders = append(orders, o)
+	}
+	return orders, nil
+}
+
+func (p *Default) CloseOrder(ctx context.Context, orderID string) error {
+	_, err := p.db.Exec(`UPDATE orders SET status='CLOSED', updated_at=$1 WHERE order_id=$2`, time.Now(), orderID)
+	return err
 }
 
 func (p *Default) UpdateOrderStatus(ctx context.Context, orderID, status string, filledQty, avgPrice float64, updatedAt time.Time) error {
@@ -911,24 +954,6 @@ func (p *Default) DeleteState(ctx context.Context, key string) error {
 	// TODO: TX
 	_, err := p.db.Exec(`DELETE FROM state WHERE key=$1`, key)
 	return err
-}
-
-// GetOpenOrders retrieves all open orders (not filled/canceled/expired) from the DB
-func (p *Default) GetOpenOrders(ctx context.Context) ([]order.OrderResponse, error) {
-	rows, err := p.db.Query(`SELECT order_id, symbol, side, type, price, quantity, status, filled_qty, avg_price, created_at, updated_at FROM orders WHERE status NOT IN ('FILLED', 'CANCELED', 'EXPIRED')`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var orders []order.OrderResponse
-	for rows.Next() {
-		var o order.OrderResponse
-		if err := rows.Scan(&o.OrderID, &o.Symbol, &o.Side, &o.Type, &o.Price, &o.Quantity, &o.Status, &o.FilledQty, &o.AvgPrice, &o.Timestamp, &o.UpdatedAt); err != nil {
-			return nil, err
-		}
-		orders = append(orders, o)
-	}
-	return orders, nil
 }
 
 // GetCandle retrieves a single candle by symbol, timeframe, timestamp, and source
