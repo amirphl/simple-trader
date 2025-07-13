@@ -1,7 +1,10 @@
 // Package market
 package market
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 // OrderBook represents the L2 orderbook snapshot.
 type OrderBook struct {
@@ -22,8 +25,8 @@ type Tick struct {
 
 // MarketManager interface for managing orderbook and tick storage.
 type MarketManager interface {
-	SaveOrderBook(ob OrderBook) error
-	SaveTick(tick Tick) error
-	GetOrderBooks(symbol string, start, end time.Time) ([]OrderBook, error)
-	GetTicks(symbol string, start, end time.Time) ([]Tick, error)
+	SaveOrderBook(ctx context.Context, ob OrderBook) error
+	SaveTick(ctx context.Context, tick Tick) error
+	GetOrderBooks(ctx context.Context, symbol string, start, end time.Time) ([]OrderBook, error)
+	GetTicks(ctx context.Context, symbol string, start, end time.Time) ([]Tick, error)
 }
