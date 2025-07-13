@@ -1,2 +1,4 @@
 wallex-go/
 .env
+simple-trader
+.env.yml

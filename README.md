@@ -30,6 +30,13 @@ A robust, extensible crypto algorithmic trading bot written in Go, designed for 
   - Configurable risk management parameters
   - Strategy-specific timeframe selection
 
+- **Position Management**
+  - Sophisticated position tracking and management
+  - Trade statistics and performance metrics
+  - Automatic position sizing based on risk parameters
+  - Support for both long and short positions
+  - Trailing stop implementation with configurable parameters
+
 - **Order Management**
   - Market and limit orders
   - Stop-loss and take-profit functionality
@@ -41,12 +48,14 @@ A robust, extensible crypto algorithmic trading bot written in Go, designed for 
   - Stop-loss automation
   - Maximum daily loss limits
   - Position sizing based on risk percentage
+  - Strategy-specific risk parameters
 
 - **Backtesting**
   - Historical performance analysis
   - Realistic simulation with slippage and commission
   - Equity curve generation
   - Detailed trade logs
+  - Performance metrics (win rate, profit factor, Sharpe ratio, expectancy)
 
 - **Operational Features**
   - Telegram notifications for trades and system events
@@ -63,6 +72,8 @@ internal/
   candle/                  # Candle aggregation, storage, retrieval
     candle.go              # Core candle types and interfaces
     ingestion.go           # Real-time candle ingestion system
+  config/
+    config.go              # Configuration management
   db/
     db.go                  # Database interface
     postgres.go            # PostgreSQL/TimescaleDB implementation
@@ -84,6 +95,8 @@ internal/
     engulfing.go           # Bullish/Bearish Engulfing patterns
     hammer.go              # Hammer/Hanging Man patterns
     morning_evening_star.go # Morning/Evening Star patterns
+  position/
+    position.go            # Position management system
   strategy/
     strategy.go            # Strategy interface
     sma.go                 # Simple Moving Average strategy
@@ -153,17 +166,21 @@ db_max_open: 10
 db_max_idle: 5
 mode: "live"  # or "backtest"
 symbols: ["BTCIRT", "ETHIRT"]
-timeframes: ["1m", "5m"]
-strategy_map:
-  BTCIRT:
-    1m: "ema"
-    5m: "rsi"
-  ETHIRT:
-    1m: "macd"
+strategies: ["rsi", "macd"]
+risk_percent: 1.0
+stop_loss_percent: 2.0
+trailing_stop_percent: 0.5
+take_profit_percent: 3.0
+max_daily_loss: 100.0
+limit_spread: 0.1
+order_type: "market"  # or "limit", "stop-limit", "oco"
+notification_retries: 3
+notification_delay: 5s
 risk_map:
-  BTCIRT:
-    1m: { risk_percent: 1.0, stop_loss_percent: 2.0, trailing_stop_percent: 0.5 }
-    5m: { risk_percent: 0.5, stop_loss_percent: 1.5, trailing_stop_percent: 0.2 }
+  rsi: { risk_percent: 1.0, stop_loss_percent: 2.0, trailing_stop_percent: 0.5 }
+  macd: { risk_percent: 0.5, stop_loss_percent: 1.5, trailing_stop_percent: 0.2 }
+slippage_percent: 0.05
+commission_percent: 0.1
 telegram_token: "your-telegram-bot-token"
 telegram_chat_id: "your-chat-id"
 ```
@@ -173,7 +190,7 @@ telegram_chat_id: "your-chat-id"
 #### Live Trading
 
 ```bash
-./simple-trader -mode live -symbol BTCIRT -timeframe 1m -strategy rsi -risk-percent 1.0 -stop-loss-percent 2.0
+./simple-trader -mode live -symbols btc-usdt,eth-usdt -strategies rsi,macd -risk-percent 1.0 -stop-loss-percent 2.0
 ```
 
 Or with a config file:
@@ -185,8 +202,36 @@ Or with a config file:
 #### Backtesting
 
 ```bash
-./simple-trader -mode backtest -symbol BTCIRT -timeframe 1m -strategy rsi -from 2023-01-01 -to 2023-12-31
+./simple-trader -mode backtest -symbols btc-usdt -strategies rsi -from 2023-01-01 -to 2023-12-31
 ```
+
+### Position Management
+
+The system features a sophisticated position management system:
+
+- **Risk-Based Sizing**: Automatically calculates position size based on risk parameters
+- **Stop-Loss Management**: Implements fixed and trailing stops
+- **Take-Profit Targets**: Configurable take-profit levels
+- **Performance Tracking**: Calculates key metrics like win rate, profit factor, and Sharpe ratio
+- **Strategy-Specific Parameters**: Different risk parameters for each strategy
+- **Daily Loss Limits**: Automatically disables trading when daily loss threshold is reached
+
+### Technical Indicators
+
+The system implements a comprehensive set of technical indicators:
+
+- **Moving Averages**: Simple Moving Average (SMA), Exponential Moving Average (EMA)
+- **Oscillators**: Relative Strength Index (RSI), Stochastic Oscillator
+- **Trend Indicators**: Moving Average Convergence Divergence (MACD), Bollinger Bands, Average True Range (ATR)
+
+### Pattern Detection
+
+The system includes detection for common candlestick patterns:
+
+- **Doji**: Identifies indecision in the market
+- **Engulfing**: Detects bullish and bearish engulfing patterns
+- **Hammer/Hanging Man**: Identifies potential reversals
+- **Morning/Evening Star**: Detects complex reversal patterns
 
 ### Equity Curve & Trade Log Reporting
 
@@ -236,6 +281,7 @@ For detailed information, see [1M_CANDLE_STORAGE.md](1M_CANDLE_STORAGE.md).
 - [x] Candle aggregation/storage
 - [x] Indicator/pattern engine
 - [x] Strategy engine
+- [x] Position management
 - [x] Order/trade/market management
 - [x] Event journaling/state persistence
 - [x] Notification integration
