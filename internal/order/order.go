@@ -1,7 +1,10 @@
 // Package order
 package order
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 // OrderRequest represents a new order to be submitted.
 type OrderRequest struct {
@@ -34,9 +37,8 @@ type OrderResponse struct {
 
 // OrderManager interface for managing order lifecycle.
 type OrderManager interface {
-	SubmitOrder(order OrderRequest) (OrderResponse, error)
-	CancelOrder(orderID string) error
-	GetOrder(orderID string) (OrderResponse, error)
-	GetOpenOrders() ([]OrderResponse, error)
-	SaveOrder(order OrderResponse) error
+	GetOrder(ctx context.Context, orderID string) (OrderResponse, error)
+	GetOpenOrders(ctx context.Context) ([]OrderResponse, error)
+	SaveOrder(ctx context.Context, order OrderResponse) error
+	CloseOrder(ctx context.Context, orderID string) error
 }
