@@ -63,20 +63,34 @@ func (m *DefaultManager) logEvent(ctx context.Context, event journal.Event) {
 }
 
 // NewManager creates a new position manager
-func NewManager(ctx context.Context, strategyName, symbol string, database db.DB) (Manager, error) {
+func NewManager(ctx context.Context, strategyName, symbol string, database db.DB, cfg config.Config) (Manager, error) {
 	// Try to load existing position
 	pos, err := LoadFromDB(ctx, database, strategyName)
 	if err != nil {
 		// If no position exists, create a new one
 		log.Printf("No existing position found for %s, creating new position", strategyName)
+
+		// Get risk parameters for this strategy
+		riskParams := config.GetRiskParams(cfg, strategyName)
+
 		pos = &Position{
-			Symbol:       symbol,
-			Active:       false,
-			Time:         time.Now(),
-			LiveWinPnls:  make([]float64, 0),
-			LiveLossPnls: make([]float64, 0),
-			LiveTradeLog: make([]Trade, 0),
+			Symbol:            symbol,
+			Active:            false,
+			Time:              time.Now(),
+			LiveWinPnls:       make([]float64, 0),
+			LiveLossPnls:      make([]float64, 0),
+			LiveTradeLog:      make([]Trade, 0),
+			RiskParams:        riskParams,
+			TakeProfitPercent: cfg.TakeProfitPercent,
+			LimitSpread:       cfg.LimitSpread,
+			MaxDailyLoss:      cfg.MaxDailyLoss,
+			Balance:           0, // This should be set by the caller
 		}
+
+		// Set order configuration
+		pos.OrderSpec.Type = cfg.OrderType
+		pos.OrderSpec.MaxAttemps = 3                // Default value
+		pos.OrderSpec.Delay = cfg.NotificationDelay // Reuse notification delay for order retries
 	}
 
 	return &DefaultManager{

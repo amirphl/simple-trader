@@ -95,7 +95,7 @@ func (w *WallexExchange) FetchCandles(ctx context.Context, symbol string, timefr
 		volume, _ := strconv.ParseFloat(string(wc.Volume), 64)
 
 		c := candle.Candle{
-			Timestamp: wc.Timestamp,
+			Timestamp: wc.Timestamp.Truncate(time.Minute),
 			Open:      open,
 			High:      high,
 			Low:       low,
