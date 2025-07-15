@@ -19,7 +19,7 @@ type Exchange interface {
 type IngestionService interface {
 	Start() error
 	Stop()
-	GetIngestionStats() map[string]any
+	GetIngestionStats() map[string]map[string]any
 	Subscribe() <-chan []Candle
 	UnSubscribe(ch <-chan []Candle)
 }
@@ -665,8 +665,8 @@ func (is *DefaultIngestionService) bulkAggregateHistorical1mData(symbol string) 
 }
 
 // GetIngestionStats returns statistics about the ingestion service
-func (is *DefaultIngestionService) GetIngestionStats() map[string]any {
-	stats := make(map[string]any)
+func (is *DefaultIngestionService) GetIngestionStats() map[string]map[string]any {
+	stats := make(map[string]map[string]any)
 
 	ctx, cancel := deriveContextWithTimeout(is.ctx)
 	defer cancel()
@@ -677,14 +677,14 @@ func (is *DefaultIngestionService) GetIngestionStats() map[string]any {
 		for _, timeframe := range GetSupportedTimeframes() {
 			latest, err := is.ingester.GetLatestCandle(ctx, symbol, timeframe)
 			if err != nil {
-				stats[symbol].(map[string]any)[timeframe] = map[string]any{
+				stats[symbol][timeframe] = map[string]any{
 					"error": err.Error(),
 				}
 				continue
 			}
 
 			if latest == nil {
-				stats[symbol].(map[string]any)[timeframe] = map[string]any{
+				stats[symbol][timeframe] = map[string]any{
 					"latest_candle": nil,
 					"candle_count":  0,
 				}
@@ -696,7 +696,7 @@ func (is *DefaultIngestionService) GetIngestionStats() map[string]any {
 			start := end.Add(-24 * time.Hour)
 			count, _ := is.storage.GetCandleCount(ctx, symbol, timeframe, start, end)
 
-			stats[symbol].(map[string]any)[timeframe] = map[string]any{
+			stats[symbol][timeframe] = map[string]any{
 				"latest_candle":    latest.Timestamp,
 				"latest_price":     latest.Close,
 				"candle_count_24h": count,
@@ -706,7 +706,7 @@ func (is *DefaultIngestionService) GetIngestionStats() map[string]any {
 			// Get aggregation statistics
 			aggStats, err := is.storage.GetAggregationStats(ctx, symbol)
 			if err == nil {
-				stats[symbol].(map[string]any)["aggregation_stats"] = aggStats
+				stats[symbol]["aggregation_stats"] = aggStats
 			}
 		}
 	}

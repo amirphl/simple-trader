@@ -725,6 +725,9 @@ func (ci *DefaultIngester) GetLatestCandle(ctx context.Context, symbol, timefram
 	}
 
 	if c != nil {
+		if ci.cache[symbol] == nil {
+			ci.cache[symbol] = make(map[string]*Candle)
+		}
 		ci.cache[symbol][timeframe] = c
 	}
 
