@@ -330,7 +330,7 @@ func (p *position) shouldTriggerTrailingStop(signal strategy.Signal) bool {
 // executeStopLoss executes a stop loss order
 func (p *position) executeStopLoss(ctx context.Context, signal strategy.Signal) {
 	orderReq := p.createExitOrder(signal, "stop_loss")
-	orderResp, err := p.Exchange.SubmitOrderWithRetry(orderReq, p.OrderSpec.MaxAttempts, p.OrderSpec.Delay)
+	orderResp, err := p.Exchange.SubmitOrderWithRetry(ctx, orderReq, p.OrderSpec.MaxAttempts, p.OrderSpec.Delay)
 	if err != nil {
 		p.handleOrderError(ctx, err, "stop_loss_order", signal.StrategyName)
 		return
@@ -344,7 +344,7 @@ func (p *position) executeStopLoss(ctx context.Context, signal strategy.Signal) 
 // executeTrailingStop executes a trailing stop order
 func (p *position) executeTrailingStop(ctx context.Context, signal strategy.Signal) {
 	orderReq := p.createExitOrder(signal, "trailing_stop")
-	orderResp, err := p.Exchange.SubmitOrderWithRetry(orderReq, p.OrderSpec.MaxAttempts, p.OrderSpec.Delay)
+	orderResp, err := p.Exchange.SubmitOrderWithRetry(ctx, orderReq, p.OrderSpec.MaxAttempts, p.OrderSpec.Delay)
 	if err != nil {
 		p.handleOrderError(ctx, err, "trailing_stop_order", signal.StrategyName)
 		return
@@ -358,7 +358,7 @@ func (p *position) executeTrailingStop(ctx context.Context, signal strategy.Sign
 // executeTakeProfit executes a take profit order
 func (p *position) executeTakeProfit(ctx context.Context, signal strategy.Signal) {
 	orderReq := p.createExitOrder(signal, "take_profit")
-	orderResp, err := p.Exchange.SubmitOrderWithRetry(orderReq, p.OrderSpec.MaxAttempts, p.OrderSpec.Delay)
+	orderResp, err := p.Exchange.SubmitOrderWithRetry(ctx, orderReq, p.OrderSpec.MaxAttempts, p.OrderSpec.Delay)
 	if err != nil {
 		p.handleOrderError(ctx, err, "take_profit_order", signal.StrategyName)
 		return
@@ -372,7 +372,7 @@ func (p *position) executeTakeProfit(ctx context.Context, signal strategy.Signal
 // executeManualExit executes a manual exit order for both long and short positions
 func (p *position) executeManualExit(ctx context.Context, signal strategy.Signal) {
 	orderReq := p.createExitOrder(signal, "manual_exit")
-	orderResp, err := p.Exchange.SubmitOrderWithRetry(orderReq, p.OrderSpec.MaxAttempts, p.OrderSpec.Delay)
+	orderResp, err := p.Exchange.SubmitOrderWithRetry(ctx, orderReq, p.OrderSpec.MaxAttempts, p.OrderSpec.Delay)
 	if err != nil {
 		p.handleOrderError(ctx, err, "order_submission", signal.StrategyName)
 		return
@@ -394,7 +394,7 @@ func (p *position) executeEntry(ctx context.Context, signal strategy.Signal) {
 	// Support both long and short positions based on signal
 	side := signal.Action
 	orderReq := p.createEntryOrder(signal, side)
-	orderResp, err := p.Exchange.SubmitOrderWithRetry(orderReq, p.OrderSpec.MaxAttempts, p.OrderSpec.Delay)
+	orderResp, err := p.Exchange.SubmitOrderWithRetry(ctx, orderReq, p.OrderSpec.MaxAttempts, p.OrderSpec.Delay)
 	if err != nil {
 		p.handleOrderError(ctx, err, "order_submission", signal.StrategyName)
 		return

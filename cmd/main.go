@@ -55,7 +55,7 @@ func orderStatusChecker(ctx context.Context, dbAdapter db.DB, ex exchange.Exchan
 			log.Printf("Checking status of %d open orders", len(orders))
 
 			for _, o := range orders {
-				orderResp, err := ex.GetOrderStatus(o.OrderID)
+				orderResp, err := ex.GetOrderStatus(ctx, o.OrderID)
 				if err != nil {
 					log.Printf("Error fetching order status for %s: %v", o.OrderID, err)
 					continue
