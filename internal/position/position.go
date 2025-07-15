@@ -213,7 +213,7 @@ func (p *position) OnSignal(ctx context.Context, signal strategy.Signal) {
 	defer func() {
 		// Flush logs and data to persistent storage
 		if err := p.flush(); err != nil {
-			log.Printf("[%s %s] Failed to flush data to storage: %v", p.Symbol, p.StrategyName, err)
+			log.Printf("Position | [%s %s] Failed to flush data to storage: %v", p.Symbol, p.StrategyName, err)
 		}
 	}()
 
@@ -224,7 +224,7 @@ func (p *position) OnSignal(ctx context.Context, signal strategy.Signal) {
 
 	// Check if trading is disabled
 	if p.TradingDisabled {
-		log.Printf("[%s %s] Trading disabled, ignoring signal", p.Symbol, signal.StrategyName)
+		log.Printf("Position | [%s %s] Trading disabled, ignoring signal", p.Symbol, signal.StrategyName)
 		return
 	}
 
@@ -387,7 +387,7 @@ func (p *position) executeManualExit(ctx context.Context, signal strategy.Signal
 func (p *position) executeEntry(ctx context.Context, signal strategy.Signal) {
 	// Check if we have enough balance
 	if p.RiskParams.Balance <= 0 {
-		log.Printf("[%s %s] Insufficient balance: %.2f", p.Symbol, signal.StrategyName, p.RiskParams.Balance)
+		log.Printf("Position | [%s %s] Insufficient balance: %.2f", p.Symbol, signal.StrategyName, p.RiskParams.Balance)
 		return
 	}
 
@@ -518,7 +518,7 @@ func (p *position) createEntryOrder(signal strategy.Signal, side string) order.O
 
 // handleEntrySuccess handles successful entry order execution (buy or sell)
 func (p *position) handleEntrySuccess(ctx context.Context, orderResp order.OrderResponse, signal strategy.Signal, orderSize float64, side string) {
-	log.Printf("[%s %s] Order submitted: %+v", p.Symbol, signal.StrategyName, orderResp)
+	log.Printf("Position | [%s %s] Order submitted: %+v", p.Symbol, signal.StrategyName, orderResp)
 
 	if p.Storage != nil {
 		err2 := p.Storage.SaveOrder(ctx, orderResp)
@@ -529,10 +529,10 @@ func (p *position) handleEntrySuccess(ctx context.Context, orderResp order.Order
 			Data:        map[string]any{"symbol": p.Symbol, "strategy_name": signal.StrategyName, "order": orderResp},
 		})
 		if err2 != nil {
-			log.Printf("[%s %s] Error saving order: %v", p.Symbol, signal.StrategyName, err2)
+			log.Printf("Position | [%s %s] Error saving order: %v", p.Symbol, signal.StrategyName, err2)
 		}
 		if err3 != nil {
-			log.Printf("[%s %s] Error logging event: %v", p.Symbol, signal.StrategyName, err3)
+			log.Printf("Position | [%s %s] Error logging event: %v", p.Symbol, signal.StrategyName, err3)
 		}
 	}
 
@@ -551,14 +551,14 @@ func (p *position) handleEntrySuccess(ctx context.Context, orderResp order.Order
 			side, p.Symbol, orderSize, signal.TriggerPrice, p.OrderSpec.Type, orderResp.OrderID, time.Now().Format(time.RFC3339))
 		err2 := p.Notifier.SendWithRetry(msg)
 		if err2 != nil {
-			log.Printf("[%s %s] Error sending notification: %v", p.Symbol, signal.StrategyName, err2)
+			log.Printf("Position | [%s %s] Error sending notification: %v", p.Symbol, signal.StrategyName, err2)
 		}
 	}
 }
 
 // handleOrderError handles order execution errors
 func (p *position) handleOrderError(ctx context.Context, err error, description, strategyName string) {
-	log.Printf("[%s %s] %s failed: %v", p.Symbol, strategyName, description, err)
+	log.Printf("Position | [%s %s] %s failed: %v", p.Symbol, strategyName, description, err)
 
 	if p.Storage != nil {
 		err2 := p.Storage.LogEvent(ctx, journal.Event{
@@ -568,7 +568,7 @@ func (p *position) handleOrderError(ctx context.Context, err error, description,
 			Data:        map[string]any{"symbol": p.Symbol, "strategy_name": strategyName, "error": err.Error()},
 		})
 		if err2 != nil {
-			log.Printf("[%s %s] Error logging event: %v", p.Symbol, strategyName, err2)
+			log.Printf("Position | [%s %s] Error logging event: %v", p.Symbol, strategyName, err2)
 		}
 	}
 
@@ -576,14 +576,14 @@ func (p *position) handleOrderError(ctx context.Context, err error, description,
 		msg := fmt.Sprintf("ERROR: %s: %v", description, err)
 		err2 := p.Notifier.SendWithRetry(msg)
 		if err2 != nil {
-			log.Printf("[%s %s] Error sending notification: %v", p.Symbol, strategyName, err2)
+			log.Printf("Position | [%s %s] Error sending notification: %v", p.Symbol, strategyName, err2)
 		}
 	}
 }
 
 // handleOrderSuccess handles successful order execution
 func (p *position) handleOrderSuccess(ctx context.Context, orderResp order.OrderResponse, signal strategy.Signal, event string) {
-	log.Printf("[%s %s] %s triggered, order submitted: %+v", p.Symbol, signal.StrategyName, event, orderResp)
+	log.Printf("Position | [%s %s] %s triggered, order submitted: %+v", p.Symbol, signal.StrategyName, event, orderResp)
 
 	if p.Storage != nil {
 		err2 := p.Storage.SaveOrder(ctx, orderResp)
@@ -594,10 +594,10 @@ func (p *position) handleOrderSuccess(ctx context.Context, orderResp order.Order
 			Data:        map[string]any{"symbol": p.Symbol, "strategy_name": signal.StrategyName, "order": orderResp},
 		})
 		if err2 != nil {
-			log.Printf("[%s %s] Error saving order: %v", p.Symbol, signal.StrategyName, err2)
+			log.Printf("Position | [%s %s] Error saving order: %v", p.Symbol, signal.StrategyName, err2)
 		}
 		if err3 != nil {
-			log.Printf("[%s %s] Error logging event: %v", p.Symbol, signal.StrategyName, err3)
+			log.Printf("Position | [%s %s] Error logging event: %v", p.Symbol, signal.StrategyName, err3)
 		}
 	}
 
@@ -606,7 +606,7 @@ func (p *position) handleOrderSuccess(ctx context.Context, orderResp order.Order
 			p.getExitSide(), p.Symbol, p.Size, signal.TriggerPrice, p.OrderSpec.Type, orderResp.OrderID, event, p.LastPNL, time.Now().Format(time.RFC3339))
 		err2 := p.Notifier.SendWithRetry(msg)
 		if err2 != nil {
-			log.Printf("[%s %s] Error sending notification: %v", p.Symbol, signal.StrategyName, err2)
+			log.Printf("Position | [%s %s] Error sending notification: %v", p.Symbol, signal.StrategyName, err2)
 		}
 	}
 }
@@ -678,7 +678,7 @@ func (p *position) updateLiveStats(signal strategy.Signal) {
 				p.Symbol, signal.StrategyName, p.LiveEquity, p.RiskParams.MaxDailyLoss)
 			err2 := p.Notifier.SendWithRetry(msg)
 			if err2 != nil {
-				log.Printf("[%s %s] Error sending notification: %v", p.Symbol, signal.StrategyName, err2)
+				log.Printf("Position | [%s %s] Error sending notification: %v", p.Symbol, signal.StrategyName, err2)
 			}
 		}
 	}
@@ -745,9 +745,9 @@ func (p *position) calculateStats() {
 
 // logStats logs trading statistics
 func (p *position) logStats(strategyName string) {
-	log.Printf("[%s %s] Live Stats: Trades=%d, WinRate=%.2f%%, PnL=%.2f, MaxDD=%.2f, ProfitFactor=%.2f",
+	log.Printf("Position | [%s %s] Live Stats: Trades=%d, WinRate=%.2f%%, PnL=%.2f, MaxDD=%.2f, ProfitFactor=%.2f",
 		p.Symbol, strategyName, p.LiveTrades, p.LiveWinRate*100, p.LiveEquity, p.LiveMaxDrawdown, p.ProfitFactor)
-	log.Printf("[%s] REPORT:", strategyName)
+	log.Printf("Position | [%s] REPORT:", strategyName)
 	log.Printf("  Trades=%d, Wins=%d, Losses=%d, WinRate=%.2f%%", p.LiveTrades, p.LiveWins, p.LiveLosses, p.LiveWinRate*100)
 	log.Printf("  PnL=%.2f, MaxDrawdown=%.2f", p.LiveEquity, p.LiveMaxDrawdown)
 	log.Printf("  Sharpe=%.2f, Expectancy=%.2f", p.Sharpe, p.Expectancy)
@@ -772,7 +772,7 @@ func (p *position) sendSignalNotification(ctx context.Context, signal strategy.S
 		p.Symbol, signal.StrategyName, p.Symbol, signal.Candle.Timestamp.Format(time.RFC3339), signal.Action, signal.Reason)
 
 	if err := p.Notifier.SendWithRetry(msg); err != nil {
-		log.Printf("[%s %s] Notification failed: %v", p.Symbol, signal.StrategyName, err)
+		log.Printf("Position | [%s %s] Notification failed: %v", p.Symbol, signal.StrategyName, err)
 		if p.Storage != nil {
 			err2 := p.Storage.LogEvent(ctx, journal.Event{
 				Time:        time.Now(),
@@ -781,7 +781,7 @@ func (p *position) sendSignalNotification(ctx context.Context, signal strategy.S
 				Data:        map[string]any{"symbol": p.Symbol, "strategy_name": signal.StrategyName, "error": err.Error(), "msg": msg},
 			})
 			if err2 != nil {
-				log.Printf("[%s %s] Error logging event: %v", p.Symbol, signal.StrategyName, err2)
+				log.Printf("Position | [%s %s] Error logging event: %v", p.Symbol, signal.StrategyName, err2)
 			}
 		}
 	}
