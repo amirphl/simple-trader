@@ -3,3 +3,5 @@ wallex-go/
 simple-trader
 .env.yml
 *.csv
+.cursor
+.vscode
