@@ -6,6 +6,7 @@ db_conn_str: "postgres://user:password@localhost:5432/simple_trader?sslmode=disa
 db_max_open: 10
 db_max_idle: 5
 run_migration: false  # Set to true to run database migrations on startup
+proxy_url: "http://localhost:9090"
 
 # Trading Mode
 mode: "backtest"  # Options: live, backtest

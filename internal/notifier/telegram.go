@@ -14,15 +14,30 @@ type TelegramNotifier struct {
 	ChatID      string
 	MaxAttempts int
 	Delay       time.Duration
+	ProxyURL    string // Add proxy URL field
 }
 
-func NewTelegramNotifier(token, chatID string, maxAttempts int, delay time.Duration) Notifier {
-	return &TelegramNotifier{Token: token, ChatID: chatID, MaxAttempts: maxAttempts, Delay: delay}
+// Updated constructor to accept proxy URL
+func NewTelegramNotifier(token, chatID, proxyURL string, maxAttempts int, delay time.Duration) Notifier {
+	return &TelegramNotifier{
+		Token:       token,
+		ChatID:      chatID,
+		ProxyURL:    proxyURL,
+		MaxAttempts: maxAttempts,
+		Delay:       delay,
+	}
 }
 
 func (t *TelegramNotifier) Send(msg string) error {
 	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", t.Token)
-	resp, err := http.PostForm(apiURL, url.Values{
+
+	// Create HTTP client with proxy
+	client, err := t.createHTTPClient()
+	if err != nil {
+		return fmt.Errorf("failed to create HTTP client: %w", err)
+	}
+
+	resp, err := client.PostForm(apiURL, url.Values{
 		"chat_id": {t.ChatID},
 		"text":    {msg},
 	})
@@ -30,10 +45,32 @@ func (t *TelegramNotifier) Send(msg string) error {
 		return err
 	}
 	defer resp.Body.Close()
+
 	if resp.StatusCode != 200 {
 		return fmt.Errorf("telegram send failed: %s", resp.Status)
 	}
 	return nil
+}
+
+// Helper function to create HTTP client with proxy
+func (t *TelegramNotifier) createHTTPClient() (*http.Client, error) {
+	if t.ProxyURL == "" {
+		return http.DefaultClient, nil
+	}
+
+	proxyURL, err := url.Parse(t.ProxyURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid proxy URL: %w", err)
+	}
+
+	transport := &http.Transport{
+		Proxy: http.ProxyURL(proxyURL),
+	}
+
+	return &http.Client{
+		Transport: transport,
+		Timeout:   30 * time.Second, // Add timeout for safety
+	}, nil
 }
 
 func (t *TelegramNotifier) SendWithRetry(msg string) error {

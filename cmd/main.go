@@ -133,7 +133,7 @@ func main() {
 	aggregator := candle.NewAggregator(dbadapter)
 
 	// Set up notification system
-	telegramNotifier := notifier.NewTelegramNotifier(cfg.TelegramToken, cfg.TelegramChatID, cfg.NotificationRetries, cfg.NotificationDelay)
+	telegramNotifier := notifier.NewTelegramNotifier(cfg.TelegramToken, cfg.TelegramChatID, cfg.ProxyURL, cfg.NotificationRetries, cfg.NotificationDelay)
 
 	// Create exchange connection
 	ex := exchange.NewWallexExchange(cfg.WallexAPIKey, telegramNotifier)

@@ -67,6 +67,7 @@ type Config struct {
 	RiskMap             map[string]RiskParams `yaml:"risk_map"`
 	SlippagePercent     float64               `yaml:"slippage_percent"`
 	CommissionPercent   float64               `yaml:"commission_percent"`
+	ProxyURL            string                `yaml:"proxy_url"`
 }
 
 // RiskParams defines risk management parameters for trading strategies
@@ -125,6 +126,7 @@ func LoadConfig() (Config, error) {
 	slippagePercent := flag.Float64("slippage-percent", 0.0, "Slippage percent per trade (e.g., 0.05 for 0.05%)")
 	runMigration := flag.Bool("run-migration", false, "Run database migrations")
 	balance := flag.Float64("balance", 0.0, "Balance in account currency (e.g., 100.0)")
+	proxyURL := flag.String("proxy-url", "", "Proxy URL for Telegram notifications")
 	configFile := flag.String("config", "", "Path to YAML config file")
 	flag.Parse()
 
@@ -242,6 +244,7 @@ func LoadConfig() (Config, error) {
 		RiskMap:             riskMap,
 		SlippagePercent:     *slippagePercent,
 		CommissionPercent:   *commissionPercent,
+		ProxyURL:            *proxyURL,
 	}, nil
 }
 
