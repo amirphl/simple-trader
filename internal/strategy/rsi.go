@@ -68,30 +68,32 @@ func (s *RSIStrategy) trimPrices() {
 }
 
 // OnCandles processes new candles and generates trading signals
-func (s *RSIStrategy) OnCandles(candles []candle.Candle) (Signal, error) {
-	if len(candles) == 0 {
+func (s *RSIStrategy) OnCandles(ctx context.Context, oneMinCandles []candle.Candle) (Signal, error) {
+	if len(oneMinCandles) == 0 {
 		return Signal{
+			Time:         time.Now().UTC(),
 			Action:       "hold",
 			Reason:       "no candles",
 			StrategyName: s.Name(),
-			Time:         time.Now().UTC(),
+			TriggerPrice: 0,
 		}, nil
 	}
 
 	// Filter candles for this symbol
 	var filteredCandles []candle.Candle
-	for _, c := range candles {
-		if c.Symbol == s.symbol {
+	for _, c := range oneMinCandles {
+		if c.Symbol == s.symbol && c.Timeframe == "1m" {
 			filteredCandles = append(filteredCandles, c)
 		}
 	}
 
 	if len(filteredCandles) == 0 {
 		return Signal{
+			Time:         time.Now().UTC(),
 			Action:       "hold",
 			Reason:       "no matching candles",
 			StrategyName: s.Name(),
-			Time:         time.Now().UTC(),
+			TriggerPrice: 0,
 		}, nil
 	}
 
@@ -108,11 +110,8 @@ func (s *RSIStrategy) OnCandles(candles []candle.Candle) (Signal, error) {
 		s.initialized = true // Mark as initialized to avoid fetching again
 
 		// Calculate time range: from 1 year ago to 1 minute before the first candle
-		endTime := filteredCandles[0].Timestamp
+		endTime := filteredCandles[0].Timestamp.Truncate(time.Minute)
 		startTime := endTime.AddDate(-1, 0, 0) // 1 year before
-
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second) // TODO:
-		defer cancel()
 
 		log.Printf("[%s RSI] Fetching historical 1m candles from %s to %s\n",
 			s.symbol, startTime.Format(time.RFC3339), endTime.Format(time.RFC3339))
@@ -120,10 +119,10 @@ func (s *RSIStrategy) OnCandles(candles []candle.Candle) (Signal, error) {
 		// Fetch historical 1m candles
 		historicalCandles, err := s.Storage.GetCandles(ctx, s.symbol, "1m", startTime, endTime)
 		if err != nil {
-			log.Printf("[%s RSI] Error fetching historical candles: %v\n", s.symbol, err)
+			log.Printf("[%s RSI] Error fetching historical candles from database: %v\n", s.symbol, err)
 			// Continue with the current candles even if historical fetch fails
 		} else if len(historicalCandles) > 0 {
-			log.Printf("[%s RSI] Loaded %d historical candles\n", s.symbol, len(historicalCandles))
+			log.Printf("[%s RSI] Loaded %d historical candles from database\n", s.symbol, len(historicalCandles))
 
 			// Sort historical candles by timestamp
 			sort.Slice(historicalCandles, func(i, j int) bool {
@@ -174,39 +173,76 @@ func (s *RSIStrategy) OnCandles(candles []candle.Candle) (Signal, error) {
 		}, nil
 	}
 
-	s.lastRSI = rsi
-
-	// Generate signal based on RSI value
-	var action, reason string
-	if rsi < s.Oversold {
-		action = "buy"
-		reason = "RSI oversold"
-
+	if rsi > s.Oversold && s.lastRSI < s.Oversold {
+		s.lastRSI = rsi
 		// Log signal change
 		if !s.lastSignalWasBuy {
 			log.Printf("[%s RSI] Signal changed to BUY - RSI: %.2f (below %v), Price: %.2f\n",
 				s.symbol, rsi, s.Oversold, lastCandle.Close)
 			s.lastSignalWasBuy = true
 		}
-	} else if rsi > s.Overbought {
-		action = "sell"
-		reason = "RSI overbought"
 
+		return Signal{
+			Time:         lastCandle.Timestamp,
+			Action:       "buy",
+			Reason:       "RSI oversold",
+			StrategyName: s.Name(),
+			TriggerPrice: lastCandle.Close,
+			Candle:       lastCandle,
+		}, nil
+	}
+
+	if rsi > s.Overbought && s.lastRSI < s.Overbought {
+		s.lastRSI = rsi
 		// Log signal change
 		if s.lastSignalWasBuy {
 			log.Printf("[%s RSI] Signal changed to SELL - RSI: %.2f (above %v), Price: %.2f\n",
 				s.symbol, rsi, s.Overbought, lastCandle.Close)
 			s.lastSignalWasBuy = false
 		}
-	} else {
-		action = "hold"
-		reason = "RSI neutral"
+		return Signal{
+			Time:         lastCandle.Timestamp,
+			Action:       "sell",
+			Reason:       "RSI overbought",
+			StrategyName: s.Name(),
+			TriggerPrice: lastCandle.Close,
+			Candle:       lastCandle,
+		}, nil
 	}
+
+	s.lastRSI = rsi
+
+	// Generate signal based on RSI value
+	// var action, reason string
+	// if rsi < s.Oversold {
+	// 	action = "buy"
+	// 	reason = "RSI oversold"
+
+	// 	// Log signal change
+	// 	if !s.lastSignalWasBuy {
+	// 		log.Printf("[%s RSI] Signal changed to BUY - RSI: %.2f (below %v), Price: %.2f\n",
+	// 			s.symbol, rsi, s.Oversold, lastCandle.Close)
+	// 		s.lastSignalWasBuy = true
+	// 	}
+	// } else if rsi > s.Overbought {
+	// 	action = "sell"
+	// 	reason = "RSI overbought"
+
+	// 	// Log signal change
+	// 	if s.lastSignalWasBuy {
+	// 		log.Printf("[%s RSI] Signal changed to SELL - RSI: %.2f (above %v), Price: %.2f\n",
+	// 			s.symbol, rsi, s.Overbought, lastCandle.Close)
+	// 		s.lastSignalWasBuy = false
+	// 	}
+	// } else {
+	// 	action = "hold"
+	// 	reason = "RSI neutral"
+	// }
 
 	return Signal{
 		Time:         lastCandle.Timestamp,
-		Action:       action,
-		Reason:       reason,
+		Action:       "hold",
+		Reason:       "RSI neutral",
 		StrategyName: s.Name(),
 		TriggerPrice: lastCandle.Close,
 		Candle:       lastCandle,

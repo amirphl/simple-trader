@@ -380,7 +380,7 @@ func runTradingLoop(
 			}
 
 			// Process candles with strategy
-			signal, err := strat.OnCandles(candles)
+			signal, err := strat.OnCandles(ctx, candles)
 			if err != nil {
 				log.Printf("[%s] Error processing candles: %v", strat.Name(), err)
 				continue
@@ -611,7 +611,9 @@ func runStrategyBacktest(strat strategy.Strategy, candles []candle.Candle, cfg c
 		}
 
 		// Get signal from strategy
-		sig, _ := strat.OnCandles([]candle.Candle{c})
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		sig, _ := strat.OnCandles(ctx, []candle.Candle{c}) // TODO: context.Background() is not good, we need to pass a context that is cancelled when the strategy is stopped
 		signals = append(signals, sig)
 
 		// Process buy signal

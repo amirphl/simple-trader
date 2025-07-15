@@ -272,7 +272,7 @@ func TestRSIStrategy_OnCandles(t *testing.T) {
 					c.Symbol = symbol
 				}
 
-				signal, err := strategy.OnCandles([]candle.Candle{c})
+				signal, err := strategy.OnCandles(context.Background(), []candle.Candle{c})
 				require.NoError(t, err)
 				assert.Equal(t, tt.expectedSignal[i], signal.Action, "signal mismatch at index %d", i)
 				assert.Equal(t, tt.expectedReason[i], signal.Reason, "reason mismatch at index %d", i)
@@ -309,7 +309,7 @@ func TestRSIStrategy_HistoricalDataHandling(t *testing.T) {
 	firstCandle := createCandle(16, "2023-01-01T00:00:00Z")
 	firstCandle.Symbol = symbol
 
-	signal, err := strategy.OnCandles([]candle.Candle{firstCandle})
+	signal, err := strategy.OnCandles(context.Background(), []candle.Candle{firstCandle})
 	require.NoError(t, err)
 
 	// Should immediately have a valid signal because of historical data
@@ -374,7 +374,7 @@ func TestRSIStrategy_MemoryManagement(t *testing.T) {
 	for i := 0; i < 20; i++ {
 		c := createCandle(float64(10+i), time.Now().Add(time.Duration(i)*time.Hour).Format(time.RFC3339))
 		c.Symbol = symbol
-		strategy.OnCandles([]candle.Candle{c})
+		strategy.OnCandles(context.Background(), []candle.Candle{c})
 	}
 
 	// Verify that prices array is trimmed
@@ -395,7 +395,7 @@ func TestRSIStrategy_SignalFlipping(t *testing.T) {
 	for i := 0; i < period; i++ {
 		c := createCandle(float64(10+i), time.Now().Add(time.Duration(i)*time.Hour).Format(time.RFC3339))
 		c.Symbol = symbol
-		strategy.OnCandles([]candle.Candle{c})
+		strategy.OnCandles(context.Background(), []candle.Candle{c})
 	}
 
 	// Create a sequence that will generate buy and sell signals
@@ -417,7 +417,7 @@ func TestRSIStrategy_SignalFlipping(t *testing.T) {
 		c := createCandle(tc.price, time.Now().Add(time.Duration(period+i)*time.Hour).Format(time.RFC3339))
 		c.Symbol = symbol
 
-		signal, err := strategy.OnCandles([]candle.Candle{c})
+		signal, err := strategy.OnCandles(context.Background(), []candle.Candle{c})
 		require.NoError(t, err)
 		assert.Equal(t, tc.expectedSignal, signal.Action, "signal mismatch at index %d", i)
 	}
@@ -447,7 +447,7 @@ func TestRSIStrategy_PerformanceMetrics(t *testing.T) {
 	for i := 0; i < period+5; i++ {
 		c := createCandle(float64(10+i), time.Now().Add(time.Duration(i)*time.Hour).Format(time.RFC3339))
 		c.Symbol = symbol
-		strategy.OnCandles([]candle.Candle{c})
+		strategy.OnCandles(context.Background(), []candle.Candle{c})
 	}
 
 	// Get updated metrics

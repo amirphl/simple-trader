@@ -1,6 +1,7 @@
 package strategy
 
 import (
+	"context"
 	"time"
 
 	"github.com/amirphl/simple-trader/internal/candle"
@@ -11,9 +12,9 @@ import (
 type Strategy interface {
 	Name() string
 	Symbol() string
-	OnCandles([]candle.Candle) (Signal, error) // Accepts candles, returns a signal
-	PerformanceMetrics() map[string]float64    // Returns performance metrics after backtest
-	WarmupPeriod() int                         // Returns the number of candles needed for warm-up
+	OnCandles(ctx context.Context, oneMinCandles []candle.Candle) (Signal, error) // Accepts candles, returns a signal
+	PerformanceMetrics() map[string]float64                                       // Returns performance metrics after backtest
+	WarmupPeriod() int                                                            // Returns the number of candles needed for warm-up
 }
 
 type Signal struct {
