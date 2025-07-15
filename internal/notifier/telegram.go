@@ -16,8 +16,8 @@ type TelegramNotifier struct {
 	Delay       time.Duration
 }
 
-func NewTelegramNotifier(token, chatID string, maxAttemps int, delay time.Duration) Notifier {
-	return &TelegramNotifier{Token: token, ChatID: chatID, MaxAttempts: maxAttemps, Delay: delay}
+func NewTelegramNotifier(token, chatID string, maxAttempts int, delay time.Duration) Notifier {
+	return &TelegramNotifier{Token: token, ChatID: chatID, MaxAttempts: maxAttempts, Delay: delay}
 }
 
 func (t *TelegramNotifier) Send(msg string) error {
