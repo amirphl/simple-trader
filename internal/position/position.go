@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/amirphl/simple-trader/internal/config"
-	"github.com/amirphl/simple-trader/internal/db"
 	"github.com/amirphl/simple-trader/internal/exchange"
 	"github.com/amirphl/simple-trader/internal/journal"
 	"github.com/amirphl/simple-trader/internal/notifier"
@@ -20,44 +19,49 @@ import (
 	"github.com/amirphl/simple-trader/internal/strategy"
 )
 
-type Position interface {
-	OnSignal(ctx context.Context, signal strategy.Signal)
-	GetStats() (wins, losses, trades int64, winRate, pnl, maxDD float64)
-	GetStatsV2(ctx context.Context) (map[string]interface{}, error)
-	GetDailyPnL(ctx context.Context) (float64, error)
-	ResetDailyStats()
+type Storage interface {
+	SaveOrder(ctx context.Context, order order.OrderResponse) error
+	LogEvent(ctx context.Context, event journal.Event) error
 }
 
+type Position interface {
+	OnSignal(ctx context.Context, signal strategy.Signal)
+	Stats() (wins, losses, trades int64, winRate, pnl, maxDD float64)
+	StatsV2() (map[string]interface{}, error)
+	DailyPnL() (float64, error)
+}
+
+// TODO: Transactional updates, atomicity, order status check, commission, slippage, etc.
+
 // New creates a new position manager
-func New(ctx context.Context, strategyName, symbol string, database db.DB, exchange exchange.Exchange, notifier notifier.Notifier, cfg config.Config) Position {
+func New(cfg config.Config, strategyName, symbol string, storage Storage, exchange exchange.Exchange, notifier notifier.Notifier) Position {
 	// Get risk parameters for this strategy
 	riskParams := config.GetRiskParams(cfg, strategyName)
 
 	pos := &position{
-		Symbol: symbol,
-		Active: false,
-		Time:   time.Now(),
+		StrategyName: strategyName,
+		Symbol:       symbol,
+		Time:         time.Now(),
 
-		LiveWinPnls:  make([]float64, 0),
-		LiveLossPnls: make([]float64, 0),
-		LiveTradeLog: make([]Trade, 0),
+		RiskParams: riskParams,
 
-		RiskParams:        riskParams,
-		TakeProfitPercent: cfg.TakeProfitPercent,
-		LimitSpread:       cfg.LimitSpread,
-		MaxDailyLoss:      cfg.MaxDailyLoss,
-
-		Balance: 0, // This should be set by the caller // TODO:
+		Active:          false,
+		TradingDisabled: false,
 
 		Exchange: exchange,
-		DB:       database,
+		Storage:  storage,
 		Notifier: notifier,
+
+		LiveWinPnls:     make([]float64, 0),
+		LiveLossPnls:    make([]float64, 0),
+		LiveEquityCurve: make([]float64, 0),
+		LiveTradeLog:    make([]Trade, 0),
 	}
 
 	// Set order configuration
 	pos.OrderSpec.Type = cfg.OrderType
-	pos.OrderSpec.MaxAttempts = 3               // Default value
-	pos.OrderSpec.Delay = cfg.NotificationDelay // Reuse notification delay for order retries
+	pos.OrderSpec.MaxAttempts = 2
+	pos.OrderSpec.Delay = time.Second * 2
 
 	return pos
 }
@@ -65,32 +69,31 @@ func New(ctx context.Context, strategyName, symbol string, database db.DB, excha
 // position represents a trading position with risk management and statistics
 type position struct {
 	// Core position data
-	Symbol  string    `json:"symbol"`
-	Side    string    `json:"side"`
-	Entry   float64   `json:"entry"`
-	Size    float64   `json:"size"`
-	OrderID string    `json:"order_id"`
-	Active  bool      `json:"active"`
-	Time    time.Time `json:"time"`
+	StrategyName string    `json:"strategy_name"`
+	Symbol       string    `json:"symbol"`
+	Side         string    `json:"side"`
+	Entry        float64   `json:"entry"`
+	Size         float64   `json:"size"`
+	OrderID      string    `json:"order_id"`
+	Time         time.Time `json:"time"`
 
 	// Risk management
-	RiskParams        config.RiskParams `json:"risk_params"`
-	TakeProfitPercent float64           `json:"take_profit_percent"`
-	LimitSpread       float64           `json:"limit_spread"`
-	MaxDailyLoss      float64           `json:"max_daily_loss"`
+	RiskParams config.RiskParams `json:"risk_params"`
 
-	Balance float64 `json:"balance"`
+	Active bool `json:"active"`
+
+	TradingDisabled bool `json:"trading_disabled"`
 
 	// Order configuration
 	OrderSpec struct {
 		Type        string        `json:"type"`
-		MaxAttempts int           `json:"max_attempts"` // Fixed typo
+		MaxAttempts int           `json:"max_attempts"`
 		Delay       time.Duration `json:"delay"`
 	} `json:"order_spec"`
 
 	// Dependencies (not serialized)
 	Exchange exchange.Exchange `json:"-"`
-	DB       db.DB             `json:"-"`
+	Storage  Storage           `json:"-"`
 	Notifier notifier.Notifier `json:"-"`
 
 	// Statistics
@@ -115,9 +118,7 @@ type position struct {
 	LiveWinPnls     []float64 `json:"live_win_pnls"`
 	LiveLossPnls    []float64 `json:"live_loss_pnls"`
 	LiveEquityCurve []float64 `json:"live_equity_curve"`
-
-	TradingDisabled bool    `json:"trading_disabled"`
-	LiveTradeLog    []Trade `json:"live_trade_log"`
+	LiveTradeLog    []Trade   `json:"live_trade_log"`
 
 	mu sync.RWMutex // Added mutex for thread safety
 }
@@ -131,8 +132,6 @@ type Trade struct {
 	ExitTime  time.Time `json:"exit_time"`
 }
 
-const defaultFilePath = "open_position.json"
-
 // Save persists the position to file with error handling
 func (p *position) Save() error {
 	// TODO: Save in database
@@ -141,46 +140,38 @@ func (p *position) Save() error {
 
 	data, err := json.MarshalIndent(p, "", "  ")
 	if err != nil {
-		return fmt.Errorf("failed to marshal position: %w", err)
+		return fmt.Errorf("failed to marshal position [%s %s]: %w", p.StrategyName, p.Symbol, err)
 	}
 
-	if err := os.WriteFile(defaultFilePath, data, 0o644); err != nil {
-		return fmt.Errorf("failed to write position file: %w", err)
+	if err := os.WriteFile(fmt.Sprintf("%s-%s.json", p.StrategyName, p.Symbol), data, 0o644); err != nil {
+		return fmt.Errorf("failed to write position file [%s %s]: %w", p.StrategyName, p.Symbol, err)
 	}
 
 	return nil
 }
 
 // Load loads a position from file with proper error handling
-func Load(stratName string) (*position, error) {
+func Load(stratName, symbol string, storage Storage, exchange exchange.Exchange, notifier notifier.Notifier) (Position, error) {
 	// TODO: Load from database
 	var pos position
 
-	data, err := os.ReadFile(defaultFilePath)
+	data, err := os.ReadFile(fmt.Sprintf("%s-%s.json", stratName, symbol))
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("position file not found")
+			return nil, fmt.Errorf("position file not found [%s %s]", stratName, symbol)
 		}
-		return nil, fmt.Errorf("failed to read position file: %w", err)
+		return nil, fmt.Errorf("failed to read position file [%s %s]: %w", stratName, symbol, err)
 	}
 
 	if err := json.Unmarshal(data, &pos); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal position: %w", err)
+		return nil, fmt.Errorf("failed to unmarshal position [%s %s]: %w", stratName, symbol, err)
 	}
 
-	// Initialize dependencies would need to be done by caller
-	// since they can't be serialized
+	pos.Exchange = exchange
+	pos.Storage = storage
+	pos.Notifier = notifier
+
 	return &pos, nil
-}
-
-// SetDependencies sets the external dependencies that can't be serialized
-func (p *position) SetDependencies(exchange exchange.Exchange, db db.DB, notifier notifier.Notifier) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	p.Exchange = exchange
-	p.DB = db
-	p.Notifier = notifier
 }
 
 // IsActive returns whether the position is active (thread-safe)
@@ -197,6 +188,23 @@ func (p *position) GetLastPNL() float64 {
 	return p.LastPNL
 }
 
+func (p *position) DailyPnL() (float64, error) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	// Calculate daily PnL from trades that occurred today
+	var dailyPnL float64
+	today := time.Now().Truncate(24 * time.Hour)
+
+	for _, trade := range p.LiveTradeLog {
+		if trade.ExitTime.After(today) {
+			dailyPnL += trade.PnL
+		}
+	}
+
+	return dailyPnL, nil
+}
+
 // OnSignal handles incoming trading signals
 func (p *position) OnSignal(ctx context.Context, signal strategy.Signal) {
 	p.mu.Lock()
@@ -205,7 +213,7 @@ func (p *position) OnSignal(ctx context.Context, signal strategy.Signal) {
 	defer func() {
 		// Flush logs and data to persistent storage
 		if err := p.flush(); err != nil {
-			log.Printf("Failed to flush data to storage: %v", err)
+			log.Printf("[%s %s] Failed to flush data to storage: %v", p.Symbol, p.StrategyName, err)
 		}
 	}()
 
@@ -263,7 +271,6 @@ func (p *position) handleActivePosition(ctx context.Context, signal strategy.Sig
 func (p *position) handleInactivePosition(ctx context.Context, signal strategy.Signal) {
 	// Support both buy and sell signals for futures trading
 	if signal.Action == "buy" || signal.Action == "sell" {
-		// TODO: What if this is the second buy?
 		p.executeEntry(ctx, signal)
 	}
 }
@@ -283,15 +290,15 @@ func (p *position) shouldTriggerStopLoss(signal strategy.Signal) bool {
 
 // shouldTriggerTakeProfit checks if take profit should be triggered
 func (p *position) shouldTriggerTakeProfit(signal strategy.Signal) bool {
-	if p.TakeProfitPercent <= 0 {
+	if p.RiskParams.TakeProfitPercent <= 0 {
 		return false
 	}
 
 	if p.Side == "buy" {
-		return signal.TriggerPrice >= p.Entry*(1+p.TakeProfitPercent/100)
+		return signal.TriggerPrice >= p.Entry*(1+p.RiskParams.TakeProfitPercent/100)
 	}
 	// For sell positions (short)
-	return signal.TriggerPrice <= p.Entry*(1-p.TakeProfitPercent/100)
+	return signal.TriggerPrice <= p.Entry*(1-p.RiskParams.TakeProfitPercent/100)
 }
 
 // updateTrailingStop updates the trailing stop level
@@ -312,11 +319,7 @@ func (p *position) updateTrailingStop(signal strategy.Signal) {
 
 // shouldTriggerTrailingStop checks if trailing stop should be triggered
 func (p *position) shouldTriggerTrailingStop(signal strategy.Signal) bool {
-	// TODO:
-	if p.TrailingStop <= 0 {
-		return false
-	}
-
+	// TODO: Logic
 	if p.Side == "buy" {
 		return signal.TriggerPrice <= p.Entry+p.TrailingStop-(p.Entry*p.RiskParams.TrailingStopPercent/100)
 	}
@@ -383,8 +386,8 @@ func (p *position) executeManualExit(ctx context.Context, signal strategy.Signal
 // executeEntry executes an entry order
 func (p *position) executeEntry(ctx context.Context, signal strategy.Signal) {
 	// Check if we have enough balance
-	if p.Balance <= 0 {
-		log.Printf("[%s %s] Insufficient balance: %.2f", p.Symbol, signal.StrategyName, p.Balance)
+	if p.RiskParams.Balance <= 0 {
+		log.Printf("[%s %s] Insufficient balance: %.2f", p.Symbol, signal.StrategyName, p.RiskParams.Balance)
 		return
 	}
 
@@ -403,6 +406,8 @@ func (p *position) executeEntry(ctx context.Context, signal strategy.Signal) {
 // createExitOrder creates an exit order based on position side
 func (p *position) createExitOrder(signal strategy.Signal, orderType string) order.OrderRequest {
 	// TODO: Better price management for ensuring full execution
+	// TODO: Handle other order types
+
 	side := "sell"
 	if p.Side == "sell" {
 		side = "buy"
@@ -419,11 +424,11 @@ func (p *position) createExitOrder(signal strategy.Signal, orderType string) ord
 	if p.OrderSpec.Type == "limit" {
 		orderReq.Price = signal.TriggerPrice
 		// Apply spread for better execution
-		if p.LimitSpread > 0 {
+		if p.RiskParams.LimitSpread > 0 {
 			if side == "sell" {
-				orderReq.Price = signal.TriggerPrice * (1 - p.LimitSpread/100)
+				orderReq.Price = signal.TriggerPrice * (1 - p.RiskParams.LimitSpread/100)
 			} else {
-				orderReq.Price = signal.TriggerPrice * (1 + p.LimitSpread/100)
+				orderReq.Price = signal.TriggerPrice * (1 + p.RiskParams.LimitSpread/100)
 			}
 		}
 	}
@@ -433,20 +438,21 @@ func (p *position) createExitOrder(signal strategy.Signal, orderType string) ord
 
 // createEntryOrder creates an entry order (buy or sell for futures)
 func (p *position) createEntryOrder(signal strategy.Signal, side string) order.OrderRequest {
+	// TODO: Better price management for ensuring full execution
 	// Calculate position size based on risk
-	riskAmount := p.Balance * p.RiskParams.RiskPercent / 100
-	stopLossAmount := signal.TriggerPrice * p.RiskParams.StopLossPercent / 100
-	orderSize := riskAmount / stopLossAmount // TODO:
+	// riskAmount := p.RiskParams.Balance * p.RiskParams.RiskPercent / 100
+	// stopLossAmount := signal.TriggerPrice * p.RiskParams.StopLossPercent / 100
+	// orderSize := riskAmount / stopLossAmount // TODO:
 
-	// Ensure we don't exceed balance
-	maxSize := p.Balance / signal.TriggerPrice
-	if orderSize > maxSize {
-		orderSize = maxSize
-	}
+	// // Ensure we don't exceed balance
+	// maxSize := p.RiskParams.Balance / signal.TriggerPrice
+	// if orderSize > maxSize {
+	// 	orderSize = maxSize
+	// }
+	orderSize := p.RiskParams.Balance * p.RiskParams.RiskPercent / 100
 
 	var orderReq order.OrderRequest
 
-	// TODO: Ensure full execution
 	switch p.OrderSpec.Type {
 	case "limit":
 		orderReq = order.OrderRequest{
@@ -456,11 +462,11 @@ func (p *position) createEntryOrder(signal strategy.Signal, side string) order.O
 			Price:    signal.TriggerPrice,
 			Quantity: orderSize,
 		}
-		if p.LimitSpread > 0 {
+		if p.RiskParams.LimitSpread > 0 {
 			if side == "buy" {
-				orderReq.Price = signal.TriggerPrice * (1 - p.LimitSpread/100)
+				orderReq.Price = signal.TriggerPrice * (1 - p.RiskParams.LimitSpread/100)
 			} else {
-				orderReq.Price = signal.TriggerPrice * (1 + p.LimitSpread/100)
+				orderReq.Price = signal.TriggerPrice * (1 + p.RiskParams.LimitSpread/100)
 			}
 		}
 	case "stop-limit":
@@ -514,9 +520,9 @@ func (p *position) createEntryOrder(signal strategy.Signal, side string) order.O
 func (p *position) handleEntrySuccess(ctx context.Context, orderResp order.OrderResponse, signal strategy.Signal, orderSize float64, side string) {
 	log.Printf("[%s %s] Order submitted: %+v", p.Symbol, signal.StrategyName, orderResp)
 
-	if p.DB != nil {
-		err2 := p.DB.SaveOrder(ctx, orderResp)
-		err3 := p.DB.LogEvent(ctx, journal.Event{
+	if p.Storage != nil {
+		err2 := p.Storage.SaveOrder(ctx, orderResp)
+		err3 := p.Storage.LogEvent(ctx, journal.Event{
 			Time:        time.Now(),
 			Type:        "order",
 			Description: "order_submitted",
@@ -538,8 +544,7 @@ func (p *position) handleEntrySuccess(ctx context.Context, orderResp order.Order
 	p.Active = true
 	p.Time = time.Now()
 
-	// Reduce balance
-	// p.Balance -= signal.TriggerPrice * orderSize // TODO: Computed in other place.
+	// NOTE: Don't update balance here. It's updated in onPositionClose.
 
 	if p.Notifier != nil {
 		msg := fmt.Sprintf("[ORDER FILLED]\nSide: %s\nSymbol: %s\nQty: %.4f\nPrice: %.2f\nType: %s\nOrderID: %s\nEvent: Manual\nTime: %s",
@@ -555,8 +560,8 @@ func (p *position) handleEntrySuccess(ctx context.Context, orderResp order.Order
 func (p *position) handleOrderError(ctx context.Context, err error, description, strategyName string) {
 	log.Printf("[%s %s] %s failed: %v", p.Symbol, strategyName, description, err)
 
-	if p.DB != nil {
-		err2 := p.DB.LogEvent(ctx, journal.Event{
+	if p.Storage != nil {
+		err2 := p.Storage.LogEvent(ctx, journal.Event{
 			Time:        time.Now(),
 			Type:        "error",
 			Description: description,
@@ -580,9 +585,9 @@ func (p *position) handleOrderError(ctx context.Context, err error, description,
 func (p *position) handleOrderSuccess(ctx context.Context, orderResp order.OrderResponse, signal strategy.Signal, event string) {
 	log.Printf("[%s %s] %s triggered, order submitted: %+v", p.Symbol, signal.StrategyName, event, orderResp)
 
-	if p.DB != nil {
-		err2 := p.DB.SaveOrder(ctx, orderResp)
-		err3 := p.DB.LogEvent(ctx, journal.Event{
+	if p.Storage != nil {
+		err2 := p.Storage.SaveOrder(ctx, orderResp)
+		err3 := p.Storage.LogEvent(ctx, journal.Event{
 			Time:        time.Now(),
 			Type:        "order",
 			Description: fmt.Sprintf("%s_triggered", event),
@@ -629,7 +634,7 @@ func (p *position) onPositionClose(signal strategy.Signal) {
 
 	p.Active = false
 	// Update balance with PNL
-	p.Balance += p.LastPNL
+	p.RiskParams.Balance += p.LastPNL
 
 	// Add to trade log
 	p.LiveTradeLog = append(p.LiveTradeLog, Trade{
@@ -666,11 +671,11 @@ func (p *position) updateLiveStats(signal strategy.Signal) {
 	}
 
 	// Check daily loss limit
-	if p.LiveEquity < -p.MaxDailyLoss {
+	if p.LiveEquity < -p.RiskParams.MaxDailyLoss {
 		p.TradingDisabled = true
 		if p.Notifier != nil {
 			msg := fmt.Sprintf("⚠️ DAILY LOSS LIMIT REACHED\nSymbol: %s\nStrategyName: %s\nDaily PnL: %.2f\nLimit: %.2f\nTrading disabled until next day",
-				p.Symbol, signal.StrategyName, p.LiveEquity, p.MaxDailyLoss)
+				p.Symbol, signal.StrategyName, p.LiveEquity, p.RiskParams.MaxDailyLoss)
 			err2 := p.Notifier.SendWithRetry(msg)
 			if err2 != nil {
 				log.Printf("[%s %s] Error sending notification: %v", p.Symbol, signal.StrategyName, err2)
@@ -768,8 +773,8 @@ func (p *position) sendSignalNotification(ctx context.Context, signal strategy.S
 
 	if err := p.Notifier.SendWithRetry(msg); err != nil {
 		log.Printf("[%s %s] Notification failed: %v", p.Symbol, signal.StrategyName, err)
-		if p.DB != nil {
-			err2 := p.DB.LogEvent(ctx, journal.Event{
+		if p.Storage != nil {
+			err2 := p.Storage.LogEvent(ctx, journal.Event{
 				Time:        time.Now(),
 				Type:        "error",
 				Description: "notification",
@@ -784,7 +789,7 @@ func (p *position) sendSignalNotification(ctx context.Context, signal strategy.S
 
 // flush saves trade logs and equity curves to persistent storage
 func (p *position) flush() error {
-	if p.DB == nil {
+	if p.Storage == nil {
 		return nil
 	}
 
@@ -802,23 +807,22 @@ func (p *position) flush() error {
 	return nil
 }
 
-// TODO:
 // ResetDailyStats resets daily trading statistics
 func (p *position) ResetDailyStats() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
 	p.TradingDisabled = false
-	p.LiveEquity = 0
-	p.LiveMaxEquity = 0
-	p.LiveMaxDrawdown = 0
 	// TODO: Reset other daily stats?
+	// p.LiveEquity = 0
+	// p.LiveMaxEquity = 0
+	// p.LiveMaxDrawdown = 0
 	// Note: Keep cumulative stats like LiveWins, LiveLosses, etc.
 	// Reset only daily-specific metrics
 }
 
 // GetStats returns current trading statistics (thread-safe)
-func (p *position) GetStats() (wins, losses, trades int64, winRate, pnl, maxDD float64) {
+func (p *position) Stats() (wins, losses, trades int64, winRate, pnl, maxDD float64) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
@@ -826,11 +830,13 @@ func (p *position) GetStats() (wins, losses, trades int64, winRate, pnl, maxDD f
 }
 
 // GetStats returns position statistics
-func (p *position) GetStatsV2(ctx context.Context) (map[string]interface{}, error) {
+func (p *position) StatsV2() (map[string]interface{}, error) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
 	stats := map[string]interface{}{
+		"symbol":        p.Symbol,
+		"strategy_name": p.StrategyName,
 		"active":        p.Active,
 		"equity":        p.LiveEquity,
 		"max_equity":    p.LiveMaxEquity,
@@ -845,6 +851,11 @@ func (p *position) GetStatsV2(ctx context.Context) (map[string]interface{}, erro
 		"mean_pnl":      p.MeanPNL,
 		"std_pnl":       p.StdPNL,
 		"last_pnl":      p.LastPNL,
+		"trailing_stop": p.TrailingStop,
+		"win_pnls":      p.LiveWinPnls,
+		"loss_pnls":     p.LiveLossPnls,
+		"equity_curve":  p.LiveEquityCurve,
+		"trade_log":     p.LiveTradeLog,
 	}
 
 	if p.Active {
@@ -855,21 +866,4 @@ func (p *position) GetStatsV2(ctx context.Context) (map[string]interface{}, erro
 	}
 
 	return stats, nil
-}
-
-func (p *position) GetDailyPnL(ctx context.Context) (float64, error) {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-
-	// Calculate daily PnL from trades that occurred today
-	var dailyPnL float64
-	today := time.Now().Truncate(24 * time.Hour)
-
-	for _, trade := range p.LiveTradeLog {
-		if trade.ExitTime.After(today) {
-			dailyPnL += trade.PnL
-		}
-	}
-
-	return dailyPnL, nil
 }

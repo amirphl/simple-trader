@@ -15,9 +15,7 @@ backtest_from: "2022-01-01"  # Format: YYYY-MM-DD
 backtest_to: "2023-01-01"    # Format: YYYY-MM-DD
 
 # Order Configuration
-order_size: 0.001
 order_type: "market"  # Options: market, limit, stop-limit, oco
-limit_spread: 0.1     # Percentage (e.g., 0.1 for 0.1%)
 
 # Risk Management
 risk_percent: 1.0           # Percentage of account to risk per trade
@@ -25,6 +23,8 @@ stop_loss_percent: 2.0      # Stop loss percentage
 trailing_stop_percent: 0.5  # Trailing stop percentage
 take_profit_percent: 3.0    # Take profit percentage
 max_daily_loss: 100.0       # Maximum daily loss in account currency
+limit_spread: 0.1           # Percentage (e.g., 0.1 for 0.1%)
+balance: 1000.0
 slippage_percent: 0.05      # Slippage percentage
 commission_percent: 0.1     # Commission percentage
 
@@ -46,7 +46,15 @@ risk_map:
     risk_percent: 1.0
     stop_loss_percent: 2.0
     trailing_stop_percent: 0.5
+    take_profit_percent: 3.0
+    max_daily_loss: 100.0
+    limit_spread: 0.1
+    balance: 1000.0
   macd: 
     risk_percent: 0.5
     stop_loss_percent: 1.5
     trailing_stop_percent: 0.2
+    take_profit_percent: 3.0
+    max_daily_loss: 100.0
+    limit_spread: 0.1
+    balance: 1000.0

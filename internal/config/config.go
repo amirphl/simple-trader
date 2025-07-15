@@ -52,7 +52,6 @@ type Config struct {
 	Strategies          []string              `yaml:"strategies"`
 	BacktestFrom        FlexibleTime          `yaml:"backtest_from"`
 	BacktestTo          FlexibleTime          `yaml:"backtest_to"`
-	OrderSize           float64               `yaml:"order_size"`
 	OrderType           string                `yaml:"order_type"`
 	RiskPercent         float64               `yaml:"risk_percent"`
 	StopLossPercent     float64               `yaml:"stop_loss_percent"`
@@ -60,6 +59,7 @@ type Config struct {
 	TakeProfitPercent   float64               `yaml:"take_profit_percent"`
 	MaxDailyLoss        float64               `yaml:"max_daily_loss"`
 	LimitSpread         float64               `yaml:"limit_spread"`
+	Balance             float64               `yaml:"balance"`
 	TelegramToken       string                `yaml:"telegram_token"`
 	TelegramChatID      string                `yaml:"telegram_chat_id"`
 	NotificationRetries int                   `yaml:"notification_retries"`
@@ -71,9 +71,13 @@ type Config struct {
 
 // RiskParams defines risk management parameters for trading strategies
 type RiskParams struct {
-	RiskPercent         float64 `yaml:"risk_percent"`
-	StopLossPercent     float64 `yaml:"stop_loss_percent"`
-	TrailingStopPercent float64 `yaml:"trailing_stop_percent"`
+	RiskPercent         float64 `yaml:"risk_percent" json:"risk_percent"`
+	StopLossPercent     float64 `yaml:"stop_loss_percent" json:"stop_loss_percent"`
+	TrailingStopPercent float64 `yaml:"trailing_stop_percent" json:"trailing_stop_percent"`
+	TakeProfitPercent   float64 `yaml:"take_profit_percent" json:"take_profit_percent"`
+	MaxDailyLoss        float64 `yaml:"max_daily_loss" json:"max_daily_loss"`
+	LimitSpread         float64 `yaml:"limit_spread" json:"limit_spread"`
+	Balance             float64 `yaml:"balance" json:"balance"`
 }
 
 // GetRiskParams returns risk parameters for a specific strategy
@@ -90,6 +94,10 @@ func GetRiskParams(cfg Config, stratName string) RiskParams {
 		RiskPercent:         cfg.RiskPercent,
 		StopLossPercent:     cfg.StopLossPercent,
 		TrailingStopPercent: cfg.TrailingStopPercent,
+		TakeProfitPercent:   cfg.TakeProfitPercent,
+		MaxDailyLoss:        cfg.MaxDailyLoss,
+		LimitSpread:         cfg.LimitSpread,
+		Balance:             cfg.Balance,
 	}
 }
 
@@ -99,26 +107,25 @@ func LoadConfig() (Config, error) {
 	mode := flag.String("mode", "live", "Mode: live or backtest")
 	from := flag.String("from", time.Now().AddDate(-2, 0, 0).Format("2006-01-02"), "Backtest start date (YYYY-MM-DD)")
 	to := flag.String("to", time.Now().Format("2006-01-02"), "Backtest end date (YYYY-MM-DD)")
-	orderSize := flag.Float64("order-size", 0.001, "Order size (quantity) for live trading")
+	orderType := flag.String("order-type", "market", "Order type: market or limit or stop-limit or oco")
 	telegramToken := flag.String("telegram-token", "", "Telegram bot token for notifications")
 	telegramChatID := flag.String("telegram-chat", "", "Telegram chat ID for notifications")
+	notificationRetries := flag.Int("notification-retries", 3, "Number of notification send attempts")
+	notificationDelay := flag.Duration("notification-delay", 5*time.Second, "Delay between notification retries (e.g., 5s)")
 	riskPercent := flag.Float64("risk-percent", 1.0, "Risk percent per trade (e.g., 1.0 for 1%)")
 	stopLossPercent := flag.Float64("stop-loss-percent", 2.0, "Stop loss percent (e.g., 2.0 for 2%)")
 	trailingStopPercent := flag.Float64("trailing-stop-percent", 0.0, "Trailing stop percent (e.g., 1.0 for 1%)")
 	takeProfitPercent := flag.Float64("take-profit-percent", 0.0, "Take profit percent (e.g., 2.0 for 2%)")
 	maxDailyLoss := flag.Float64("max-daily-loss", 0.0, "Max daily loss in account currency (e.g., 100.0)")
-	orderType := flag.String("order-type", "market", "Order type: market or limit or stop-limit or oco")
 	limitSpread := flag.Float64("limit-spread", 0.0, "Limit order spread as percent (e.g., 0.1 for 0.1%)")
-	notificationRetries := flag.Int("notification-retries", 3, "Number of notification send attempts")
-	notificationDelay := flag.Duration("notification-delay", 5*time.Second, "Delay between notification retries (e.g., 5s)")
+	riskMapFlag := flag.String("risk-map", "", "Comma-separated strategy:risk:stoploss:trailing triples (e.g., rsi:1.0:2.0:0.5)")
+	commissionPercent := flag.Float64("commission-percent", 0.0, "Commission percent per trade (e.g., 0.1 for 0.1%)")
 	symbols := flag.String("symbols", "btc-usdt", "Comma-separated list of trading symbols")
 	strategies := flag.String("strategies", "rsi", "Comma-separated list of strategies")
-	riskMapFlag := flag.String("risk-map", "", "Comma-separated strategy:risk:stoploss:trailing triples (e.g., rsi:1.0:2.0:0.5)")
 	slippagePercent := flag.Float64("slippage-percent", 0.0, "Slippage percent per trade (e.g., 0.05 for 0.05%)")
-	commissionPercent := flag.Float64("commission-percent", 0.0, "Commission percent per trade (e.g., 0.1 for 0.1%)")
-	configFile := flag.String("config", "", "Path to YAML config file")
 	runMigration := flag.Bool("run-migration", false, "Run database migrations")
-
+	balance := flag.Float64("balance", 0.0, "Balance in account currency (e.g., 100.0)")
+	configFile := flag.String("config", "", "Path to YAML config file")
 	flag.Parse()
 
 	// Parse dates
@@ -137,34 +144,59 @@ func LoadConfig() (Config, error) {
 	if *riskMapFlag != "" {
 		for _, triple := range strings.Split(*riskMapFlag, ",") {
 			parts := strings.Split(triple, ":")
-			if len(parts) == 4 {
-				stratName := parts[0]
+			if len(parts) != 8 {
+				return Config{}, fmt.Errorf("invalid risk map format: %s", *riskMapFlag)
+			}
+			stratName := parts[0]
 
-				risk, err := strconv.ParseFloat(parts[1], 64)
-				if err != nil {
-					return Config{}, fmt.Errorf("invalid risk value for strategy %s: %w", stratName, err)
-				}
+			risk, err := strconv.ParseFloat(parts[1], 64)
+			if err != nil {
+				return Config{}, fmt.Errorf("invalid risk value for strategy %s: %w", stratName, err)
+			}
 
-				sl, err := strconv.ParseFloat(parts[2], 64)
-				if err != nil {
-					return Config{}, fmt.Errorf("invalid stop loss value for strategy %s: %w", stratName, err)
-				}
+			sl, err := strconv.ParseFloat(parts[2], 64)
+			if err != nil {
+				return Config{}, fmt.Errorf("invalid stop loss value for strategy %s: %w", stratName, err)
+			}
 
-				trailing, err := strconv.ParseFloat(parts[3], 64)
-				if err != nil {
-					return Config{}, fmt.Errorf("invalid trailing stop value for strategy %s: %w", stratName, err)
-				}
+			trailing, err := strconv.ParseFloat(parts[3], 64)
+			if err != nil {
+				return Config{}, fmt.Errorf("invalid trailing stop value for strategy %s: %w", stratName, err)
+			}
 
-				riskMap[stratName] = RiskParams{
-					RiskPercent:         risk,
-					StopLossPercent:     sl,
-					TrailingStopPercent: trailing,
-				}
+			tp, err := strconv.ParseFloat(parts[4], 64)
+			if err != nil {
+				return Config{}, fmt.Errorf("invalid take profit value for strategy %s: %w", stratName, err)
+			}
+
+			maxDailyLoss, err := strconv.ParseFloat(parts[5], 64)
+			if err != nil {
+				return Config{}, fmt.Errorf("invalid max daily loss value for strategy %s: %w", stratName, err)
+			}
+
+			limitSpread, err := strconv.ParseFloat(parts[6], 64)
+			if err != nil {
+				return Config{}, fmt.Errorf("invalid limit spread value for strategy %s: %w", stratName, err)
+			}
+
+			balance, err := strconv.ParseFloat(parts[7], 64)
+			if err != nil {
+				return Config{}, fmt.Errorf("invalid balance value for strategy %s: %w", stratName, err)
+			}
+
+			riskMap[stratName] = RiskParams{
+				RiskPercent:         risk,
+				StopLossPercent:     sl,
+				TrailingStopPercent: trailing,
+				TakeProfitPercent:   tp,
+				MaxDailyLoss:        maxDailyLoss,
+				LimitSpread:         limitSpread,
+				Balance:             balance,
 			}
 		}
 	}
 
-	s := "/home/amirphl/sources/simple-trader/.env.yml"
+	s := "/home/amirphl/sources/simple-trader/.env.yml" // TODO: remove this
 	configFile = &s
 
 	// Load from YAML file if specified
@@ -193,18 +225,18 @@ func LoadConfig() (Config, error) {
 		Mode:                *mode,
 		BacktestFrom:        FlexibleTime{Time: fromTime},
 		BacktestTo:          FlexibleTime{Time: toTime},
-		OrderSize:           *orderSize,
+		OrderType:           *orderType,
 		TelegramToken:       *telegramToken,
 		TelegramChatID:      *telegramChatID,
+		NotificationRetries: *notificationRetries,
+		NotificationDelay:   *notificationDelay,
 		RiskPercent:         *riskPercent,
 		StopLossPercent:     *stopLossPercent,
 		TrailingStopPercent: *trailingStopPercent,
 		TakeProfitPercent:   *takeProfitPercent,
 		MaxDailyLoss:        *maxDailyLoss,
-		OrderType:           *orderType,
 		LimitSpread:         *limitSpread,
-		NotificationRetries: *notificationRetries,
-		NotificationDelay:   *notificationDelay,
+		Balance:             *balance,
 		Symbols:             strings.Split(*symbols, ","),
 		Strategies:          strings.Split(*strategies, ","),
 		RiskMap:             riskMap,

@@ -352,7 +352,7 @@ func runTradingLoop(
 	defer ingestionSvc.UnSubscribe(candleCh)
 
 	// Load position manager
-	pos := position.New(ctx, strat.Name(), strat.Symbol(), dbadapter, ex, notifier, cfg)
+	pos := position.New(cfg, strat.Name(), strat.Symbol(), dbadapter, ex, notifier)
 
 	// Live performance tracking
 	lastDay := time.Now().Day()
@@ -442,7 +442,7 @@ func runTradingLoop(
 
 			// Update daily PnL from position manager
 			// TODO:
-			todayPnL, err := pos.GetDailyPnL(ctx)
+			todayPnL, err := pos.DailyPnL()
 			if err != nil {
 				log.Printf("[%s] Error getting daily PnL: %v", strat.Name(), err)
 			} else {
