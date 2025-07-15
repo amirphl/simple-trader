@@ -63,6 +63,11 @@ func (w *WallexExchange) FetchCandles(ctx context.Context, symbol string, timefr
 		return nil, fmt.Errorf("unsupported timeframe: %s", timeframe)
 	}
 
+	trimmedTimeframe := strings.TrimSuffix(timeframe, "m")
+
+	symbolNoHyphen := strings.ReplaceAll(symbol, "-", "")
+	uppercasedSymbol := strings.ToUpper(symbolNoHyphen)
+
 	var wallexCandles []*wallex.Candle
 
 	select {
@@ -75,7 +80,7 @@ func (w *WallexExchange) FetchCandles(ctx context.Context, symbol string, timefr
 			from := time.Unix(start, 0)
 			to := time.Unix(end, 0)
 			var err error
-			wallexCandles, err = w.client.Candles(symbol, timeframe, from, to)
+			wallexCandles, err = w.client.Candles(uppercasedSymbol, trimmedTimeframe, from, to)
 			if err != nil {
 				return fmt.Errorf("fetching candles: %w", err)
 			}
@@ -103,7 +108,7 @@ func (w *WallexExchange) FetchCandles(ctx context.Context, symbol string, timefr
 			Volume:    volume,
 			Symbol:    symbol,
 			Timeframe: timeframe,
-			Source:    "wallex",
+			Source:    w.Name(),
 		}
 
 		// ISSUE: Side effect on strategies
