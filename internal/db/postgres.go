@@ -156,10 +156,32 @@ func (p *Default) Get1mCandlesForAggregation(ctx context.Context, symbol string,
 		if err := rows.Scan(&c.Timestamp, &c.Open, &c.High, &c.Low, &c.Close, &c.Volume, &c.Symbol, &c.Timeframe, &c.Source); err != nil {
 			return nil, fmt.Errorf("failed to scan candle: %w", err)
 		}
+		c.Timestamp = c.Timestamp.UTC() // TODO:
 		candles = append(candles, c)
 	}
 
 	return candles, nil
+}
+
+// GetCandle retrieves a single candle by symbol, timeframe, timestamp, and source
+func (p *Default) GetCandle(ctx context.Context, symbol, timeframe string, timestamp time.Time, source string) (*candle.Candle, error) {
+	row := p.db.QueryRow(`
+		SELECT timestamp, open, high, low, close, volume, symbol, timeframe, source 
+		FROM candles 
+		WHERE symbol=$1 AND timeframe=$2 AND timestamp=$3 AND source=$4 
+		LIMIT 1`,
+		symbol, timeframe, timestamp, source)
+
+	var c candle.Candle
+	if err := row.Scan(&c.Timestamp, &c.Open, &c.High, &c.Low, &c.Close, &c.Volume, &c.Symbol, &c.Timeframe, &c.Source); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to scan candle: %w", err)
+	}
+	c.Timestamp = c.Timestamp.UTC() // TODO:
+
+	return &c, nil
 }
 
 // GetCandles retrieves candles with optimized querying
@@ -181,7 +203,7 @@ func (p *Default) GetCandles(ctx context.Context, symbol, timeframe string, star
 		if err := rows.Scan(&c.Timestamp, &c.Open, &c.High, &c.Low, &c.Close, &c.Volume, &c.Symbol, &c.Timeframe, &c.Source); err != nil {
 			return nil, fmt.Errorf("failed to scan candle: %w", err)
 		}
-		c.Timestamp = c.Timestamp.UTC()
+		c.Timestamp = c.Timestamp.UTC() // TODO:
 		candles = append(candles, c)
 	}
 
@@ -212,7 +234,7 @@ func (p *Default) GetCandlesV2(ctx context.Context, timeframe string, start, end
 			&c.Symbol, &c.Timeframe, &c.Source); err != nil {
 			return nil, fmt.Errorf("failed to scan candle: %w", err)
 		}
-		c.Timestamp = c.Timestamp.UTC()
+		c.Timestamp = c.Timestamp.UTC() // TODO:
 		candles = append(candles, c)
 	}
 
@@ -223,8 +245,8 @@ func (p *Default) GetCandlesV2(ctx context.Context, timeframe string, start, end
 	return candles, nil
 }
 
-// GetCandlesInRange retrieves candles in a specific time range for a symbol and timeframe
-func (p *Default) GetCandlesInRange(ctx context.Context, symbol, timeframe string, start, end time.Time, source string) ([]candle.Candle, error) {
+// GetCandlesV3 retrieves candles in a specific time range for a symbol and timeframe and source
+func (p *Default) GetCandlesV3(ctx context.Context, symbol, timeframe, source string, start, end time.Time) ([]candle.Candle, error) {
 	query := `
 		SELECT timestamp, open, high, low, close, volume, symbol, timeframe, source 
 		FROM candles 
@@ -250,38 +272,12 @@ func (p *Default) GetCandlesInRange(ctx context.Context, symbol, timeframe strin
 		if err := rows.Scan(&c.Timestamp, &c.Open, &c.High, &c.Low, &c.Close, &c.Volume, &c.Symbol, &c.Timeframe, &c.Source); err != nil {
 			return nil, fmt.Errorf("failed to scan candle: %w", err)
 		}
-		c.Timestamp = c.Timestamp.UTC()
+		c.Timestamp = c.Timestamp.UTC() // TODO:
 		candles = append(candles, c)
 	}
 
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("error iterating candle rows: %w", err)
-	}
-
-	return candles, nil
-}
-
-// GetConstructedCandles retrieves only constructed candles
-func (p *Default) GetConstructedCandles(ctx context.Context, symbol, timeframe string, start, end time.Time) ([]candle.Candle, error) {
-	rows, err := p.db.Query(`
-		SELECT timestamp, open, high, low, close, volume, symbol, timeframe, source 
-		FROM candles 
-		WHERE symbol=$1 AND timeframe=$2 AND source='constructed' AND timestamp >= $3 AND timestamp < $4 
-		ORDER BY timestamp ASC`,
-		symbol, timeframe, start, end)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query constructed candles: %w", err)
-	}
-	defer rows.Close()
-
-	var candles []candle.Candle
-	for rows.Next() {
-		var c candle.Candle
-		if err := rows.Scan(&c.Timestamp, &c.Open, &c.High, &c.Low, &c.Close, &c.Volume, &c.Symbol, &c.Timeframe, &c.Source); err != nil {
-			return nil, fmt.Errorf("failed to scan constructed candle: %w", err)
-		}
-		c.Timestamp = c.Timestamp.UTC()
-		candles = append(candles, c)
 	}
 
 	return candles, nil
@@ -306,7 +302,7 @@ func (p *Default) GetRawCandles(ctx context.Context, symbol, timeframe string, s
 		if err := rows.Scan(&c.Timestamp, &c.Open, &c.High, &c.Low, &c.Close, &c.Volume, &c.Symbol, &c.Timeframe, &c.Source); err != nil {
 			return nil, fmt.Errorf("failed to scan raw candle: %w", err)
 		}
-		c.Timestamp = c.Timestamp.UTC()
+		c.Timestamp = c.Timestamp.UTC() // TODO:
 		candles = append(candles, c)
 	}
 
@@ -329,7 +325,7 @@ func (p *Default) GetLatestCandle(ctx context.Context, symbol, timeframe string)
 		}
 		return nil, fmt.Errorf("failed to scan latest candle: %w", err)
 	}
-	c.Timestamp = c.Timestamp.UTC()
+	c.Timestamp = c.Timestamp.UTC() // TODO:
 	return &c, nil
 }
 
@@ -350,7 +346,7 @@ func (p *Default) GetLatestCandleInRange(ctx context.Context, symbol, timeframe 
 		}
 		return nil, fmt.Errorf("failed to scan latest candle in range: %w", err)
 	}
-	c.Timestamp = c.Timestamp.UTC()
+	c.Timestamp = c.Timestamp.UTC() // TODO:
 	return &c, nil
 }
 
@@ -370,18 +366,13 @@ func (p *Default) GetLatestConstructedCandle(ctx context.Context, symbol, timefr
 		}
 		return nil, fmt.Errorf("failed to scan latest constructed candle: %w", err)
 	}
-	c.Timestamp = c.Timestamp.UTC()
+	c.Timestamp = c.Timestamp.UTC() // TODO:
 	return &c, nil
-}
-
-// GetLatest1mCandle retrieves the latest 1m candle for a symbol
-func (p *Default) GetLatest1mCandle(ctx context.Context, symbol string) (*candle.Candle, error) {
-	return p.GetLatestCandle(ctx, symbol, "1m")
 }
 
 // DeleteCandle removes a specific candle
 // TODO: TX
-func (p *Default) DeleteCandle(ctx context.Context, symbol, timeframe string, timestamp time.Time, source string) error {
+func (p *Default) DeleteCandle(ctx context.Context, symbol, timeframe, source string, timestamp time.Time) error {
 	result, err := p.db.Exec(`DELETE FROM candles WHERE symbol=$1 AND timeframe=$2 AND timestamp=$3 AND source=$4`,
 		symbol, timeframe, timestamp, source)
 	if err != nil {
@@ -404,16 +395,11 @@ func (p *Default) DeleteCandles(ctx context.Context, symbol, timeframe string, b
 		return fmt.Errorf("failed to delete candles: %w", err)
 	}
 
-	// rowsAffected, _ := result.RowsAffected()
-	// if rowsAffected > 0 {
-	// 	fmt.Printf("Deleted %d old candles for %s %s\n", rowsAffected, symbol, timeframe)
-	// }
-
 	return nil
 }
 
 // DeleteCandlesInRange removes candles in a specific time range for a symbol and timeframe
-func (p *Default) DeleteCandlesInRange(ctx context.Context, symbol, timeframe string, start, end time.Time, source string) error {
+func (p *Default) DeleteCandlesInRange(ctx context.Context, symbol, timeframe, source string, start, end time.Time) error {
 	query := `DELETE FROM candles WHERE symbol=$1 AND timeframe=$2 AND timestamp >= $3 AND timestamp < $4`
 	args := []any{symbol, timeframe, start, end}
 
@@ -437,11 +423,6 @@ func (p *Default) DeleteConstructedCandles(ctx context.Context, symbol, timefram
 	if err != nil {
 		return fmt.Errorf("failed to delete constructed candles: %w", err)
 	}
-
-	// rowsAffected, _ := result.RowsAffected()
-	// if rowsAffected > 0 {
-	// 	fmt.Printf("Deleted %d old constructed candles for %s %s\n", rowsAffected, symbol, timeframe)
-	// }
 
 	return nil
 }
@@ -600,7 +581,7 @@ func (p *Default) GetAggregationStats(ctx context.Context, symbol string) (map[s
 	stats := make(map[string]any)
 
 	// Get latest 1m candle
-	latest1m, err := p.GetLatest1mCandle(ctx, symbol)
+	latest1m, err := p.GetLatestCandle(ctx, symbol, "1m")
 	if err != nil {
 		return nil, fmt.Errorf("failed to get latest 1m candle: %w", err)
 	}
@@ -631,6 +612,7 @@ func (p *Default) GetAggregationStats(ctx context.Context, symbol string) (map[s
 
 // GetMissingCandleRanges identifies gaps in 1m candle data
 func (p *Default) GetMissingCandleRanges(ctx context.Context, symbol string, start, end time.Time) ([]struct{ Start, End time.Time }, error) {
+	// TODO: Logic
 	// Query for gaps in 1m candles
 	rows, err := p.db.Query(`
 		WITH time_series AS (
@@ -754,6 +736,7 @@ func (p *Default) GetOrderBooks(ctx context.Context, symbol string, start, end t
 		}
 		json.Unmarshal(bids, &ob.Bids)
 		json.Unmarshal(asks, &ob.Asks)
+		ob.Timestamp = ob.Timestamp.UTC() // TODO:
 		obs = append(obs, ob)
 	}
 	return obs, nil
@@ -819,6 +802,7 @@ func (p *Default) GetTicks(ctx context.Context, symbol string, start, end time.T
 		if err := rows.Scan(&t.Symbol, &t.Price, &t.Quantity, &t.Side, &t.Timestamp); err != nil {
 			return nil, err
 		}
+		t.Timestamp = t.Timestamp.UTC() // TODO:
 		ticks = append(ticks, t)
 	}
 	return ticks, nil
@@ -845,6 +829,8 @@ func (p *Default) GetOrder(ctx context.Context, orderID string) (order.OrderResp
 	if err := row.Scan(&o.OrderID, &o.Symbol, &o.Side, &o.Type, &o.Price, &o.Quantity, &o.Status, &o.FilledQty, &o.AvgPrice, &o.Timestamp, &o.UpdatedAt); err != nil {
 		return o, err
 	}
+	o.Timestamp = o.Timestamp.UTC() // TODO:
+	o.UpdatedAt = o.UpdatedAt.UTC() // TODO:
 	return o, nil
 }
 
@@ -860,6 +846,8 @@ func (p *Default) GetOpenOrders(ctx context.Context) ([]order.OrderResponse, err
 		if err := rows.Scan(&o.OrderID, &o.Symbol, &o.Side, &o.Type, &o.Price, &o.Quantity, &o.Status, &o.FilledQty, &o.AvgPrice, &o.Timestamp, &o.UpdatedAt); err != nil {
 			return nil, err
 		}
+		o.Timestamp = o.Timestamp.UTC() // TODO:
+		o.UpdatedAt = o.UpdatedAt.UTC() // TODO:
 		orders = append(orders, o)
 	}
 	return orders, nil
@@ -903,6 +891,7 @@ func (p *Default) GetEvents(ctx context.Context, eventType string, start, end ti
 			return nil, err
 		}
 		json.Unmarshal(data, &e.Data)
+		e.Time = e.Time.UTC() // TODO:
 		events = append(events, e)
 	}
 	return events, nil
@@ -954,25 +943,4 @@ func (p *Default) DeleteState(ctx context.Context, key string) error {
 	// TODO: TX
 	_, err := p.db.Exec(`DELETE FROM state WHERE key=$1`, key)
 	return err
-}
-
-// GetCandle retrieves a single candle by symbol, timeframe, timestamp, and source
-func (p *Default) GetCandle(ctx context.Context, symbol, timeframe string, timestamp time.Time, source string) (*candle.Candle, error) {
-	row := p.db.QueryRow(`
-		SELECT timestamp, open, high, low, close, volume, symbol, timeframe, source 
-		FROM candles 
-		WHERE symbol=$1 AND timeframe=$2 AND timestamp=$3 AND source=$4 
-		LIMIT 1`,
-		symbol, timeframe, timestamp, source)
-
-	var c candle.Candle
-	if err := row.Scan(&c.Timestamp, &c.Open, &c.High, &c.Low, &c.Close, &c.Volume, &c.Symbol, &c.Timeframe, &c.Source); err != nil {
-		if err == sql.ErrNoRows {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("failed to scan candle: %w", err)
-	}
-	c.Timestamp = c.Timestamp.UTC()
-
-	return &c, nil
 }

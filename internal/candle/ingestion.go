@@ -580,7 +580,7 @@ func (is *DefaultIngestionService) bulkAggregateHistorical1mData(symbol string) 
 	// TODO: Rollback on err
 
 	// Get the latest 1m candle to determine the time range
-	latest1m, err := is.storage.GetLatest1mCandle(ctx, symbol)
+	latest1m, err := is.storage.GetLatestCandle(ctx, symbol, "1m")
 	if err != nil {
 		return fmt.Errorf("failed to get latest 1m candle: %w", err)
 	}

@@ -109,15 +109,13 @@ type Storage interface {
 	GetCandle(ctx context.Context, symbol, timeframe string, timestamp time.Time, source string) (*Candle, error)
 	GetCandles(ctx context.Context, symbol, timeframe string, start, end time.Time) ([]Candle, error)
 	GetCandlesV2(ctx context.Context, timeframe string, start, end time.Time) ([]Candle, error)
-	GetCandlesInRange(ctx context.Context, symbol, timeframe string, start, end time.Time, source string) ([]Candle, error)
-	GetConstructedCandles(ctx context.Context, symbol, timeframe string, start, end time.Time) ([]Candle, error)
+	GetCandlesV3(ctx context.Context, symbol, timeframe, source string, start, end time.Time) ([]Candle, error)
 	GetRawCandles(ctx context.Context, symbol, timeframe string, start, end time.Time) ([]Candle, error)
 	GetLatestCandle(ctx context.Context, symbol, timeframe string) (*Candle, error)
 	GetLatestCandleInRange(ctx context.Context, symbol, timeframe string, start, end time.Time) (*Candle, error)
 	GetLatestConstructedCandle(ctx context.Context, symbol, timeframe string) (*Candle, error)
-	GetLatest1mCandle(ctx context.Context, symbol string) (*Candle, error)
 	DeleteCandles(ctx context.Context, symbol, timeframe string, before time.Time) error
-	DeleteCandlesInRange(ctx context.Context, symbol, timeframe string, start, end time.Time, source string) error
+	DeleteCandlesInRange(ctx context.Context, symbol, timeframe, source string, start, end time.Time) error
 	DeleteConstructedCandles(ctx context.Context, symbol, timeframe string, before time.Time) error
 	GetCandleCount(ctx context.Context, symbol, timeframe string, start, end time.Time) (int, error)
 	GetConstructedCandleCount(ctx context.Context, symbol, timeframe string, start, end time.Time) (int, error)
