@@ -5,4 +5,5 @@ package notifier
 type Notifier interface {
 	Send(msg string) error
 	SendWithRetry(msg string) error
+	RetryWithNotification(action func() error, description string) error
 }

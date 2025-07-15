@@ -46,8 +46,7 @@ func (t *TelegramNotifier) SendWithRetry(msg string) error {
 		log.Printf("Notification send failed (attempt %d/%d): %v", attempt, t.MaxAttempts, err)
 		time.Sleep(t.Delay)
 	}
-	log.Printf("Notification send permanently failed: %v", err)
-	fmt.Printf("ESCALATION: Notification send failed after %d attempts: %v\n", t.MaxAttempts, err)
+	log.Printf("ESCALATION: Notification send failed after %d attempts: %v\n", t.MaxAttempts, err)
 	return err
 }
 
@@ -60,10 +59,10 @@ func (t *TelegramNotifier) RetryWithNotification(action func() error, descriptio
 		}
 		log.Printf("%s failed (attempt %d/%d): %v", description, attempt, t.MaxAttempts, err)
 		msg := fmt.Sprintf("[ERROR RETRY]\nContext: %s\nAttempt: %d/%d\nError: %v\nTime: %s", description, attempt, t.MaxAttempts, err, time.Now().Format(time.RFC3339))
-		t.SendWithRetry(msg)
+		t.Send(msg)
 		time.Sleep(t.Delay)
 	}
 	msg := fmt.Sprintf("[ERROR PERMANENT]\nContext: %s\nError: %v\nTime: %s", description, err, time.Now().Format(time.RFC3339))
-	t.SendWithRetry(msg)
+	t.Send(msg)
 	return err
 }
