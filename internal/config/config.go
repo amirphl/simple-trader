@@ -13,17 +13,45 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// FlexibleTime is a wrapper around time.Time that supports unmarshaling from
+// both date-only format (YYYY-MM-DD) and full RFC3339 format
+type FlexibleTime struct {
+	time.Time
+}
+
+// UnmarshalYAML implements the yaml.Unmarshaler interface
+func (ft *FlexibleTime) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	var timeStr string
+	if err := unmarshal(&timeStr); err != nil {
+		return err
+	}
+
+	// Try parsing as RFC3339 first
+	t, err := time.Parse(time.RFC3339, timeStr)
+	if err != nil {
+		// If that fails, try parsing as date only
+		t, err = time.Parse("2006-01-02", timeStr)
+		if err != nil {
+			return fmt.Errorf("cannot parse time %q as either RFC3339 or YYYY-MM-DD: %v", timeStr, err)
+		}
+	}
+
+	ft.Time = t
+	return nil
+}
+
 // Config holds all application configuration parameters
 type Config struct {
 	WallexAPIKey        string                `yaml:"wallex_api_key"`
 	DBConnStr           string                `yaml:"db_conn_str"`
 	DBMaxOpen           int                   `yaml:"db_max_open"`
 	DBMaxIdle           int                   `yaml:"db_max_idle"`
+	RunMigration        bool                  `yaml:"run_migration"`
 	Mode                string                `yaml:"mode"`
 	Symbols             []string              `yaml:"symbols"`
 	Strategies          []string              `yaml:"strategies"`
-	BacktestFrom        time.Time             `yaml:"backtest_from"`
-	BacktestTo          time.Time             `yaml:"backtest_to"`
+	BacktestFrom        FlexibleTime          `yaml:"backtest_from"`
+	BacktestTo          FlexibleTime          `yaml:"backtest_to"`
 	OrderSize           float64               `yaml:"order_size"`
 	OrderType           string                `yaml:"order_type"`
 	RiskPercent         float64               `yaml:"risk_percent"`
@@ -89,6 +117,7 @@ func LoadConfig() (Config, error) {
 	slippagePercent := flag.Float64("slippage-percent", 0.0, "Slippage percent per trade (e.g., 0.05 for 0.05%)")
 	commissionPercent := flag.Float64("commission-percent", 0.0, "Commission percent per trade (e.g., 0.1 for 0.1%)")
 	configFile := flag.String("config", "", "Path to YAML config file")
+	runMigration := flag.Bool("run-migration", false, "Run database migrations")
 
 	flag.Parse()
 
@@ -135,6 +164,9 @@ func LoadConfig() (Config, error) {
 		}
 	}
 
+	s := "/home/amirphl/sources/simple-trader/.env.yml"
+	configFile = &s
+
 	// Load from YAML file if specified
 	if *configFile != "" {
 		data, err := os.ReadFile(*configFile)
@@ -157,9 +189,10 @@ func LoadConfig() (Config, error) {
 		DBConnStr:           os.Getenv("DB_CONN_STR"),
 		DBMaxOpen:           10,
 		DBMaxIdle:           5,
+		RunMigration:        *runMigration,
 		Mode:                *mode,
-		BacktestFrom:        fromTime,
-		BacktestTo:          toTime,
+		BacktestFrom:        FlexibleTime{Time: fromTime},
+		BacktestTo:          FlexibleTime{Time: toTime},
 		OrderSize:           *orderSize,
 		TelegramToken:       *telegramToken,
 		TelegramChatID:      *telegramChatID,
