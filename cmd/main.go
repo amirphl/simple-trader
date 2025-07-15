@@ -2,12 +2,15 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/csv"
 	"fmt"
 	"log"
 	"math"
+	"net/url"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -15,12 +18,13 @@ import (
 	"github.com/amirphl/simple-trader/internal/candle"
 	"github.com/amirphl/simple-trader/internal/config"
 	"github.com/amirphl/simple-trader/internal/db"
-	dbconf "github.com/amirphl/simple-trader/internal/db/conf"
+	"github.com/amirphl/simple-trader/internal/db/conf"
 	"github.com/amirphl/simple-trader/internal/exchange"
 	"github.com/amirphl/simple-trader/internal/journal"
 	"github.com/amirphl/simple-trader/internal/notifier"
 	"github.com/amirphl/simple-trader/internal/position"
 	"github.com/amirphl/simple-trader/internal/strategy"
+	"github.com/lib/pq"
 )
 
 // orderStatusChecker periodically checks the status of open orders
@@ -93,20 +97,35 @@ func main() {
 	cfg := config.MustLoadConfig()
 	log.Println("Starting Simple Trader in mode:", cfg.Mode)
 
-	// Setup graceful shutdown
+	// Set up context with cancellation
 	ctx, cancel := context.WithCancel(context.Background())
-	shutdown := make(chan os.Signal, 1)
-	signal.Notify(shutdown, syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
 
-	// Set up database connection
-	dbcfg, err := dbconf.NewConfig(cfg.DBConnStr, cfg.DBMaxOpen, cfg.DBMaxIdle)
+	// Set up signal handling for graceful shutdown
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		sig := <-sigCh
+		log.Printf("Received signal %v, shutting down...", sig)
+		cancel()
+	}()
+
+	// Run migrations if enabled
+	if cfg.RunMigration {
+		if err := runMigrations(ctx, cfg.DBConnStr); err != nil {
+			log.Fatalf("Failed to run migrations: %v", err)
+		}
+	}
+
+	// Initialize database connection
+	dbConfig, err := conf.NewConfig(cfg.DBConnStr, cfg.DBMaxOpen, cfg.DBMaxIdle)
 	if err != nil {
 		log.Fatalf("Failed to create DB config: %v", err)
 	}
 
-	dbadapter, err := db.New(*dbcfg)
+	dbadapter, err := db.New(*dbConfig)
 	if err != nil {
-		log.Fatalf("Failed to connect to DB: %v", err)
+		log.Fatalf("Failed to initialize database: %v", err)
 	}
 	log.Println("Connected to Postgres/TimescaleDB")
 
@@ -138,10 +157,8 @@ func main() {
 	}
 
 	// Wait for shutdown signal
-	<-shutdown
+	<-sigCh
 	log.Println("Graceful shutdown initiated...")
-
-	cancel()
 
 	// Allow some time for cleanup
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -150,6 +167,82 @@ func main() {
 	// Wait for context to be done (either timeout or cancel)
 	<-shutdownCtx.Done()
 	log.Println("Shutdown complete")
+}
+
+// runMigrations creates the database if it doesn't exist and runs the schema.sql script
+func runMigrations(ctx context.Context, connStr string) error {
+	log.Println("Running database migrations...")
+
+	// Parse connection string to extract database name
+	u, err := url.Parse(connStr)
+	if err != nil {
+		return fmt.Errorf("failed to parse connection string: %w", err)
+	}
+
+	dbName := strings.TrimPrefix(u.Path, "/")
+	if dbName == "" {
+		return fmt.Errorf("database name not found in connection string")
+	}
+
+	// Create a connection string to the postgres database to create our database
+	baseConnStr := fmt.Sprintf("postgres://%s:%s@%s/postgres%s",
+		u.User.Username(),
+		func() string {
+			p, _ := u.User.Password()
+			return p
+		}(),
+		u.Host,
+		func() string {
+			if u.RawQuery != "" {
+				return "?" + u.RawQuery
+			}
+			return ""
+		}())
+
+	// Connect to the postgres database
+	baseDB, err := sql.Open("postgres", baseConnStr)
+	if err != nil {
+		return fmt.Errorf("failed to connect to postgres: %w", err)
+	}
+	defer baseDB.Close()
+
+	// Check if our database exists
+	var exists bool
+	err = baseDB.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = $1)", dbName).Scan(&exists)
+	if err != nil {
+		return fmt.Errorf("failed to check if database exists: %w", err)
+	}
+
+	// Create the database if it doesn't exist
+	if !exists {
+		log.Printf("Creating database %s...", dbName)
+		_, err = baseDB.ExecContext(ctx, fmt.Sprintf("CREATE DATABASE %s", pq.QuoteIdentifier(dbName)))
+		if err != nil {
+			return fmt.Errorf("failed to create database: %w", err)
+		}
+	}
+
+	// Connect to our database
+	db, err := sql.Open("postgres", connStr)
+	if err != nil {
+		return fmt.Errorf("failed to connect to database: %w", err)
+	}
+	defer db.Close()
+
+	// Read the schema.sql file
+	schemaSQL, err := os.ReadFile("scripts/schema.sql")
+	if err != nil {
+		return fmt.Errorf("failed to read schema.sql: %w", err)
+	}
+
+	// Execute the schema.sql script
+	_, err = db.ExecContext(ctx, string(schemaSQL))
+	if err != nil {
+		return fmt.Errorf("failed to execute schema.sql: %w", err)
+	}
+
+	log.Println("Database migrations completed successfully")
+	return nil
 }
 
 // runLiveTrading handles the live trading mode
@@ -207,7 +300,7 @@ func runLiveTrading(
 		wg.Add(1)
 		go func(s strategy.Strategy) {
 			defer wg.Done()
-			runTradingLoop(ctx, s, ingestionSvc, dbadapter, cfg)
+			runTradingLoop(ctx, s, ingestionSvc, dbadapter, ex, notifier, cfg)
 		}(strat)
 	}
 
@@ -236,7 +329,7 @@ func printIngestionStats(ingestionSvc candle.IngestionService) {
 	log.Println("Candle Ingestion Stats:")
 	for symbol, symbolStats := range stats {
 		log.Printf("  %s:", symbol)
-		for timeframe, timeframeStats := range symbolStats.(map[string]any) {
+		for timeframe, timeframeStats := range symbolStats {
 			log.Printf("    %s: %+v", timeframe, timeframeStats)
 		}
 	}
@@ -248,6 +341,8 @@ func runTradingLoop(
 	strat strategy.Strategy,
 	ingestionSvc candle.IngestionService,
 	dbadapter db.DB,
+	ex exchange.Exchange,
+	notifier notifier.Notifier,
 	cfg config.Config,
 ) {
 	log.Printf("Starting trading loop with %s strategy", strat.Name())
@@ -257,14 +352,7 @@ func runTradingLoop(
 	defer ingestionSvc.UnSubscribe(candleCh)
 
 	// Load position manager
-	posManager, err := position.NewManager(ctx, strat.Name(), strat.Symbol(), dbadapter, cfg)
-	if err != nil {
-		log.Printf("Error initializing position manager for %s: %v", strat.Name(), err)
-		return
-	}
-
-	// Get risk parameters for this strategy
-	riskParams := config.GetRiskParams(cfg, strat.Name())
+	pos := position.New(ctx, strat.Name(), strat.Symbol(), dbadapter, ex, notifier, cfg)
 
 	// Live performance tracking
 	lastDay := time.Now().Day()
@@ -313,9 +401,7 @@ func runTradingLoop(
 
 			// Process signal with position manager
 			if signal.Action != "hold" {
-				if err := posManager.ProcessSignal(ctx, signal, riskParams); err != nil {
-					log.Printf("[%s] Error processing signal: %v", strat.Name(), err)
-				}
+				pos.OnSignal(ctx, signal)
 			}
 
 		case <-statusTicker.C:
@@ -356,7 +442,7 @@ func runTradingLoop(
 
 			// Update daily PnL from position manager
 			// TODO:
-			todayPnL, err := posManager.GetDailyPnL(ctx)
+			todayPnL, err := pos.GetDailyPnL(ctx)
 			if err != nil {
 				log.Printf("[%s] Error getting daily PnL: %v", strat.Name(), err)
 			} else {
@@ -381,13 +467,13 @@ func runBacktest(
 ) {
 	for _, symbol := range cfg.Symbols {
 		// Load candles for backtesting
-		candles, err := loadBacktestCandles(ctx, dbadapter, ex, symbol, timeframe, cfg.BacktestFrom, cfg.BacktestTo)
+		candles, err := loadBacktestCandles(ctx, dbadapter, ex, symbol, timeframe, cfg.BacktestFrom.Time, cfg.BacktestTo.Time)
 		if err != nil {
 			log.Fatalf("Error loading candles for backtest: %v", err)
 		}
 
 		log.Printf("Loaded %d candles for backtest [%s-%s]",
-			len(candles), cfg.BacktestFrom.Format(time.RFC3339), cfg.BacktestTo.Format(time.RFC3339))
+			len(candles), cfg.BacktestFrom.Time.Format(time.RFC3339), cfg.BacktestTo.Time.Format(time.RFC3339))
 
 		// Run backtest for each strategy
 		for _, strat := range strats {
@@ -503,7 +589,7 @@ func runStrategyBacktest(strat strategy.Strategy, candles []candle.Candle, cfg c
 	// Initialize backtest variables
 	var signals []strategy.Signal
 	var lastBuyPrice float64
-	var inPosition bool
+	var active bool
 	var dailyPnL float64
 	var lastDay int = -1
 	var trailingStop float64
@@ -529,12 +615,12 @@ func runStrategyBacktest(strat strategy.Strategy, candles []candle.Candle, cfg c
 		signals = append(signals, sig)
 
 		// Process buy signal
-		if sig.Action == "buy" && !inPosition && (maxDailyLoss == 0 || dailyPnL > -maxDailyLoss) {
+		if sig.Action == "buy" && !active && (maxDailyLoss == 0 || dailyPnL > -maxDailyLoss) {
 			// Simulate slippage and commission on entry
 			entryPrice := c.Close * (1 + slippage)
 			entryPrice += entryPrice * commission
 			lastBuyPrice = entryPrice
-			inPosition = true
+			active = true
 			results.Trades++
 
 			// Record trade entry
@@ -543,7 +629,7 @@ func runStrategyBacktest(strat strategy.Strategy, candles []candle.Candle, cfg c
 				EntryTime: c.Timestamp,
 			})
 			trailingStop = 0
-		} else if inPosition {
+		} else if active {
 			// Calculate stop loss price
 			stopLossPrice := lastBuyPrice * (1 - stopLossPercent/100)
 			price := c.Close
@@ -604,7 +690,7 @@ func runStrategyBacktest(strat strategy.Strategy, candles []candle.Candle, cfg c
 					results.LossPnls = append(results.LossPnls, pnl)
 				}
 
-				inPosition = false
+				active = false
 				trailingStop = 0
 			}
 		}
