@@ -43,7 +43,7 @@ func retry(attempts int, delay time.Duration, fn func() error) error {
 		if err == nil {
 			return nil
 		}
-		log.Printf("wallex: Retry attempt %d/%d failed: %v. Backing off for %v", i, attempts, err, backoff)
+		log.Printf("Exchange | %s Retry attempt %d/%d failed: %v. Backing off for %v", "Wallex", i, attempts, err, backoff)
 		time.Sleep(backoff)
 		// Exponential backoff, but cap at 5 minutes
 		if backoff < 5*time.Minute {
@@ -71,7 +71,7 @@ func (w *WallexExchange) FetchCandles(ctx context.Context, symbol string, timefr
 
 	select {
 	case <-ctx.Done():
-		log.Printf("Exchange %s FetchCandles timeout", w.Name())
+		log.Printf("Exchange | %s FetchCandles timeout", w.Name())
 		return nil, ctx.Err()
 
 	default:
@@ -86,7 +86,7 @@ func (w *WallexExchange) FetchCandles(ctx context.Context, symbol string, timefr
 			return nil
 		})
 		if err != nil {
-			return nil, fmt.Errorf("wallex FetchCandles failed: %w", err)
+			return nil, fmt.Errorf("FetchCandles failed: %w", err)
 		}
 	}
 
@@ -139,7 +139,7 @@ func (w *WallexExchange) FetchLatestCandles(ctx context.Context, symbol string, 
 func (w *WallexExchange) FetchOrderBook(ctx context.Context, symbol string) (market.OrderBook, error) {
 	select {
 	case <-ctx.Done():
-		log.Printf("Exchange %s FetchOrderBook timeout", w.Name())
+		log.Printf("Exchange | %s FetchOrderBook timeout", w.Name())
 		return market.OrderBook{}, ctx.Err()
 
 	default:
@@ -170,7 +170,7 @@ func (w *WallexExchange) FetchOrderBook(ctx context.Context, symbol string) (mar
 func (w *WallexExchange) FetchTick(ctx context.Context, symbol string) (market.Tick, error) {
 	select {
 	case <-ctx.Done():
-		log.Printf("Exchange %s FetchTick timeout", w.Name())
+		log.Printf("Exchange | %s FetchTick timeout", w.Name())
 		return market.Tick{}, ctx.Err()
 
 	default:
@@ -231,7 +231,7 @@ func (w *WallexExchange) FetchTicks(ctx context.Context, symbol string, from, to
 func (w *WallexExchange) SubmitOrder(ctx context.Context, req order.OrderRequest) (order.OrderResponse, error) {
 	select {
 	case <-ctx.Done():
-		log.Printf("Exchange %s SubmitOrder timeout", w.Name())
+		log.Printf("Exchange | %s SubmitOrder timeout", w.Name())
 		return order.OrderResponse{}, ctx.Err()
 
 	default:
@@ -278,8 +278,8 @@ func (w *WallexExchange) SubmitOrderWithRetry(ctx context.Context, req order.Ord
 		if err == nil {
 			return resp, nil
 		}
+		log.Printf("Exchange | %s Order submission failed (attempt %d/%d): %v", w.Name(), attempt, maxAttempts, err)
 		msg := fmt.Sprintf("Order submission failed (attempt %d/%d): %v", attempt, maxAttempts, err)
-		log.Print(msg)
 		w.notifier.SendWithRetry(msg)
 		time.Sleep(delay)
 	}
@@ -289,7 +289,7 @@ func (w *WallexExchange) SubmitOrderWithRetry(ctx context.Context, req order.Ord
 func (w *WallexExchange) CancelOrder(ctx context.Context, orderID string) error {
 	select {
 	case <-ctx.Done():
-		log.Printf("Exchange %s CancelOrder timeout", w.Name())
+		log.Printf("Exchange | %s CancelOrder timeout", w.Name())
 		return ctx.Err()
 
 	default:
@@ -300,7 +300,7 @@ func (w *WallexExchange) CancelOrder(ctx context.Context, orderID string) error 
 func (w *WallexExchange) GetOrderStatus(ctx context.Context, orderID string) (order.OrderResponse, error) {
 	select {
 	case <-ctx.Done():
-		log.Printf("Exchange %s GetOrderStatus timeout", w.Name())
+		log.Printf("Exchange | %s GetOrderStatus timeout", w.Name())
 		return order.OrderResponse{}, ctx.Err()
 
 	default:
