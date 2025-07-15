@@ -995,7 +995,7 @@ func TestPostgresDB_GetCandles(t *testing.T) {
 		start := now.Add(-5 * time.Minute)
 		end := now.Add(5 * time.Minute)
 
-		result, err := db.GetCandles(ctx, "BTC-USDT", "1m", start, end)
+		result, err := db.GetCandles(ctx, "BTC-USDT", "1m", "", start, end)
 		assert.NoError(t, err)
 		assert.Len(t, result, 2)
 
@@ -1008,7 +1008,7 @@ func TestPostgresDB_GetCandles(t *testing.T) {
 		start := now.Add(-5 * time.Hour)
 		end := now.Add(-1 * time.Hour)
 
-		result, err := db.GetCandles(ctx, "BTC-USDT", "1m", start, end)
+		result, err := db.GetCandles(ctx, "BTC-USDT", "1m", "", start, end)
 		assert.NoError(t, err)
 		assert.Empty(t, result)
 	})
@@ -1018,7 +1018,7 @@ func TestPostgresDB_GetCandles(t *testing.T) {
 		start := now.Add(5 * time.Minute)
 		end := now.Add(-5 * time.Minute)
 
-		result, err := db.GetCandles(ctx, "BTC-USDT", "1m", start, end)
+		result, err := db.GetCandles(ctx, "BTC-USDT", "1m", "", start, end)
 		assert.NoError(t, err)
 		assert.Empty(t, result)
 	})
@@ -1028,7 +1028,7 @@ func TestPostgresDB_GetCandles(t *testing.T) {
 		start := now.Add(-5 * time.Minute)
 		end := now.Add(5 * time.Minute)
 
-		result, err := db.GetCandles(ctx, "BTC-USDT", "5m", start, end)
+		result, err := db.GetCandles(ctx, "BTC-USDT", "5m", "", start, end)
 		assert.NoError(t, err)
 		assert.Empty(t, result)
 	})
@@ -1217,7 +1217,7 @@ func TestPostgresDB_GetCandlesInRange(t *testing.T) {
 		start := now.Add(-5 * time.Minute)
 		end := now.Add(5 * time.Minute)
 
-		result, err := db.GetCandlesV3(ctx, "BTC-USDT", "1m", "test1", start, end)
+		result, err := db.GetCandles(ctx, "BTC-USDT", "1m", "test1", start, end)
 		assert.NoError(t, err)
 		assert.Len(t, result, 2)
 
@@ -1231,7 +1231,7 @@ func TestPostgresDB_GetCandlesInRange(t *testing.T) {
 		start := now.Add(-5 * time.Minute)
 		end := now.Add(5 * time.Minute)
 
-		result, err := db.GetCandlesV3(ctx, "BTC-USDT", "1m", "", start, end)
+		result, err := db.GetCandles(ctx, "BTC-USDT", "1m", "", start, end)
 		assert.NoError(t, err)
 		assert.Len(t, result, 3)
 	})
@@ -1241,7 +1241,7 @@ func TestPostgresDB_GetCandlesInRange(t *testing.T) {
 		start := now.Add(-5 * time.Minute)
 		end := now.Add(5 * time.Minute)
 
-		result, err := db.GetCandlesV3(ctx, "BTC-USDT", "1m", "non-existent", start, end)
+		result, err := db.GetCandles(ctx, "BTC-USDT", "1m", "non-existent", start, end)
 		assert.NoError(t, err)
 		assert.Empty(t, result)
 	})
@@ -1251,7 +1251,7 @@ func TestPostgresDB_GetCandlesInRange(t *testing.T) {
 		start := now.Add(-time.Minute)
 		end := now.Add(-time.Minute)
 
-		result, err := db.GetCandlesV3(ctx, "BTC-USDT", "1m", "", start, end)
+		result, err := db.GetCandles(ctx, "BTC-USDT", "1m", "", start, end)
 		assert.NoError(t, err)
 		assert.Len(t, result, 0)
 	})
@@ -1317,7 +1317,7 @@ func TestPostgresDB_GetConstructedCandles(t *testing.T) {
 		start := now.Add(-5 * time.Minute)
 		end := now.Add(5 * time.Minute)
 
-		result, err := db.GetCandlesV3(ctx, "BTC-USDT", "1m", "constructed", start, end)
+		result, err := db.GetCandles(ctx, "BTC-USDT", "1m", "constructed", start, end)
 		assert.NoError(t, err)
 		assert.Len(t, result, 1)
 		assert.Equal(t, "constructed", result[0].Source)
@@ -1329,7 +1329,7 @@ func TestPostgresDB_GetConstructedCandles(t *testing.T) {
 		start := now.Add(-5 * time.Minute)
 		end := now.Add(5 * time.Minute)
 
-		result, err := db.GetCandlesV3(ctx, "ETH-USDT", "1m", "constructed", start, end)
+		result, err := db.GetCandles(ctx, "ETH-USDT", "1m", "constructed", start, end)
 		assert.NoError(t, err)
 		assert.Len(t, result, 1)
 		assert.Equal(t, "constructed", result[0].Source)
@@ -1341,7 +1341,7 @@ func TestPostgresDB_GetConstructedCandles(t *testing.T) {
 		start := now.Add(-5 * time.Minute)
 		end := now.Add(5 * time.Minute)
 
-		result, err := db.GetCandlesV3(ctx, "LTC-USDT", "1m", "constructed", start, end)
+		result, err := db.GetCandles(ctx, "LTC-USDT", "1m", "constructed", start, end)
 		assert.NoError(t, err)
 		assert.Empty(t, result)
 	})
@@ -1351,7 +1351,7 @@ func TestPostgresDB_GetConstructedCandles(t *testing.T) {
 		start := now.Add(-5 * time.Minute)
 		end := now.Add(5 * time.Minute)
 
-		result, err := db.GetCandlesV3(ctx, "BTC-USDT", "5m", "constructed", start, end)
+		result, err := db.GetCandles(ctx, "BTC-USDT", "5m", "constructed", start, end)
 		assert.NoError(t, err)
 		assert.Empty(t, result)
 	})
@@ -1476,7 +1476,7 @@ func TestPostgresDB_GetRawCandles(t *testing.T) {
 		end := now.Add(5 * time.Minute)
 
 		// Get all candles
-		allCandles, err := db.GetCandles(ctx, "BTC-USDT", "1m", start, end)
+		allCandles, err := db.GetCandles(ctx, "BTC-USDT", "1m", "", start, end)
 		assert.NoError(t, err)
 		assert.Len(t, allCandles, 3) // Should include constructed ones
 
@@ -2368,7 +2368,7 @@ func TestPostgresDB_DeleteCandles(t *testing.T) {
 		assert.Equal(t, 2, count) // Only 2 candles should remain
 
 		// Verify the specific candles that remain
-		remainingCandles, err := db.GetCandles(ctx, "BTC-USDT", "1m", now.Add(-4*time.Hour), now)
+		remainingCandles, err := db.GetCandles(ctx, "BTC-USDT", "1m", "", now.Add(-4*time.Hour), now)
 		require.NoError(t, err)
 		assert.Len(t, remainingCandles, 2)
 
@@ -2548,7 +2548,7 @@ func TestPostgresDB_DeleteCandlesInRange(t *testing.T) {
 		assert.NoError(t, err)
 
 		// Verify only source1 candles in the range were deleted
-		remainingCandles, err := db.GetCandles(ctx, "BTC-USDT", "1m", now.Add(-4*time.Hour), now)
+		remainingCandles, err := db.GetCandles(ctx, "BTC-USDT", "1m", "", now.Add(-4*time.Hour), now)
 		require.NoError(t, err)
 		assert.Len(t, remainingCandles, 2) // One source1 and one source2 should remain
 
@@ -2613,7 +2613,7 @@ func TestPostgresDB_DeleteCandlesInRange(t *testing.T) {
 		assert.NoError(t, err)
 
 		// Verify all candles in the range were deleted, regardless of source
-		remainingCandles, err := db.GetCandles(ctx, "ETH-USDT", "1m", now.Add(-4*time.Hour), now)
+		remainingCandles, err := db.GetCandles(ctx, "ETH-USDT", "1m", "", now.Add(-4*time.Hour), now)
 		require.NoError(t, err)
 		assert.Len(t, remainingCandles, 2) // Only the oldest and newest should remain
 

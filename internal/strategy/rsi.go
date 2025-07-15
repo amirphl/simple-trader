@@ -13,7 +13,7 @@ import (
 
 // Storage interface defines methods for retrieving candle data
 type Storage interface {
-	GetCandles(ctx context.Context, symbol, timeframe string, start, end time.Time) ([]candle.Candle, error)
+	GetCandles(ctx context.Context, symbol, timeframe, source string, start, end time.Time) ([]candle.Candle, error)
 }
 
 // RSIStrategy implements a trading strategy based on the Relative Strength Index
@@ -117,7 +117,7 @@ func (s *RSIStrategy) OnCandles(ctx context.Context, oneMinCandles []candle.Cand
 			s.symbol, startTime.Format(time.RFC3339), endTime.Format(time.RFC3339))
 
 		// Fetch historical 1m candles
-		historicalCandles, err := s.Storage.GetCandles(ctx, s.symbol, "1m", startTime, endTime)
+		historicalCandles, err := s.Storage.GetCandles(ctx, s.symbol, "1m", "", startTime, endTime)
 		if err != nil {
 			log.Printf("[%s RSI] Error fetching historical candles from database: %v\n", s.symbol, err)
 			// Continue with the current candles even if historical fetch fails

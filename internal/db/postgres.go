@@ -184,32 +184,6 @@ func (p *Default) GetCandle(ctx context.Context, symbol, timeframe string, times
 	return &c, nil
 }
 
-// GetCandles retrieves candles with optimized querying
-func (p *Default) GetCandles(ctx context.Context, symbol, timeframe string, start, end time.Time) ([]candle.Candle, error) {
-	rows, err := p.db.Query(`
-		SELECT timestamp, open, high, low, close, volume, symbol, timeframe, source 
-		FROM candles 
-		WHERE symbol=$1 AND timeframe=$2 AND timestamp >= $3 AND timestamp < $4 
-		ORDER BY timestamp ASC`,
-		symbol, timeframe, start, end)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query candles: %w", err)
-	}
-	defer rows.Close()
-
-	var candles []candle.Candle
-	for rows.Next() {
-		var c candle.Candle
-		if err := rows.Scan(&c.Timestamp, &c.Open, &c.High, &c.Low, &c.Close, &c.Volume, &c.Symbol, &c.Timeframe, &c.Source); err != nil {
-			return nil, fmt.Errorf("failed to scan candle: %w", err)
-		}
-		c.Timestamp = c.Timestamp.UTC() // TODO:
-		candles = append(candles, c)
-	}
-
-	return candles, nil
-}
-
 // GetCandlesV2 retrieves candles with a specific timeframe in a time range without filtering by symbol
 // This is useful for bulk operations across all symbols
 func (p *Default) GetCandlesV2(ctx context.Context, timeframe string, start, end time.Time) ([]candle.Candle, error) {
@@ -245,8 +219,8 @@ func (p *Default) GetCandlesV2(ctx context.Context, timeframe string, start, end
 	return candles, nil
 }
 
-// GetCandlesV3 retrieves candles in a specific time range for a symbol and timeframe and source
-func (p *Default) GetCandlesV3(ctx context.Context, symbol, timeframe, source string, start, end time.Time) ([]candle.Candle, error) {
+// GetCandles retrieves candles in a specific time range for a symbol and timeframe and source
+func (p *Default) GetCandles(ctx context.Context, symbol, timeframe, source string, start, end time.Time) ([]candle.Candle, error) {
 	query := `
 		SELECT timestamp, open, high, low, close, volume, symbol, timeframe, source 
 		FROM candles 

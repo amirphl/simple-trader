@@ -497,7 +497,7 @@ func loadBacktestCandles(
 	from, to time.Time,
 ) ([]candle.Candle, error) {
 	// Try to load candles from database first
-	candles, err := dbadapter.GetCandles(ctx, symbol, timeframe, from, to)
+	candles, err := dbadapter.GetCandles(ctx, symbol, timeframe, "", from, to)
 	if err != nil {
 		return nil, fmt.Errorf("error loading candles from database: %w", err)
 	}
@@ -548,7 +548,7 @@ func loadBacktestCandles(
 		}
 
 		// Load the downloaded candles
-		candles, err = dbadapter.GetCandles(ctx, symbol, timeframe, from, to)
+		candles, err = dbadapter.GetCandles(ctx, symbol, timeframe, "", from, to)
 		if err != nil {
 			return nil, fmt.Errorf("error loading downloaded candles: %w", err)
 		}

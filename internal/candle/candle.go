@@ -107,9 +107,8 @@ type Storage interface {
 	SaveCandles(ctx context.Context, candles []Candle) error
 	SaveConstructedCandles(ctx context.Context, candles []Candle) error
 	GetCandle(ctx context.Context, symbol, timeframe string, timestamp time.Time, source string) (*Candle, error)
-	GetCandles(ctx context.Context, symbol, timeframe string, start, end time.Time) ([]Candle, error)
+	GetCandles(ctx context.Context, symbol, timeframe, source string, start, end time.Time) ([]Candle, error)
 	GetCandlesV2(ctx context.Context, timeframe string, start, end time.Time) ([]Candle, error)
-	GetCandlesV3(ctx context.Context, symbol, timeframe, source string, start, end time.Time) ([]Candle, error)
 	GetRawCandles(ctx context.Context, symbol, timeframe string, start, end time.Time) ([]Candle, error)
 	GetLatestCandle(ctx context.Context, symbol, timeframe string) (*Candle, error)
 	GetLatestCandleInRange(ctx context.Context, symbol, timeframe string, start, end time.Time) (*Candle, error)
@@ -248,7 +247,7 @@ func (a *DefaultAggregator) Aggregate1mTimeRange(ctx context.Context, symbol str
 	}
 
 	// Get 1m candles for the time range
-	oneMCandles, err := a.storage.GetCandles(ctx, symbol, "1m", start, end)
+	oneMCandles, err := a.storage.GetCandles(ctx, symbol, "1m", "", start, end)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get 1m candles: %w", err)
 	}
@@ -479,7 +478,7 @@ func (ci *DefaultIngester) AggregateSymbolToHigherTimeframes(ctx context.Context
 	}
 
 	// Get all 1m candles for the time range
-	allOneMins, err := ci.storage.GetCandles(ctx, symbol, "1m", startTime, now)
+	allOneMins, err := ci.storage.GetCandles(ctx, symbol, "1m", "", startTime, now)
 	if err != nil {
 		return fmt.Errorf("failed to get 1m candles: %w", err)
 	}
@@ -539,7 +538,7 @@ func (ci *DefaultIngester) BulkAggregateFrom1m(ctx context.Context, symbol strin
 	defer ci.mu.Unlock()
 
 	// Get all 1m candles for the time range in one database query
-	oneMCandles, err := ci.storage.GetCandles(ctx, symbol, "1m", start, end)
+	oneMCandles, err := ci.storage.GetCandles(ctx, symbol, "1m", "", start, end)
 	if err != nil {
 		return fmt.Errorf("failed to get 1m candles: %w", err)
 	}

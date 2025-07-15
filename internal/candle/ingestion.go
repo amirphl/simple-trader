@@ -532,7 +532,7 @@ func (is *DefaultIngestionService) aggregateHistoricalData(symbol string) error 
 	// TODO: Add Tx to ctx.
 	// TODO: Rollback on err
 
-	sourceCandles, err := is.storage.GetCandles(ctx, symbol, baseTimeframe, start, end)
+	sourceCandles, err := is.storage.GetCandles(ctx, symbol, baseTimeframe, "", start, end)
 	if err != nil {
 		log.Printf("[%s] Failed to get source candles for %s: %v", symbol, baseTimeframe, err)
 		return err

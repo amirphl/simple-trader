@@ -17,7 +17,7 @@ type mockStorage struct {
 	mock.Mock
 }
 
-func (m *mockStorage) GetCandles(ctx context.Context, symbol, timeframe string, start, end time.Time) ([]candle.Candle, error) {
+func (m *mockStorage) GetCandles(ctx context.Context, symbol, timeframe, source string, start, end time.Time) ([]candle.Candle, error) {
 	args := m.Called(ctx, symbol, timeframe, start, end)
 	return args.Get(0).([]candle.Candle), args.Error(1)
 }
@@ -25,14 +25,14 @@ func (m *mockStorage) GetCandles(ctx context.Context, symbol, timeframe string, 
 // ErrorStorage always returns an error
 type errorStorage struct{}
 
-func (_ errorStorage) GetCandles(ctx context.Context, symbol, timeframe string, start, end time.Time) ([]candle.Candle, error) {
+func (_ errorStorage) GetCandles(ctx context.Context, symbol, timeframe, source string, start, end time.Time) ([]candle.Candle, error) {
 	return nil, errors.New("storage error")
 }
 
 // EmptyStorage always returns empty candles
 type emptyStorage struct{}
 
-func (_ emptyStorage) GetCandles(ctx context.Context, symbol, timeframe string, start, end time.Time) ([]candle.Candle, error) {
+func (_ emptyStorage) GetCandles(ctx context.Context, symbol, timeframe, source string, start, end time.Time) ([]candle.Candle, error) {
 	return []candle.Candle{}, nil
 }
 
@@ -40,7 +40,7 @@ func (_ emptyStorage) GetCandles(ctx context.Context, symbol, timeframe string, 
 // This avoids the need to mock the GetCandles call in regular tests
 type noInitStorage struct{}
 
-func (_ noInitStorage) GetCandles(ctx context.Context, symbol, timeframe string, start, end time.Time) ([]candle.Candle, error) {
+func (_ noInitStorage) GetCandles(ctx context.Context, symbol, timeframe, source string, start, end time.Time) ([]candle.Candle, error) {
 	return []candle.Candle{}, nil
 }
 
