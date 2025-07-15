@@ -105,7 +105,10 @@ func GetRiskParams(cfg Config, stratName string) RiskParams {
 // LoadConfig loads configuration from command-line flags, environment variables, and/or a YAML config file
 func LoadConfig() (Config, error) {
 	// Define command-line flags
+	runMigration := flag.Bool("run-migration", false, "Run database migrations")
 	mode := flag.String("mode", "live", "Mode: live or backtest")
+	symbols := flag.String("symbols", "btc-usdt", "Comma-separated list of trading symbols")
+	strategies := flag.String("strategies", "rsi", "Comma-separated list of strategies")
 	from := flag.String("from", time.Now().AddDate(-2, 0, 0).Format("2006-01-02"), "Backtest start date (YYYY-MM-DD)")
 	to := flag.String("to", time.Now().Format("2006-01-02"), "Backtest end date (YYYY-MM-DD)")
 	orderType := flag.String("order-type", "market", "Order type: market or limit or stop-limit or oco")
@@ -119,14 +122,12 @@ func LoadConfig() (Config, error) {
 	takeProfitPercent := flag.Float64("take-profit-percent", 0.0, "Take profit percent (e.g., 2.0 for 2%)")
 	maxDailyLoss := flag.Float64("max-daily-loss", 0.0, "Max daily loss in account currency (e.g., 100.0)")
 	limitSpread := flag.Float64("limit-spread", 0.0, "Limit order spread as percent (e.g., 0.1 for 0.1%)")
+	balance := flag.Float64("balance", 0.0, "Balance in account currency (e.g., 100.0)")
 	riskMapFlag := flag.String("risk-map", "", "Comma-separated strategy:risk:stoploss:trailing triples (e.g., rsi:1.0:2.0:0.5)")
 	commissionPercent := flag.Float64("commission-percent", 0.0, "Commission percent per trade (e.g., 0.1 for 0.1%)")
-	symbols := flag.String("symbols", "btc-usdt", "Comma-separated list of trading symbols")
-	strategies := flag.String("strategies", "rsi", "Comma-separated list of strategies")
 	slippagePercent := flag.Float64("slippage-percent", 0.0, "Slippage percent per trade (e.g., 0.05 for 0.05%)")
-	runMigration := flag.Bool("run-migration", false, "Run database migrations")
-	balance := flag.Float64("balance", 0.0, "Balance in account currency (e.g., 100.0)")
 	proxyURL := flag.String("proxy-url", "", "Proxy URL for Telegram notifications")
+
 	configFile := flag.String("config", "", "Path to YAML config file")
 	flag.Parse()
 
