@@ -31,7 +31,7 @@ type Position interface {
 	DailyPnL() (float64, error)
 }
 
-// TODO: Transactional updates, atomicity, order status check, commission, slippage, etc.
+// TODO: Transactional updates, atomicity, order status check, commission, slippage, exchange ctx, etc.
 
 // New creates a new position manager
 func New(cfg config.Config, strategyName, symbol string, storage Storage, exchange exchange.Exchange, notifier notifier.Notifier) Position {
