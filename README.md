@@ -15,6 +15,8 @@ A robust, extensible crypto algorithmic trading bot written in Go, designed for 
   - Historical data backfill (up to 2 years)
   - Efficient storage in PostgreSQL/TimescaleDB
   - Optimized for high-frequency updates and queries
+  - Clear distinction between raw and constructed candles
+  - Comprehensive source tracking and validation
 
 - **Technical Analysis**
   - Comprehensive technical indicators:
@@ -243,36 +245,19 @@ The system includes detection for common candlestick patterns:
 
 This helps you visualize performance and audit every trade.
 
-## Candle Ingestion System
+## Candle Ingestion and Storage System
 
-The system features a robust candle ingestion and aggregation system:
+The system features a comprehensive candle ingestion and storage system:
 
-- **Real-time Ingestion**: Fetches 1m candles from exchanges
-- **Automatic Aggregation**: Aggregates to higher timeframes (5m, 15m, 30m, 1h, 4h, 1d)
+- **Raw 1m Candle Storage**: Efficient storage of raw 1-minute candles from exchanges
+- **Intelligent Aggregation**: Real-time aggregation to higher timeframes (5m, 15m, 30m, 1h, 4h, 1d)
+- **Constructed Candle Management**: Clear distinction between raw exchange data and constructed (aggregated) candles
+- **Source Tracking**: Support for multiple data sources with proper source attribution
 - **Gap Detection**: Identifies and fills missing candle data
 - **Efficient Storage**: Optimized for time-series data with TimescaleDB
+- **Performance Optimizations**: Batch processing, caching, and optimized queries
 
-For detailed information, see [CANDLE_INGESTION.md](CANDLE_INGESTION.md).
-
-## Constructed Candles
-
-The system can construct candles from raw market data:
-
-- **Aggregation**: Builds higher timeframe candles from 1m data
-- **Validation**: Ensures data integrity and correctness
-- **Storage**: Efficiently stores constructed candles
-
-For detailed information, see [CONSTRUCTED_CANDLES.md](CONSTRUCTED_CANDLES.md).
-
-## 1M Candle Storage
-
-The system implements efficient storage for high-frequency 1-minute candles:
-
-- **Optimized Schema**: Designed for time-series data
-- **Indexing**: Fast retrieval by symbol, timeframe, and timestamp
-- **Compression**: Efficient storage with TimescaleDB
-
-For detailed information, see [1M_CANDLE_STORAGE.md](1M_CANDLE_STORAGE.md).
+For detailed information, see [CANDLE_INGESTION_AND_STORAGE.md](CANDLE_INGESTION_AND_STORAGE.md).
 
 ## Roadmap
 
