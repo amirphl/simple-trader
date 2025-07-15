@@ -1,16 +1,14 @@
 # API Keys
-wallex_api_key: "your_api_key_here"
+wallex_api_key: "your-api-key"
 
 # Database Configuration
-db_conn_str: "postgres://username:password@localhost:5432/simple_trader?sslmode=disable"
+db_conn_str: "postgres://user:password@localhost:5432/simple_trader?sslmode=disable"
 db_max_open: 10
 db_max_idle: 5
+run_migration: false  # Set to true to run database migrations on startup
 
 # Trading Mode
-mode: "live"  # Options: live, backtest
-
-# Default Symbol
-symbol: "btc-usdt"
+mode: "backtest"  # Options: live, backtest
 
 # Backtest Configuration
 backtest_from: "2022-01-01"  # Format: YYYY-MM-DD
@@ -31,28 +29,24 @@ slippage_percent: 0.05      # Slippage percentage
 commission_percent: 0.1     # Commission percentage
 
 # Notification Settings
-telegram_token: "your_telegram_bot_token"
-telegram_chat_id: "your_telegram_chat_id"
+telegram_token: "your-telegram-bot-token"
+telegram_chat_id: "your-chat-id"
 notification_retries: 3
-notification_delay: "5s"
+notification_delay: 5s
 
 # Multi-Symbol Configuration
-symbols:
-  - "btc-usdt"
-  - "eth-usdt"
+symbols: ["BTC-USDT", "ETH-USDT"]
 
 # Strategies Combinations
-strategies:
-  - "ema"
-  - "rsi"
+strategies: ["rsi", "macd"]
 
 # Risk Parameters for Different Symbol/Timeframe Combinations
 risk_map:
-  ema:
+  rsi: 
     risk_percent: 1.0
     stop_loss_percent: 2.0
     trailing_stop_percent: 0.5
-  rsi:
-    risk_percent: 0.7
-    stop_loss_percent: 1.8
-    trailing_stop_percent: 0.4
+  macd: 
+    risk_percent: 0.5
+    stop_loss_percent: 1.5
+    trailing_stop_percent: 0.2
