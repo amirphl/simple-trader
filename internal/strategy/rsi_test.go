@@ -1,3 +1,4 @@
+// Package strategy
 package strategy
 
 import (
