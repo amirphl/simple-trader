@@ -26,10 +26,10 @@ type RSIStrategy struct {
 
 	Storage Storage
 
-	lastRSI          float64
-	initialized      bool
-	maxHistorySize   int  // Maximum number of prices to keep in memory
-	lastSignalWasBuy bool // Track the last signal for signal flipping detection
+	lastCandle     *candle.Candle
+	lastRSI        float64
+	initialized    bool
+	maxHistorySize int // Maximum number of prices to keep in memory
 }
 
 // NewRSIStrategy creates a new RSI strategy with the given parameters
@@ -69,6 +69,9 @@ func (s *RSIStrategy) trimPrices() {
 
 // OnCandles processes new candles and generates trading signals
 func (s *RSIStrategy) OnCandles(ctx context.Context, oneMinCandles []candle.Candle) (Signal, error) {
+	// TODO: Handle duplicate candles
+	// TODO: Handle missing candles from last candle in db to first received candle (somewhat possible because of UTC)
+	// TODO: Handle missing candles inside oneMinCandles, validate, sort, truncate (impossible)
 	if len(oneMinCandles) == 0 {
 		return Signal{
 			Time:         time.Now().UTC(),
@@ -82,7 +85,7 @@ func (s *RSIStrategy) OnCandles(ctx context.Context, oneMinCandles []candle.Cand
 	// Filter candles for this symbol
 	var filteredCandles []candle.Candle
 	for _, c := range oneMinCandles {
-		if c.Symbol == s.symbol && c.Timeframe == "1m" {
+		if c.Symbol == s.symbol && c.Timeframe == "1m" && (s.lastCandle == nil || c.Timestamp.After(s.lastCandle.Timestamp)) {
 			filteredCandles = append(filteredCandles, c)
 		}
 	}
@@ -97,13 +100,12 @@ func (s *RSIStrategy) OnCandles(ctx context.Context, oneMinCandles []candle.Cand
 		}, nil
 	}
 
+	s.lastCandle = &filteredCandles[len(filteredCandles)-1]
+
 	// Sort candles by timestamp to ensure proper order
 	sort.Slice(filteredCandles, func(i, j int) bool {
 		return filteredCandles[i].Timestamp.Before(filteredCandles[j].Timestamp)
 	})
-
-	// Get the last candle for signal generation
-	lastCandle := filteredCandles[len(filteredCandles)-1]
 
 	// Initialize with historical data if needed
 	if len(s.prices) == 0 && !s.initialized {
@@ -150,12 +152,12 @@ func (s *RSIStrategy) OnCandles(ctx context.Context, oneMinCandles []candle.Cand
 	// Check if we have enough data for RSI calculation
 	if len(s.prices) <= s.Period {
 		return Signal{
-			Time:         lastCandle.Timestamp,
+			Time:         s.lastCandle.Timestamp,
 			Action:       "hold",
 			Reason:       "warming up",
 			StrategyName: s.Name(),
-			TriggerPrice: lastCandle.Close,
-			Candle:       lastCandle,
+			TriggerPrice: s.lastCandle.Close,
+			Candle:       *s.lastCandle,
 		}, nil
 	}
 
@@ -164,49 +166,40 @@ func (s *RSIStrategy) OnCandles(ctx context.Context, oneMinCandles []candle.Cand
 	if err != nil {
 		log.Printf("Strategy | [%s RSI] Error calculating RSI: %v\n", s.symbol, err)
 		return Signal{
-			Time:         lastCandle.Timestamp,
+			Time:         s.lastCandle.Timestamp,
 			Action:       "hold",
 			Reason:       "RSI calculation error",
 			StrategyName: s.Name(),
-			TriggerPrice: lastCandle.Close,
-			Candle:       lastCandle,
+			TriggerPrice: s.lastCandle.Close,
+			Candle:       *s.lastCandle,
 		}, nil
 	}
 
-	if rsi > s.Oversold && s.lastRSI < s.Oversold {
+	if rsi > s.Oversold && s.lastRSI < s.Oversold && s.lastRSI != 0 {
 		s.lastRSI = rsi
-		// Log signal change
-		if !s.lastSignalWasBuy {
-			log.Printf("Strategy | [%s RSI] Signal changed to BUY - RSI: %.2f (below %v), Price: %.2f\n",
-				s.symbol, rsi, s.Oversold, lastCandle.Close)
-			s.lastSignalWasBuy = true
-		}
-
+		log.Printf("Strategy | [%s RSI] Signal changed to BUY - RSI: %.2f (below %v), Price: %.2f\n",
+			s.symbol, rsi, s.Oversold, s.lastCandle.Close)
 		return Signal{
-			Time:         lastCandle.Timestamp,
+			Time:         s.lastCandle.Timestamp,
 			Action:       "buy",
 			Reason:       "RSI oversold",
 			StrategyName: s.Name(),
-			TriggerPrice: lastCandle.Close,
-			Candle:       lastCandle,
+			TriggerPrice: s.lastCandle.Close,
+			Candle:       *s.lastCandle,
 		}, nil
 	}
 
-	if rsi > s.Overbought && s.lastRSI < s.Overbought {
+	if rsi > s.Overbought && s.lastRSI < s.Overbought && s.lastRSI != 0 {
 		s.lastRSI = rsi
-		// Log signal change
-		if s.lastSignalWasBuy {
-			log.Printf("Strategy | [%s RSI] Signal changed to SELL - RSI: %.2f (above %v), Price: %.2f\n",
-				s.symbol, rsi, s.Overbought, lastCandle.Close)
-			s.lastSignalWasBuy = false
-		}
+		log.Printf("Strategy | [%s RSI] Signal changed to SELL - RSI: %.2f (above %v), Price: %.2f\n",
+			s.symbol, rsi, s.Overbought, s.lastCandle.Close)
 		return Signal{
-			Time:         lastCandle.Timestamp,
+			Time:         s.lastCandle.Timestamp,
 			Action:       "sell",
 			Reason:       "RSI overbought",
 			StrategyName: s.Name(),
-			TriggerPrice: lastCandle.Close,
-			Candle:       lastCandle,
+			TriggerPrice: s.lastCandle.Close,
+			Candle:       *s.lastCandle,
 		}, nil
 	}
 
@@ -240,12 +233,12 @@ func (s *RSIStrategy) OnCandles(ctx context.Context, oneMinCandles []candle.Cand
 	// }
 
 	return Signal{
-		Time:         lastCandle.Timestamp,
+		Time:         s.lastCandle.Timestamp,
 		Action:       "hold",
 		Reason:       "RSI neutral",
 		StrategyName: s.Name(),
-		TriggerPrice: lastCandle.Close,
-		Candle:       lastCandle,
+		TriggerPrice: s.lastCandle.Close,
+		Candle:       *s.lastCandle,
 	}, nil
 }
 
