@@ -150,7 +150,6 @@ type Ingester interface {
 }
 
 type DefaultAggregator struct {
-	mu      sync.RWMutex
 	storage Storage
 }
 
