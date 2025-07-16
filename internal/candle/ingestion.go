@@ -6,6 +6,7 @@ import (
 	"log"
 	"math"
 	"math/rand"
+	"sort"
 	"sync"
 	"time"
 )
@@ -13,7 +14,7 @@ import (
 // Exchange interface for fetching candles from different exchanges
 type Exchange interface {
 	Name() string
-	FetchCandles(ctx context.Context, symbol string, timeframe string, start, end int64) ([]Candle, error)
+	FetchCandles(ctx context.Context, symbol string, timeframe string, start, end time.Time) ([]Candle, error)
 }
 
 type IngestionService interface {
@@ -26,73 +27,68 @@ type IngestionService interface {
 
 // DefaultIngestionService handles real-time candle ingestion with automatic aggregation
 type DefaultIngestionService struct {
-	ingester   Ingester
-	storage    Storage
-	aggregator Aggregator
-	exchanges  map[string]Exchange
-	config     IngestionConfig
-	mu         sync.RWMutex
-	ctx        context.Context
-	wg         sync.WaitGroup
+	ingester Ingester
+	cfg      IngestionConfig
+	ctx      context.Context
+	wg       sync.WaitGroup
 }
 
 // IngestionConfig holds configuration for the ingestion service
 type IngestionConfig struct {
-	Symbols         []string
-	FetchCycle      time.Duration
-	RetentionDays   int
-	MaxRetries      int
-	RetryDelay      time.Duration
-	DelayUpperbound time.Duration
-	EnableCleanup   bool
-	CleanupCycle    time.Duration
+	Symbols             []string
+	Exchange            Exchange
+	FetchCycle          time.Duration
+	RetentionDays       int
+	MaxRetries          int
+	RetryDelay          time.Duration
+	DelayUpperbound     time.Duration
+	EnableCleanup       bool
+	CleanupCycle        time.Duration
+	LiveFetchOldCandles int // TODO: Rename
 }
 
 // DefaultIngestionConfig returns a default configuration
-func DefaultIngestionConfig() IngestionConfig {
+func DefaultIngestionConfig(symbols []string, exchange Exchange) IngestionConfig {
 	return IngestionConfig{
-		Symbols:         []string{"BTCUSDT", "ETHUSDT"},
-		FetchCycle:      30 * time.Second,
-		RetentionDays:   30,
-		MaxRetries:      3,
-		RetryDelay:      3 * time.Second,
-		DelayUpperbound: 20 * time.Second,
-		EnableCleanup:   false,
-		CleanupCycle:    24 * time.Hour, // TODO:Increase value.
+		Symbols:             symbols,
+		Exchange:            exchange,
+		FetchCycle:          30 * time.Second,
+		RetentionDays:       30,
+		MaxRetries:          3,
+		RetryDelay:          3 * time.Second,
+		DelayUpperbound:     20 * time.Second,
+		EnableCleanup:       false,
+		CleanupCycle:        24 * time.Hour,
+		LiveFetchOldCandles: 1000,
 	}
 }
 
 // NewIngestionService creates a new candle ingestion service
-func NewIngestionService(ctx context.Context, storage Storage, aggregator Aggregator, exchanges map[string]Exchange, config IngestionConfig) IngestionService {
-	ingester := NewCandleIngester(storage)
-
+func NewIngestionService(ctx context.Context, ingester Ingester, cfg IngestionConfig) IngestionService {
 	return &DefaultIngestionService{
-		ingester:   ingester,
-		storage:    storage,
-		aggregator: aggregator,
-		exchanges:  exchanges,
-		config:     config,
-		ctx:        ctx,
+		ingester: ingester,
+		cfg:      cfg,
+		ctx:      ctx,
 	}
 }
 
 // Start begins the ingestion service with proper error handling and synchronization
 func (is *DefaultIngestionService) Start() error {
-	log.Printf("Starting candle ingestion service with %d symbols", len(is.config.Symbols))
+	log.Printf("IngestionService | Starting candle ingestion service with %d symbols", len(is.cfg.Symbols))
 
-	if len(is.exchanges) == 0 {
-		return fmt.Errorf("no exchanges configured for ingestion service")
+	if is.cfg.Exchange == nil {
+		return fmt.Errorf("no exchange configured for ingestion service")
 	}
 
-	if len(is.config.Symbols) == 0 {
+	if len(is.cfg.Symbols) == 0 {
 		return fmt.Errorf("no symbols configured for ingestion service")
 	}
 
 	// Track active goroutines with WaitGroup
-	is.wg.Add(len(is.config.Symbols))
+	is.wg.Add(len(is.cfg.Symbols))
 
 	// Start ingestion loops for each symbol
-	for _, symbol := range is.config.Symbols {
+	for _, symbol := range is.cfg.Symbols {
 		go func(sym string) {
 			defer is.wg.Done()
 			is.runIngestionLoop(sym)
@@ -100,7 +96,7 @@ func (is *DefaultIngestionService) Start() error {
 	}
 
 	// Start cleanup routine if enabled
-	if is.config.EnableCleanup {
+	if is.cfg.EnableCleanup {
 		is.wg.Add(1)
 
 		go func() {
@@ -109,13 +105,13 @@ func (is *DefaultIngestionService) Start() error {
 		}()
 	}
 
-	log.Printf("Ingestion service started successfully")
+	log.Printf("IngestionService | Ingestion service started successfully")
 	return nil
 }
 
 // Stop gracefully stops the ingestion service
 func (is *DefaultIngestionService) Stop() {
-	log.Printf("Stopping ingestion service...")
+	log.Printf("IngestionService | Stopping ingestion service...")
 
 	// Create a timeout context for graceful shutdown
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -134,19 +130,19 @@ func (is *DefaultIngestionService) Stop() {
 	// Wait for either completion or timeout
 	select {
 	case <-done:
-		log.Printf("Ingestion service stopped gracefully")
+		log.Printf("IngestionService | Ingestion service stopped gracefully")
 	case <-ctx.Done():
-		log.Printf("Ingestion service stop timed out")
+		log.Printf("IngestionService | Ingestion service stop timed out")
 	}
 }
 
 // runIngestionLoop runs the main ingestion loop for a symbol with improved error handling
 func (is *DefaultIngestionService) runIngestionLoop(symbol string) {
-	ticker := time.NewTicker(is.config.FetchCycle)
+	ticker := time.NewTicker(is.cfg.FetchCycle)
 	defer ticker.Stop()
 
 	const timeframe = "1m"
-	log.Printf("[%s %s] Starting ingestion loop", symbol, timeframe)
+	log.Printf("IngestionService | [%s %s] Starting ingestion loop", symbol, timeframe)
 
 	// Track consecutive errors for backoff
 	// consecutiveErrors := 0
@@ -156,11 +152,11 @@ func (is *DefaultIngestionService) runIngestionLoop(symbol string) {
 	for {
 		select {
 		case <-is.ctx.Done():
-			log.Printf("[%s %s] Stopping ingestion loop", symbol, timeframe)
+			log.Printf("IngestionService | [%s %s] Stopping ingestion loop", symbol, timeframe)
 			return
 		case <-ticker.C:
 			if err := is.fetchAndIngestCandles(symbol); err != nil {
-				log.Printf("[%s %s] Error in ingestion loop: %v", symbol, timeframe, err)
+				log.Printf("IngestionService | [%s %s] Error in ingestion loop: %v", symbol, timeframe, err)
 			}
 
 			// if err != nil {
@@ -215,9 +211,11 @@ func deriveContextWithTimeout(parent context.Context) (context.Context, context.
 
 // fetchAndIngestCandles fetches candles from exchange and ingests them
 func (is *DefaultIngestionService) fetchAndIngestCandles(symbol string) error {
+	log.Printf("IngestionService | [%s] Fetching candles", symbol)
+
 	const timeframe = "1m"
 
-	// TODO: Add Tx to ctx.
+	// TODO: Add Tx to ctx. THIS IS THE MAIN POINT OF STARTING THE TRANSACTION.
 	// TODO: Rollback on err
 	ctx, cancel := deriveContextWithTimeout(is.ctx)
 	defer cancel()
@@ -233,11 +231,11 @@ func (is *DefaultIngestionService) fetchAndIngestCandles(symbol string) error {
 	end := now.Truncate(time.Minute)
 
 	if latest == nil {
-		// No previous candles, fetch last 7 year
-		start = end.AddDate(-7, 0, 0).Truncate(24 * time.Hour)
+		// No previous candles
+		start = end.Add(-time.Duration(is.cfg.LiveFetchOldCandles) * time.Minute).Truncate(24 * time.Hour)
 	} else {
 		// NOTE: Try to receive duplicated candles to avoid missing candles
-		start = latest.Timestamp.Add(-10 * time.Minute) // TODO: UTC?
+		start = latest.Timestamp.Add(-10 * time.Minute)
 	}
 
 	// If there's no new data to fetch, return early
@@ -245,126 +243,120 @@ func (is *DefaultIngestionService) fetchAndIngestCandles(symbol string) error {
 		return nil
 	}
 
-	var wg sync.WaitGroup
-
-	// Fetch candles from all exchanges in parallel
-	for exchangeName, exchange := range is.exchanges {
-		wg.Add(1)
-		go func(name string, ex Exchange) {
-			defer wg.Done()
-
-			// Use Unix timestamps for consistency
-			candles, err := is.fetchCandlesWithRetry(ctx, ex, symbol, timeframe, start.Unix(), end.Unix())
-			if err != nil {
-				log.Printf("[%s %s] Failed to fetch candles from %s: %v", symbol, timeframe, name, err)
-				// NOTE: No need to generate fake candle
-				return
-			}
-
-			candlesMap := make(map[time.Time]Candle)
-
-			for _, c := range candles {
-				// Truncate timestamp to remove seconds
-				dur := GetTimeframeDuration(timeframe)
-				c.Timestamp = c.Timestamp.Truncate(dur)
-				c.Source = name
-
-				// Validate all candles before ingestion
-				// TODO: sorted, no missing, same timeframe, same symbol, all are truncated
-				if err := c.Validate(); err != nil {
-					// TODO: Log
-					return
-				}
-
-				candlesMap[c.Timestamp] = c
-			}
-
-			// Generate synthetic candles for missing minutes
-			var completeCandles []Candle
-
-			if latest == nil {
-				latest = &candles[0] // NOTE: No problem loosing the first 1m candle
-			}
-
-			// Start from the minute after the latest candle
-			currentTime := latest.Timestamp.Add(time.Minute)
-			// Use the latest candle's close price as the base for synthetic candles
-			basePrice := latest.Close
-
-			for !currentTime.After(candles[len(candles)-1].Timestamp) {
-				c, ok := candlesMap[currentTime]
-				if !ok {
-					// Create a synthetic candle for this missing minute
-					syntheticCandle := Candle{
-						Timestamp: currentTime,
-						Open:      basePrice,
-						High:      basePrice,
-						Low:       basePrice,
-						Close:     basePrice,
-						Volume:    0, // Synthetic candles have zero volume
-						Symbol:    symbol,
-						Timeframe: timeframe,
-						Source:    "synthetic",
-					}
-
-					completeCandles = append(completeCandles, syntheticCandle)
-					log.Printf("[%s %s] Generated synthetic candle for %v", symbol, timeframe, currentTime)
-				} else {
-					completeCandles = append(completeCandles, c)
-					// Update the base price for future synthetic candles
-					basePrice = c.Close
-				}
-
-				currentTime = currentTime.Add(time.Minute)
-			}
-
-			// Sort the complete candles by timestamp
-			// sort.Slice(completeCandles, func(i, j int) bool {
-			// 	return completeCandles[i].Timestamp.Before(completeCandles[j].Timestamp)
-			// })
-
-			// Ingest the complete set of candles (real + synthetic)
-			if len(completeCandles) > 0 {
-				if err := is.ingester.IngestRaw1mCandles(ctx, completeCandles); err != nil {
-					// TODO: Log
-					return
-				}
-				log.Printf("[%s %s] Successfully ingested %d candles (%d real, %d synthetic)",
-					symbol, timeframe, len(completeCandles), len(candles), len(completeCandles)-len(candles))
-			}
-			log.Printf("[%s %s] Fetched %d candles from %s", symbol, timeframe, len(candles), name)
-		}(exchangeName, exchange)
+	candles, err := is.fetchCandlesWithRetry(ctx, symbol, timeframe, start, end)
+	if err != nil {
+		log.Printf("IngestionService | [%s %s] Failed to fetch candles from %s: %v", symbol, timeframe, is.cfg.Exchange.Name(), err)
+		// NOTE: No need to generate fake candle
+		return err
+	}
+	if len(candles) == 0 {
+		log.Printf("IngestionService | [%s %s] No candles fetched from %s", symbol, timeframe, is.cfg.Exchange.Name())
+		return nil
 	}
 
-	wg.Wait()
+	log.Printf("IngestionService | [%s %s] Fetched %d candles from %s", symbol, timeframe, len(candles), is.cfg.Exchange.Name())
 
-	// ISSUE: The code should account for multiple exchanges, but as only one exchange is currently used, it's acceptable for now.
+	candlesMap := make(map[time.Time]Candle)
+
+	for _, c := range candles {
+		// Truncate timestamp to remove seconds
+		dur := GetTimeframeDuration(timeframe)
+		c.Timestamp = c.Timestamp.Truncate(dur)
+		c.Source = is.cfg.Exchange.Name()
+
+		// Validate all candles before ingestion
+		// TODO: not sorted, missing candles, same timeframe, same symbol, all are truncated, has duplicates
+		if err := c.Validate(); err != nil {
+			log.Printf("IngestionService | [%s %s] Invalid candle: %v", symbol, timeframe, err)
+			return fmt.Errorf("invalid candle: %w", err)
+		}
+
+		candlesMap[c.Timestamp] = c
+	}
+
+	sort.Slice(candles, func(i, j int) bool {
+		return candles[i].Timestamp.Before(candles[j].Timestamp)
+	})
+
+	// Generate synthetic candles for missing minutes
+	var completeCandles []Candle
+
+	if latest == nil {
+		latest = &candles[0] // NOTE: No problem loosing the first 1m candle
+	}
+
+	// Start from the minute after the latest candle
+	currentTime := latest.Timestamp.Add(time.Minute)
+	// Use the latest candle's close price as the base for synthetic candles
+	basePrice := latest.Close
+
+	lastCandleTimestamp := candles[len(candles)-1].Timestamp
+
+	syntheticCandles := 0
+
+	for !currentTime.After(lastCandleTimestamp) {
+		c, ok := candlesMap[currentTime]
+		if !ok {
+			// Create a synthetic candle for this missing minute
+			syntheticCandle := Candle{
+				Timestamp: currentTime,
+				Open:      basePrice,
+				High:      basePrice,
+				Low:       basePrice,
+				Close:     basePrice,
+				Volume:    0, // Synthetic candles have zero volume
+				Symbol:    symbol,
+				Timeframe: timeframe,
+				Source:    "synthetic",
+			}
+
+			completeCandles = append(completeCandles, syntheticCandle)
+			log.Printf("IngestionService | [%s %s] Generated synthetic candle for %v", symbol, timeframe, currentTime)
+			syntheticCandles++
+		} else {
+			completeCandles = append(completeCandles, c)
+			// Update the base price for future synthetic candles
+			basePrice = c.Close
+		}
+
+		currentTime = currentTime.Add(time.Minute)
+	}
+
+	// Ingest the complete set of candles (real + synthetic)
+	if len(completeCandles) > 0 {
+		if err := is.ingester.IngestRaw1mCandles(ctx, completeCandles); err != nil {
+			log.Printf("IngestionService | [%s %s] Failed to ingest candles: %v", symbol, timeframe, err)
+			return fmt.Errorf("failed to ingest candles: %w", err)
+		}
+		log.Printf("IngestionService | [%s %s] Successfully ingested %d candles (%d real, %d synthetic)",
+			symbol, timeframe, len(completeCandles), len(candles), syntheticCandles)
+	}
 
 	return nil
 }
 
 // fetchCandlesWithRetry fetches candles with exponential backoff retry logic
-func (is *DefaultIngestionService) fetchCandlesWithRetry(ctx context.Context, exchange Exchange, symbol, timeframe string, start, end int64) ([]Candle, error) {
+func (is *DefaultIngestionService) fetchCandlesWithRetry(ctx context.Context, symbol, timeframe string, start, end time.Time) ([]Candle, error) {
 	var candles []Candle
 	var err error
 
-	baseDelay := is.config.RetryDelay
-	maxDelay := is.config.DelayUpperbound
+	baseDelay := is.cfg.RetryDelay
+	maxDelay := is.cfg.DelayUpperbound
 
-	for attempt := 1; attempt <= is.config.MaxRetries; attempt++ {
+	for attempt := 1; attempt <= is.cfg.MaxRetries; attempt++ {
 		select {
 		case <-is.ctx.Done():
-			log.Printf("Timeout Fetching from exchange %s", exchange.Name())
+			log.Printf("IngestionService | [%s %s] Timeout fetching candles from %s", symbol, timeframe, is.cfg.Exchange.Name())
 			return nil, ctx.Err()
 		default:
 
-			candles, err = exchange.FetchCandles(ctx, symbol, timeframe, start, end)
+			candles, err = is.cfg.Exchange.FetchCandles(ctx, symbol, timeframe, start, end)
 			if err == nil {
 				return candles, nil
 			}
 
 			// Don't sleep after the last attempt
-			if attempt < is.config.MaxRetries {
+			if attempt < is.cfg.MaxRetries {
 				// Calculate exponential backoff with jitter
 				// Formula: baseDelay * 2^(attempt-1) + small random jitter
 				backoff := float64(baseDelay) * math.Pow(2, float64(attempt-1))
@@ -378,22 +370,22 @@ func (is *DefaultIngestionService) fetchCandlesWithRetry(ctx context.Context, ex
 					backoffWithJitter = maxDelay
 				}
 
-				log.Printf("[%s %s] Fetch attempt %d failed, retrying in %v: %v",
+				log.Printf("IngestionService | [%s %s] Fetch attempt %d failed, retrying in %v: %v",
 					symbol, timeframe, attempt, backoffWithJitter, err)
 				time.Sleep(backoffWithJitter)
 			}
 		}
 	}
 
-	return nil, fmt.Errorf("failed to fetch candles after %d attempts: %w", is.config.MaxRetries, err)
+	return nil, fmt.Errorf("failed to fetch candles after %d attempts: %w", is.cfg.MaxRetries, err)
 }
 
 // runCleanupLoop runs the cleanup routine to remove old data
 func (is *DefaultIngestionService) runCleanupLoop() {
-	ticker := time.NewTicker(is.config.CleanupCycle)
+	ticker := time.NewTicker(is.cfg.CleanupCycle)
 	defer ticker.Stop()
 
-	log.Printf("Starting cleanup loop with %d day retention", is.config.RetentionDays)
+	log.Printf("IngestionService | Starting cleanup loop with %d day retention", is.cfg.RetentionDays)
 
 	// Run cleanup immediately on start instead of waiting for first tick
 	if err := is.cleanupOldData(); err != nil {
@@ -403,17 +395,17 @@ func (is *DefaultIngestionService) runCleanupLoop() {
 	for {
 		select {
 		case <-is.ctx.Done():
-			log.Printf("Stopping cleanup loop")
+			log.Printf("IngestionService | Stopping cleanup loop")
 			return
 		case <-ticker.C:
 			startTime := time.Now()
-			log.Printf("Starting scheduled data cleanup...")
+			log.Printf("IngestionService | Starting scheduled data cleanup...")
 
 			if err := is.cleanupOldData(); err != nil {
-				log.Printf("Error in cleanup loop: %v", err)
+				log.Printf("IngestionService | Error in cleanup loop: %v", err)
 			} else {
 				duration := time.Since(startTime)
-				log.Printf("Cleanup completed successfully in %v", duration)
+				log.Printf("IngestionService | Cleanup completed successfully in %v", duration)
 			}
 		}
 	}
@@ -423,10 +415,10 @@ func (is *DefaultIngestionService) runCleanupLoop() {
 func (is *DefaultIngestionService) cleanupOldData() error {
 	return nil
 
-	// TODO:
+	// TODO: Check logic
 
-	if is.config.RetentionDays <= 0 {
-		log.Printf("Skipping cleanup: RetentionDays is set to %d", is.config.RetentionDays)
+	if is.cfg.RetentionDays <= 0 {
+		log.Printf("IngestionService | Skipping cleanup: RetentionDays is set to %d", is.cfg.RetentionDays)
 		return nil
 	}
 
@@ -444,7 +436,7 @@ func (is *DefaultIngestionService) cleanupOldData() error {
 	// Mutex for thread-safe error collection
 	var mu sync.Mutex
 
-	for _, symbol := range is.config.Symbols {
+	for _, symbol := range is.cfg.Symbols {
 		for _, timeframe := range timeframes {
 			wg.Add(1)
 
@@ -468,7 +460,7 @@ func (is *DefaultIngestionService) cleanupOldData() error {
 				done := make(chan error, 1)
 
 				go func() {
-					done <- is.ingester.CleanupOldData(ctx, sym, tf, is.config.RetentionDays)
+					done <- is.ingester.CleanupOldData(ctx, sym, tf, is.cfg.RetentionDays)
 				}()
 
 				// Wait for either completion or timeout
@@ -478,18 +470,18 @@ func (is *DefaultIngestionService) cleanupOldData() error {
 						mu.Lock()
 						errors = append(errors, fmt.Errorf("[%s %s] cleanup failed: %w", sym, tf, err))
 						mu.Unlock()
-						log.Printf("[%s %s] Failed to cleanup old data: %v", sym, tf, err)
+						log.Printf("IngestionService | [%s %s] Failed to cleanup old data: %v", sym, tf, err)
 					} else {
 						mu.Lock()
 						successCount++
 						mu.Unlock()
-						log.Printf("[%s %s] Successfully cleaned up old data", sym, tf)
+						log.Printf("IngestionService | [%s %s] Successfully cleaned up old data", sym, tf)
 					}
 				case <-ctx.Done():
 					mu.Lock()
 					errors = append(errors, fmt.Errorf("[%s %s] cleanup timed out", sym, tf))
 					mu.Unlock()
-					log.Printf("[%s %s] Cleanup operation timed out", sym, tf)
+					log.Printf("IngestionService | [%s %s] Cleanup operation timed out", sym, tf)
 				}
 			}()
 		}
@@ -500,167 +492,11 @@ func (is *DefaultIngestionService) cleanupOldData() error {
 
 	// Report results
 	if len(errors) > 0 {
-		log.Printf("Cleanup completed with %d successes and %d failures", successCount, len(errors))
+		log.Printf("IngestionService | Cleanup completed with %d successes and %d failures", successCount, len(errors))
 		return fmt.Errorf("cleanup encountered %d errors: %v", len(errors), errors[0])
 	}
 
-	log.Printf("Cleanup completed successfully for %d symbol-timeframe combinations", successCount)
-	return nil
-}
-
-// aggregateHistoricalData aggregates historical data for all configured timeframes
-// NOTE: Just updates db, not cache
-func (is *DefaultIngestionService) aggregateHistoricalData(symbol string) error {
-	log.Printf("[%s] Starting historical data aggregation", symbol)
-
-	// Get the base timeframe (usually 1m)
-	const baseTimeframe = "1m"
-
-	// If base timeframe is 1m, use optimized bulk aggregation
-	if baseTimeframe == "1m" {
-		return is.bulkAggregateHistorical1mData(symbol)
-	}
-
-	// NOTE: Unused logic
-
-	end := time.Now().UTC() // TODO: UTC?
-	// Get historical data for the last 7 years
-	start := end.AddDate(-7, 0, 0).Truncate(24 * time.Hour)
-
-	ctx, cancel := deriveContextWithTimeout(is.ctx)
-	defer cancel()
-	// TODO: Add Tx to ctx.
-	// TODO: Rollback on err
-
-	sourceCandles, err := is.storage.GetCandles(ctx, symbol, baseTimeframe, "", start, end)
-	if err != nil {
-		log.Printf("[%s] Failed to get source candles for %s: %v", symbol, baseTimeframe, err)
-		return err
-	}
-
-	if len(sourceCandles) == 0 {
-		log.Printf("[%s] No source candles found for %s", symbol, baseTimeframe)
-		return nil
-	}
-
-	// For other base timeframes, use the original method
-	for _, targetTimeframe := range GetAggregationTimeframes() {
-		log.Printf("[%s] Aggregating %s to %s", symbol, baseTimeframe, targetTimeframe)
-
-		// Aggregate
-		aggregated, err := is.aggregator.Aggregate(sourceCandles, targetTimeframe)
-		if err != nil {
-			log.Printf("[%s] Failed to aggregate to %s: %v", symbol, targetTimeframe, err)
-			return err
-		}
-
-		if len(aggregated) > 0 {
-			// Save constructed candles
-			if err := is.storage.SaveConstructedCandles(ctx, aggregated); err != nil {
-				log.Printf("[%s] Failed to save %s constructed candles: %v", symbol, targetTimeframe, err)
-				return err
-			}
-
-			log.Printf("[%s] Successfully aggregated %d constructed candles to %s", symbol, len(aggregated), targetTimeframe)
-		}
-	}
-
-	return nil
-}
-
-// bulkAggregateHistorical1mData efficiently aggregates historical 1m candles to all higher timeframes
-// NOTE: updates both db and cache
-// ISSUE: Recheck logic.
-func (is *DefaultIngestionService) bulkAggregateHistorical1mData(symbol string) error {
-	log.Printf("[%s] Starting bulk aggregation of historical 1m data", symbol)
-
-	ctx, cancel := deriveContextWithTimeout(is.ctx)
-	defer cancel()
-	// TODO: Add Tx to ctx.
-	// TODO: Rollback on err
-
-	// Get the latest 1m candle to determine the time range
-	latest1m, err := is.storage.GetLatestCandle(ctx, symbol, "1m")
-	if err != nil {
-		return fmt.Errorf("failed to get latest 1m candle: %w", err)
-	}
-
-	if latest1m == nil {
-		log.Printf("[%s] No 1m candles found for aggregation", symbol)
-		return nil
-	}
-
-	// Use end time as the latest candle timestamp
-	end := latest1m.Timestamp
-	// Calculate start time
-	start := end.AddDate(-7, 0, 0).Truncate(24 * time.Hour)
-
-	log.Printf("[%s] Aggregating 1m data from %s to %s (%d years)",
-		symbol, start.Format(time.RFC3339), end.Format(time.RFC3339), 1)
-
-	// Process in smaller chunks to avoid memory issues with large datasets
-	// Use a sliding window approach
-	chunkSize := 24 * time.Hour
-	currentStart := start
-
-	// Track overall progress
-	var totalProcessed int
-	var totalErrors []error
-
-	for currentStart.Before(end) {
-		// Calculate chunk end, but don't go beyond the overall end
-		chunkEnd := currentStart.Add(chunkSize)
-		if chunkEnd.After(end) {
-			chunkEnd = end
-		}
-
-		log.Printf("[%s] Processing chunk from %s to %s",
-			symbol, currentStart.Format(time.RFC3339), chunkEnd.Format(time.RFC3339))
-
-		// Create a channel for the operation result
-		resultCh := make(chan error, 1)
-
-		go func(start, end time.Time) {
-			// ISSUE: Shared TX
-			resultCh <- is.ingester.BulkAggregateFrom1m(ctx, symbol, start, end)
-		}(currentStart, chunkEnd)
-
-		// Wait for either completion or timeout
-		var chunkErr error
-		select {
-		case err := <-resultCh:
-			chunkErr = err
-		case <-ctx.Done():
-			chunkErr = fmt.Errorf("aggregation timed out for chunk %s to %s",
-				currentStart.Format(time.RFC3339), chunkEnd.Format(time.RFC3339))
-		}
-		// TODO: Listen on is.ctx.Done()
-
-		if chunkErr != nil {
-			log.Printf("[%s] Error aggregating chunk from %s to %s: %v",
-				symbol, currentStart.Format(time.RFC3339), chunkEnd.Format(time.RFC3339), chunkErr)
-			totalErrors = append(totalErrors, chunkErr)
-		} else {
-			// Count processed candles for this chunk
-			count, _ := is.storage.GetCandleCount(ctx, symbol, "1m", currentStart, chunkEnd)
-			totalProcessed += count
-			log.Printf("[%s] Successfully aggregated chunk with %d candles", symbol, count)
-		}
-
-		// Move to next chunk
-		currentStart = chunkEnd
-	}
-
-	// Report overall results
-	if len(totalErrors) > 0 {
-		log.Printf("[%s] Completed bulk aggregation with %d candles processed and %d errors",
-			symbol, totalProcessed, len(totalErrors))
-		return fmt.Errorf("bulk aggregation completed with %d errors: %v",
-			len(totalErrors), totalErrors[0])
-	}
-
-	log.Printf("[%s] Successfully completed bulk aggregation of %d candles",
-		symbol, totalProcessed)
+	log.Printf("IngestionService | Cleanup completed successfully for %d symbol-timeframe combinations", successCount)
 	return nil
 }
 
@@ -671,7 +507,7 @@ func (is *DefaultIngestionService) GetIngestionStats() map[string]map[string]any
 	ctx, cancel := deriveContextWithTimeout(is.ctx)
 	defer cancel()
 
-	for _, symbol := range is.config.Symbols {
+	for _, symbol := range is.cfg.Symbols {
 		stats[symbol] = make(map[string]any)
 
 		for _, timeframe := range GetSupportedTimeframes() {
@@ -694,7 +530,7 @@ func (is *DefaultIngestionService) GetIngestionStats() map[string]map[string]any
 			// Get candle count for last 24 hours
 			end := time.Now().UTC()
 			start := end.Add(-24 * time.Hour)
-			count, _ := is.storage.GetCandleCount(ctx, symbol, timeframe, start, end)
+			count, _ := is.ingester.GetCandleCount(ctx, symbol, timeframe, start, end)
 
 			stats[symbol][timeframe] = map[string]any{
 				"latest_candle":    latest.Timestamp,
@@ -704,7 +540,7 @@ func (is *DefaultIngestionService) GetIngestionStats() map[string]map[string]any
 			}
 
 			// Get aggregation statistics
-			aggStats, err := is.storage.GetAggregationStats(ctx, symbol)
+			aggStats, err := is.ingester.GetAggregationStats(ctx, symbol)
 			if err == nil {
 				stats[symbol]["aggregation_stats"] = aggStats
 			}
