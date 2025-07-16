@@ -128,7 +128,6 @@ type Storage interface {
 // Aggregator interface for candle aggregation
 type Aggregator interface {
 	Aggregate(candles []Candle, timeframe string) ([]Candle, error)
-	AggregateIncremental(newCandle Candle, existingCandles []Candle, timeframe string) ([]Candle, error)
 	AggregateFrom1m(oneMCandles []Candle, targetTimeframe string) ([]Candle, error)
 	Aggregate1mTimeRange(ctx context.Context, symbol string, start, end time.Time, targetTimeframe string) ([]Candle, error)
 }
@@ -202,7 +201,7 @@ func (a *DefaultAggregator) Aggregate(candles []Candle, timeframe string) ([]Can
 			return nil, fmt.Errorf("candle at index %d has different timestamp: %s, expected: %s", i, c.Timestamp, firstCandleTimestamp.Add(time.Duration(i)*firstCandleDur))
 		}
 
-		bucket := c.Timestamp.Truncate(dur)
+		bucket := c.Timestamp.Truncate(dur).Add(dur)
 		buckets[bucket] = append(buckets[bucket], c)
 	}
 
@@ -280,68 +279,6 @@ func (a *DefaultAggregator) Aggregate1mTimeRange(ctx context.Context, symbol str
 
 	// Aggregate to target timeframe
 	return a.AggregateFrom1m(oneMCandles, targetTimeframe)
-}
-
-// AggregateIncremental efficiently aggregates a new candle with existing candles
-// ISSUE: Review this code before use.
-func (a *DefaultAggregator) AggregateIncremental(newCandle Candle, existingCandles []Candle, timeframe string) ([]Candle, error) {
-	if err := newCandle.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid new candle: %w", err)
-	}
-
-	dur, err := ParseTimeframe(timeframe)
-	if err != nil {
-		return nil, fmt.Errorf("invalid timeframe %s: %w", timeframe, err)
-	}
-
-	newBucket := newCandle.Timestamp.Truncate(dur)
-
-	// Find if we already have a candle for this bucket
-	bucketFound := false
-
-	// More efficient to modify in place when possible
-	for i := range existingCandles {
-		existingBucket := existingCandles[i].Timestamp.Truncate(dur)
-
-		if existingBucket.Equal(newBucket) {
-			// Update existing candle in place
-			existingCandles[i].High = max(existingCandles[i].High, newCandle.High)
-			existingCandles[i].Low = min(existingCandles[i].Low, newCandle.Low)
-			existingCandles[i].Close = newCandle.Close
-			existingCandles[i].Volume += newCandle.Volume
-			existingCandles[i].Source = "constructed"
-
-			if err := existingCandles[i].Validate(); err != nil {
-				return nil, fmt.Errorf("invalid updated candle: %w", err)
-			}
-
-			bucketFound = true
-			break
-		}
-	}
-
-	if !bucketFound {
-		// Create new aggregated candle
-		agg := Candle{
-			Timestamp: newBucket,
-			Open:      newCandle.Open,
-			High:      newCandle.High,
-			Low:       newCandle.Low,
-			Close:     newCandle.Close,
-			Volume:    newCandle.Volume,
-			Symbol:    newCandle.Symbol,
-			Timeframe: timeframe,
-			Source:    "constructed",
-		}
-		existingCandles = append(existingCandles, agg)
-
-		// Sort by timestamp only when adding a new candle
-		sort.Slice(existingCandles, func(i, j int) bool {
-			return existingCandles[i].Timestamp.Before(existingCandles[j].Timestamp)
-		})
-	}
-
-	return existingCandles, nil
 }
 
 // DefaultIngester handles real-time candle ingestion and aggregation
@@ -473,8 +410,9 @@ func (ci *DefaultIngester) IngestRaw1mCandles(ctx context.Context, candles []Can
 		// Non-blocking send to avoid blocking on slow receivers
 		select {
 		case ch <- oneMCandles:
+			log.Printf("Ingester | Sent %d 1m candles to subscriber", len(oneMCandles))
 		default:
-			fmt.Println("Warning: subscriber channel is full, skipping")
+			log.Println("Ingester | Warning: subscriber channel is full, skipping")
 		}
 	}
 
