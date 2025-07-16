@@ -54,7 +54,7 @@ func (c *Candle) Validate() error {
 
 // IsComplete checks if a candle is complete (not the current minute)
 func (c *Candle) IsComplete() bool {
-	now := time.Now()
+	now := time.Now().UTC()
 	candleEnd := c.Timestamp.Add(GetTimeframeDuration(c.Timeframe))
 	return now.After(candleEnd)
 }
@@ -142,6 +142,10 @@ type Ingester interface {
 	GetLatestCandle(ctx context.Context, symbol, timeframe string) (*Candle, error)
 	CleanupOldData(ctx context.Context, symbol, timeframe string, retentionDays int) error
 
+	// Proxy
+	GetCandleCount(ctx context.Context, symbol, timeframe string, start, end time.Time) (int, error)
+	GetAggregationStats(ctx context.Context, symbol string) (map[string]any, error)
+
 	Subscribe() <-chan []Candle
 	Unsubscribe(ch <-chan []Candle)
 }
@@ -174,10 +178,28 @@ func (a *DefaultAggregator) Aggregate(candles []Candle, timeframe string) ([]Can
 		return candles[i].Timestamp.Before(candles[j].Timestamp)
 	})
 
+	firstCandleSymbol := candles[0].Symbol
+	firstCandleTimeframe := candles[0].Timeframe
+	firstCandleDur, err := ParseTimeframe(firstCandleTimeframe)
+	if err != nil {
+		return nil, fmt.Errorf("invalid timeframe %s: %w", firstCandleTimeframe, err)
+	}
+	firstCandleTimestamp := candles[0].Timestamp.Truncate(firstCandleDur)
+
 	buckets := make(map[time.Time][]Candle)
 	for i, c := range candles {
 		if err := c.Validate(); err != nil {
 			return nil, fmt.Errorf("invalid candle at index %d: %w", i, err)
+		}
+		if c.Symbol != firstCandleSymbol {
+			return nil, fmt.Errorf("candle at index %d has different symbol: %s, expected: %s", i, c.Symbol, firstCandleSymbol)
+		}
+		if c.Timeframe != firstCandleTimeframe {
+			return nil, fmt.Errorf("candle at index %d has different timeframe: %s, expected: %s", i, c.Timeframe, firstCandleTimeframe)
+		}
+		// check for missing candles
+		if c.Timestamp.Truncate(firstCandleDur).Sub(firstCandleTimestamp) != time.Duration(i)*firstCandleDur {
+			return nil, fmt.Errorf("candle at index %d has different timestamp: %s, expected: %s", i, c.Timestamp, firstCandleTimestamp.Add(time.Duration(i)*firstCandleDur))
 		}
 
 		bucket := c.Timestamp.Truncate(dur)
@@ -408,8 +430,7 @@ func (ci *DefaultIngester) IngestRaw1mCandles(ctx context.Context, candles []Can
 
 		// Validate candle once here instead of multiple times later
 		if err := c.Validate(); err != nil {
-			// Log error but continue with valid candles
-			fmt.Printf("Skipping invalid candle: %v\n", err)
+			log.Printf("Ingester | Skipping invalid candle: %v\n", err)
 			continue
 		}
 
@@ -668,7 +689,7 @@ func (ci *DefaultIngester) BulkAggregateAllSymbolsFrom1m(ctx context.Context, st
 				ci.mu.Unlock()
 
 				// Log the aggregation result
-				log.Printf("Aggregated %d %s constructed candles for %s\n", len(aggregated), timeframe, symbol)
+				log.Printf("Ingester | Aggregated %d %s constructed candles for %s\n", len(aggregated), timeframe, symbol)
 			}
 
 			// Save all constructed candles for this symbol in one batch operation
@@ -733,7 +754,7 @@ func (ci *DefaultIngester) GetLatestCandle(ctx context.Context, symbol, timefram
 
 // CleanupOldData removes old candles to prevent database bloat
 func (ci *DefaultIngester) CleanupOldData(ctx context.Context, symbol, timeframe string, retentionDays int) error {
-	cutoff := time.Now().AddDate(0, 0, -retentionDays)
+	cutoff := time.Now().UTC().AddDate(0, 0, -retentionDays)
 	return ci.storage.DeleteCandles(ctx, symbol, timeframe, cutoff)
 }
 
@@ -757,6 +778,16 @@ func (ci *DefaultIngester) Unsubscribe(ch <-chan []Candle) {
 			break
 		}
 	}
+}
+
+// GetCandleCount returns the number of candles for a symbol and timeframe in a given time range
+func (ci *DefaultIngester) GetCandleCount(ctx context.Context, symbol, timeframe string, start, end time.Time) (int, error) {
+	return ci.storage.GetCandleCount(ctx, symbol, timeframe, start, end)
+}
+
+// GetAggregationStats returns the aggregation stats for a symbol in a given time range
+func (ci *DefaultIngester) GetAggregationStats(ctx context.Context, symbol string) (map[string]any, error) {
+	return ci.storage.GetAggregationStats(ctx, symbol)
 }
 
 // ParseTimeframe parses timeframe string (e.g., "5m", "1h") to time.Duration
