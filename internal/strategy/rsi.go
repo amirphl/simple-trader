@@ -69,10 +69,13 @@ func (s *RSIStrategy) trimPrices() {
 
 // OnCandles processes new candles and generates trading signals
 func (s *RSIStrategy) OnCandles(ctx context.Context, oneMinCandles []candle.Candle) (Signal, error) {
+	log.Printf("Strategy | [%s RSI] Received %d 1m candles", s.symbol, len(oneMinCandles))
+
 	// TODO: Handle duplicate candles
 	// TODO: Handle missing candles from last candle in db to first received candle (somewhat possible because of UTC)
 	// TODO: Handle missing candles inside oneMinCandles, validate, sort, truncate (impossible)
 	if len(oneMinCandles) == 0 {
+		log.Printf("Strategy | [%s RSI] No candles received", s.symbol)
 		return Signal{
 			Time:         time.Now().UTC(),
 			Action:       "hold",
@@ -91,6 +94,7 @@ func (s *RSIStrategy) OnCandles(ctx context.Context, oneMinCandles []candle.Cand
 	}
 
 	if len(filteredCandles) == 0 {
+		log.Printf("Strategy | [%s RSI] No matching candles", s.symbol)
 		return Signal{
 			Time:         time.Now().UTC(),
 			Action:       "hold",
@@ -151,6 +155,7 @@ func (s *RSIStrategy) OnCandles(ctx context.Context, oneMinCandles []candle.Cand
 
 	// Check if we have enough data for RSI calculation
 	if len(s.prices) <= s.Period {
+		log.Printf("Strategy | [%s RSI] Not enough data for RSI calculation", s.symbol)
 		return Signal{
 			Time:         s.lastCandle.Timestamp,
 			Action:       "hold",
@@ -231,6 +236,8 @@ func (s *RSIStrategy) OnCandles(ctx context.Context, oneMinCandles []candle.Cand
 	// 	action = "hold"
 	// 	reason = "RSI neutral"
 	// }
+
+	log.Printf("Strategy | [%s RSI] Holding - RSI: %.2f", s.symbol, rsi)
 
 	return Signal{
 		Time:         s.lastCandle.Timestamp,
