@@ -15,9 +15,10 @@ type TelegramNotifier struct {
 	MaxAttempts int
 	Delay       time.Duration
 	ProxyURL    string // Add proxy URL field
+	ParseMode   string // Add parse mode field (HTML, Markdown, etc.)
 }
 
-// Updated constructor to accept proxy URL
+// Updated constructor to accept proxy URL and parse mode
 func NewTelegramNotifier(token, chatID, proxyURL string, maxAttempts int, delay time.Duration) Notifier {
 	return &TelegramNotifier{
 		Token:       token,
@@ -25,6 +26,7 @@ func NewTelegramNotifier(token, chatID, proxyURL string, maxAttempts int, delay 
 		ProxyURL:    proxyURL,
 		MaxAttempts: maxAttempts,
 		Delay:       delay,
+		ParseMode:   "HTML", // Default to HTML parse mode
 	}
 }
 
@@ -37,16 +39,24 @@ func (t *TelegramNotifier) Send(msg string) error {
 		return fmt.Errorf("failed to create HTTP client: %w", err)
 	}
 
-	resp, err := client.PostForm(apiURL, url.Values{
+	// Create form values with parse_mode if specified
+	formValues := url.Values{
 		"chat_id": {t.ChatID},
 		"text":    {msg},
-	})
+	}
+
+	// Add parse_mode if specified
+	if t.ParseMode != "" {
+		formValues.Add("parse_mode", t.ParseMode)
+	}
+
+	resp, err := client.PostForm(apiURL, formValues)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("telegram send failed: %s", resp.Status)
 	}
 	return nil
