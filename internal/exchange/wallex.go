@@ -56,7 +56,7 @@ func retry(attempts int, delay time.Duration, fn func() error) error {
 	return errors.New("all retry attempts failed")
 }
 
-func (w *WallexExchange) FetchCandles(ctx context.Context, symbol string, timeframe string, start, end int64) ([]candle.Candle, error) {
+func (w *WallexExchange) FetchCandles(ctx context.Context, symbol string, timeframe string, start, end time.Time) ([]candle.Candle, error) {
 	// Validate timeframe
 	if !candle.IsValidTimeframe(timeframe) {
 		return nil, fmt.Errorf("unsupported timeframe: %s", timeframe)
@@ -76,10 +76,8 @@ func (w *WallexExchange) FetchCandles(ctx context.Context, symbol string, timefr
 
 	default:
 		err := retry(3, 2*time.Second, func() error {
-			from := time.Unix(start, 0)
-			to := time.Unix(end, 0)
 			var err error
-			wallexCandles, err = w.client.Candles(uppercasedSymbol, trimmedTimeframe, from, to)
+			wallexCandles, err = w.client.Candles(uppercasedSymbol, trimmedTimeframe, start, end)
 			if err != nil {
 				return fmt.Errorf("fetching candles: %w", err)
 			}
@@ -99,7 +97,7 @@ func (w *WallexExchange) FetchCandles(ctx context.Context, symbol string, timefr
 		volume, _ := strconv.ParseFloat(string(wc.Volume), 64)
 
 		c := candle.Candle{
-			Timestamp: wc.Timestamp.Truncate(time.Minute),
+			Timestamp: wc.Timestamp.UTC().Truncate(time.Minute),
 			Open:      open,
 			High:      high,
 			Low:       low,
@@ -124,7 +122,7 @@ func (w *WallexExchange) FetchCandles(ctx context.Context, symbol string, timefr
 
 // FetchLatestCandles fetches the most recent candles for a symbol and timeframe
 func (w *WallexExchange) FetchLatestCandles(ctx context.Context, symbol string, timeframe string, count int) ([]candle.Candle, error) {
-	end := time.Now()
+	end := time.Now().UTC()
 	duration := candle.GetTimeframeDuration(timeframe)
 	if duration == 0 {
 		return nil, fmt.Errorf("invalid timeframe: %s", timeframe)
@@ -133,7 +131,7 @@ func (w *WallexExchange) FetchLatestCandles(ctx context.Context, symbol string, 
 	// Calculate start time based on count and timeframe
 	start := end.Add(-duration * time.Duration(count))
 
-	return w.FetchCandles(ctx, symbol, timeframe, start.Unix(), end.Unix())
+	return w.FetchCandles(ctx, symbol, timeframe, start, end)
 }
 
 func (w *WallexExchange) FetchOrderBook(ctx context.Context, symbol string) (market.OrderBook, error) {
@@ -152,7 +150,7 @@ func (w *WallexExchange) FetchOrderBook(ctx context.Context, symbol string) (mar
 		}
 		var ob market.OrderBook
 		ob.Symbol = symbol
-		ob.Timestamp = time.Now()
+		ob.Timestamp = time.Now().UTC()
 		for _, a := range asks {
 			price, _ := strconv.ParseFloat(string(a.Price), 64)
 			qty, _ := strconv.ParseFloat(string(a.Quantity), 64)
@@ -190,7 +188,7 @@ func (w *WallexExchange) FetchTick(ctx context.Context, symbol string) (market.T
 			Price:     price,
 			Quantity:  qty,
 			Side:      "", // Wallex may not provide side; TODO: map if available
-			Timestamp: last.Timestamp,
+			Timestamp: last.Timestamp.UTC(),
 		}, nil
 	}
 }
@@ -211,7 +209,7 @@ func (w *WallexExchange) FetchTicks(ctx context.Context, symbol string, from, to
 		}
 		var ticks []market.Tick
 		for _, t := range trades {
-			if t.Timestamp.Before(from) || t.Timestamp.After(to) {
+			if t.Timestamp.UTC().Before(from) || t.Timestamp.UTC().After(to) {
 				continue
 			}
 			price, _ := strconv.ParseFloat(string(t.Price), 64)
@@ -221,7 +219,7 @@ func (w *WallexExchange) FetchTicks(ctx context.Context, symbol string, from, to
 				Price:     price,
 				Quantity:  qty,
 				Side:      "", // Wallex may not provide side; TODO: map if available
-				Timestamp: t.Timestamp,
+				Timestamp: t.Timestamp.UTC(),
 			})
 		}
 		return ticks, nil
@@ -260,7 +258,7 @@ func (w *WallexExchange) SubmitOrder(ctx context.Context, req order.OrderRequest
 			Status:    strings.ToUpper(resp.Status),
 			FilledQty: float64Ptr(resp.ExecutedQty),
 			AvgPrice:  float64Ptr(resp.ExecutedPrice),
-			Timestamp: resp.CreatedAt,
+			Timestamp: resp.CreatedAt.UTC(),
 			Symbol:    req.Symbol,
 			Side:      req.Side,
 			Type:      req.Type,
@@ -326,7 +324,7 @@ func (w *WallexExchange) GetOrderStatus(ctx context.Context, orderID string) (or
 			Status:    strings.ToUpper(resp.Status),
 			FilledQty: float64Ptr(resp.ExecutedQty),
 			AvgPrice:  float64Ptr(resp.ExecutedPrice),
-			Timestamp: resp.CreatedAt,
+			Timestamp: resp.CreatedAt.UTC(),
 			Symbol:    symbol,
 			Side:      lowercasedSide,
 			Type:      lowercasedType,

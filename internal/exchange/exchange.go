@@ -13,7 +13,7 @@ import (
 // Exchange is the interface for all supported exchanges.
 type Exchange interface {
 	Name() string
-	FetchCandles(ctx context.Context, symbol string, timeframe string, start, end int64) ([]candle.Candle, error)
+	FetchCandles(ctx context.Context, symbol string, timeframe string, start, end time.Time) ([]candle.Candle, error)
 	FetchLatestCandles(ctx context.Context, symbol string, timeframe string, count int) ([]candle.Candle, error)
 	FetchOrderBook(ctx context.Context, symbol string) (market.OrderBook, error)
 	SubmitOrder(ctx context.Context, order order.OrderRequest) (order.OrderResponse, error)
