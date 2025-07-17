@@ -15,6 +15,45 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+// TradeChannel interface for managing trade subscriptions
+type TradeChannel interface {
+	Subscribe(subscriberID string, bufferSize int) (<-chan WallexTrade, error)
+	Unsubscribe(subscriberID string) error
+	GetSubscriberCount() int
+	Close()
+	IsConnected() bool
+	Health() error
+	Start(ctx context.Context, symbol string)
+}
+
+// DepthWatcher interface for market depth monitoring
+type DepthWatcher interface {
+	IsConnected() bool
+	Health() error
+	Close()
+	Start(ctx context.Context) error
+}
+
+// MarketCapWatcher interface for market cap monitoring
+type MarketCapWatcher interface {
+	IsConnected() bool
+	Health() error
+	Close()
+	Start(ctx context.Context) error
+}
+
+// MarketDepthStateManager interface for managing market depth state
+type MarketDepthStateManager interface {
+	Update(symbol, depthType string, data []byte) error
+	Get(symbol, depthType string) (*OrderBook, bool)
+}
+
+// MarketCapStateManager interface for managing market cap state
+type MarketCapStateManager interface {
+	Update(symbol string, data *MarketCapData)
+	Get(symbol string) (*MarketCapData, bool)
+}
+
 // WallexTrade represents a trade message from Wallex
 // (fields based on the provided JSON)
 type WallexTrade struct {
@@ -56,7 +95,7 @@ type WallexTradeChannel struct {
 }
 
 // NewWallexTradeChannel creates a new trade channel manager
-func NewWallexTradeChannel() *WallexTradeChannel {
+func NewWallexTradeChannel() TradeChannel {
 	return &WallexTradeChannel{
 		subscribers: make(map[string]*Subscriber),
 		state:       Disconnected,
@@ -98,24 +137,22 @@ func (w *WallexTradeChannel) Unsubscribe(subscriberID string) error {
 
 	close(sub.Chan)
 	delete(w.subscribers, subscriberID)
-
 	log.Printf("WallexWebsocket | Subscriber %s removed for symbol %s", subscriberID, w.symbol)
 	return nil
 }
 
-// broadcast sends a trade to all active subscribers
+// broadcast sends a trade to all subscribers (non-blocking)
 func (w *WallexTradeChannel) broadcast(trade WallexTrade) {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 
-	for id, sub := range w.subscribers {
+	for _, sub := range w.subscribers {
 		select {
 		case sub.Chan <- trade:
 			// Successfully sent
 		default:
-			// Channel is full, skip this trade for this subscriber
-			// Don't remove the subscriber - they might be slow but still active
-			log.Printf("WallexWebsocket | Channel full for subscriber %s, skipping trade", id)
+			// Channel is full, skip this subscriber (don't close the channel)
+			log.Printf("WallexWebsocket | Subscriber %s channel is full, skipping trade", sub.ID)
 		}
 	}
 
@@ -131,34 +168,41 @@ func (w *WallexTradeChannel) GetSubscriberCount() int {
 	return len(w.subscribers)
 }
 
-// Close closes all subscriber channels and the websocket connection
+// Close closes the channel and all subscriber channels
 func (w *WallexTradeChannel) Close() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if !w.closed {
-		// Close all subscriber channels
-		for id, sub := range w.subscribers {
-			close(sub.Chan)
-			log.Printf("WallexWebsocket | Closed subscriber %s channel for symbol %s", id, w.symbol)
-		}
-		w.subscribers = make(map[string]*Subscriber)
 
-		if w.conn != nil {
-			w.conn.Close()
-		}
-		if w.cancelFunc != nil {
-			w.cancelFunc()
-		}
-		w.closed = true
-		w.state = Disconnected
+	if w.closed {
+		return
 	}
+
+	w.closed = true
+
+	// Cancel the context to stop the websocket connection
+	if w.cancelFunc != nil {
+		w.cancelFunc()
+	}
+
+	// Close all subscriber channels
+	for _, sub := range w.subscribers {
+		close(sub.Chan)
+	}
+	w.subscribers = make(map[string]*Subscriber)
+
+	// Close the websocket connection
+	if w.conn != nil {
+		w.conn.Close()
+	}
+
+	log.Printf("WallexWebsocket | Trade channel closed for symbol %s", w.symbol)
 }
 
-// IsConnected returns true if the websocket is currently connected
+// IsConnected returns true if the websocket is connected
 func (w *WallexTradeChannel) IsConnected() bool {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
-	return w.state == Connected
+	return w.state == Connected && w.conn != nil
 }
 
 // Health returns the last health error (if any)
@@ -184,10 +228,7 @@ func (w *WallexTradeChannel) setLastPong(t time.Time) {
 
 // normalizeSymbol converts e.g. btc-usdt to BTCUSDT for Wallex API
 func normalizeSymbol(symbol string) string {
-	s := symbol
-	s = strings.ReplaceAll(s, "-", "")
-	s = strings.ToUpper(s)
-	return s
+	return strings.ToUpper(strings.ReplaceAll(symbol, "-", ""))
 }
 
 // Start connects to Wallex websocket and streams trades to all subscribers, with reconnect and health check
@@ -434,7 +475,7 @@ type MarketDepthState struct {
 }
 
 // NewMarketDepthState creates a new MarketDepthState.
-func NewMarketDepthState() *MarketDepthState {
+func NewMarketDepthState() MarketDepthStateManager {
 	return &MarketDepthState{
 		state: make(map[string]*OrderBook),
 	}
@@ -468,7 +509,7 @@ func (m *MarketDepthState) Get(symbol, depthType string) (*OrderBook, bool) {
 type WallexDepthWatcher struct {
 	conn      *websocket.Conn
 	cancel    context.CancelFunc
-	state     *MarketDepthState
+	state     MarketDepthStateManager
 	symbol    string
 	depthType string // "buyDepth" or "sellDepth"
 
@@ -480,7 +521,7 @@ type WallexDepthWatcher struct {
 	lastPong  time.Time
 }
 
-func NewWallexDepthWatcher(state *MarketDepthState, symbol, depthType string) *WallexDepthWatcher {
+func NewWallexDepthWatcher(state MarketDepthStateManager, symbol, depthType string) DepthWatcher {
 	return &WallexDepthWatcher{
 		state:     state,
 		symbol:    symbol,
@@ -728,7 +769,7 @@ type MarketCapState struct {
 }
 
 // NewMarketCapState creates a new MarketCapState
-func NewMarketCapState() *MarketCapState {
+func NewMarketCapState() MarketCapStateManager {
 	return &MarketCapState{
 		state: make(map[string]*MarketCapData),
 	}
@@ -755,7 +796,7 @@ func (m *MarketCapState) Get(symbol string) (*MarketCapData, bool) {
 type WallexMarketCapWatcher struct {
 	conn   *websocket.Conn
 	cancel context.CancelFunc
-	state  *MarketCapState
+	state  MarketCapStateManager
 	symbol string
 
 	mu        sync.RWMutex
@@ -766,7 +807,7 @@ type WallexMarketCapWatcher struct {
 	lastPong  time.Time
 }
 
-func NewWallexMarketCapWatcher(state *MarketCapState, symbol string) *WallexMarketCapWatcher {
+func NewWallexMarketCapWatcher(state MarketCapStateManager, symbol string) MarketCapWatcher {
 	return &WallexMarketCapWatcher{
 		state:     state,
 		symbol:    symbol,
