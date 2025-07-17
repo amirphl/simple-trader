@@ -168,6 +168,20 @@ func (w *WallexTradeChannel) Health() error {
 	return w.healthErr
 }
 
+// setLastPing updates the last ping time
+func (w *WallexTradeChannel) setLastPing(t time.Time) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.lastPing = t
+}
+
+// setLastPong updates the last pong time
+func (w *WallexTradeChannel) setLastPong(t time.Time) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.lastPong = t
+}
+
 // normalizeSymbol converts e.g. btc-usdt to BTCUSDT for Wallex API
 func normalizeSymbol(symbol string) string {
 	s := symbol
@@ -285,9 +299,7 @@ func (w *WallexTradeChannel) connectAndStream(ctx context.Context) error {
 	log.Printf("WallexWebsocket | Subscribed to %s@trade channel", w.symbol)
 
 	c.SetPongHandler(func(appData string) error {
-		w.mu.Lock()
-		w.lastPong = time.Now()
-		w.mu.Unlock()
+		w.setLastPong(time.Now())
 		return nil
 	})
 
@@ -304,7 +316,7 @@ func (w *WallexTradeChannel) connectAndStream(ctx context.Context) error {
 			w.mu.Lock()
 			if w.conn != nil {
 				w.conn.WriteMessage(websocket.PingMessage, nil)
-				w.lastPing = time.Now()
+				w.setLastPing(time.Now())
 			}
 			w.mu.Unlock()
 		default:
@@ -403,4 +415,571 @@ func (w *WallexWebsocketManager) Unsubscribe(channel string) error {
 func (w *WallexWebsocketManager) IsConnected() bool {
 	// TODO: Implement connection state check
 	return false
+}
+
+// OrderBookEntry represents a single order book entry
+type OrderBookEntry struct {
+	Quantity float64 `json:"quantity"`
+	Price    string  `json:"price"`
+	Sum      float64 `json:"sum"`
+}
+
+// OrderBook represents the complete order book (buy or sell depth)
+type OrderBook map[string]OrderBookEntry
+
+// MarketDepthState holds the latest order book state for a symbol/depth type.
+type MarketDepthState struct {
+	mu    sync.RWMutex
+	state map[string]*OrderBook // key: "SYMBOL@buyDepth" or "SYMBOL@sellDepth"
+}
+
+// NewMarketDepthState creates a new MarketDepthState.
+func NewMarketDepthState() *MarketDepthState {
+	return &MarketDepthState{
+		state: make(map[string]*OrderBook),
+	}
+}
+
+// Update sets the latest state for a symbol and depth type.
+func (m *MarketDepthState) Update(symbol, depthType string, data []byte) error {
+	key := fmt.Sprintf("%s@%s", normalizeSymbol(symbol), depthType)
+
+	var orderBook OrderBook
+	if err := json.Unmarshal(data, &orderBook); err != nil {
+		return fmt.Errorf("failed to unmarshal order book for %s: %w", key, err)
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.state[key] = &orderBook
+	return nil
+}
+
+// Get returns the latest state for a symbol and depth type.
+func (m *MarketDepthState) Get(symbol, depthType string) (*OrderBook, bool) {
+	key := fmt.Sprintf("%s@%s", normalizeSymbol(symbol), depthType)
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	data, ok := m.state[key]
+	return data, ok
+}
+
+// WallexDepthWatcher connects to Wallex and updates MarketDepthState for a symbol/depthType.
+type WallexDepthWatcher struct {
+	conn      *websocket.Conn
+	cancel    context.CancelFunc
+	state     *MarketDepthState
+	symbol    string
+	depthType string // "buyDepth" or "sellDepth"
+
+	mu        sync.RWMutex
+	closed    bool
+	healthErr error
+	connState ConnectionState
+	lastPing  time.Time
+	lastPong  time.Time
+}
+
+func NewWallexDepthWatcher(state *MarketDepthState, symbol, depthType string) *WallexDepthWatcher {
+	return &WallexDepthWatcher{
+		state:     state,
+		symbol:    symbol,
+		depthType: depthType,
+		connState: Disconnected,
+	}
+}
+
+// IsConnected returns true if the websocket is currently connected
+func (w *WallexDepthWatcher) IsConnected() bool {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.connState == Connected
+}
+
+// Health returns the last health error (if any)
+func (w *WallexDepthWatcher) Health() error {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.healthErr
+}
+
+// Close closes the websocket connection and cancels the context
+func (w *WallexDepthWatcher) Close() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if !w.closed {
+		if w.conn != nil {
+			w.conn.Close()
+		}
+		if w.cancel != nil {
+			w.cancel()
+		}
+		w.closed = true
+		w.connState = Disconnected
+		log.Printf("WallexDepthWatcher | Closed connection for %s@%s", w.symbol, w.depthType)
+	}
+}
+
+func (w *WallexDepthWatcher) Start(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
+	w.cancel = cancel
+
+	go w.run(ctx)
+	return nil
+}
+
+func (w *WallexDepthWatcher) run(ctx context.Context) {
+	defer w.setClosed()
+	retryDelay := time.Second
+	for {
+		select {
+		case <-ctx.Done():
+			w.logState("Context cancelled, stopping depth watcher")
+			return
+		default:
+			if err := w.connectAndStream(ctx); err != nil {
+				w.setHealthErr(err)
+				w.setConnState(Reconnecting)
+				w.logState("Disconnected, retrying in %v: %v", retryDelay, err)
+				time.Sleep(retryDelay)
+				if retryDelay < 60*time.Second {
+					retryDelay *= 2
+				} else {
+					retryDelay = 60 * time.Second
+				}
+				continue
+			}
+			// If connectAndStream returns nil, exit
+			return
+		}
+	}
+}
+
+func (w *WallexDepthWatcher) connectAndStream(ctx context.Context) error {
+	w.setConnState(Connecting)
+	w.setHealthErr(nil)
+
+	u := url.URL{Scheme: "wss", Host: "api.wallex.ir", Path: "/socket.io/"}
+	query := u.Query()
+	query.Set("EIO", "4")
+	query.Set("transport", "websocket")
+	u.RawQuery = query.Encode()
+
+	c, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
+	if err != nil {
+		return err
+	}
+	w.setConn(c)
+	w.setConnState(Connected)
+	w.setLastPing(time.Now())
+	w.setLastPong(time.Now())
+	w.logState("Connection established for %s@%s", w.symbol, w.depthType)
+	defer func() {
+		c.Close()
+		w.setConn(nil)
+		w.setConnState(Disconnected)
+	}()
+
+	// Socket.IO handshake
+	c.WriteMessage(websocket.TextMessage, []byte("40"))
+
+	// Subscribe to depth channel
+	channelName := fmt.Sprintf("%s@%s", normalizeSymbol(w.symbol), w.depthType)
+	subscribeMsg := map[string]string{"channel": channelName}
+	subscribeJSON, _ := json.Marshal(subscribeMsg)
+	socketIOMsg := fmt.Sprintf(`42["subscribe",%s]`, string(subscribeJSON))
+	c.WriteMessage(websocket.TextMessage, []byte(socketIOMsg))
+
+	pingTicker := time.NewTicker(20 * time.Second)
+	defer pingTicker.Stop()
+
+	handshakeComplete := false
+
+	// Set up pong handler
+	c.SetPongHandler(func(appData string) error {
+		w.setLastPong(time.Now())
+		return nil
+	})
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-pingTicker.C:
+			w.mu.RLock()
+			if w.conn != nil {
+				w.conn.WriteMessage(websocket.PingMessage, nil)
+				w.setLastPing(time.Now())
+			}
+			w.mu.RUnlock()
+		default:
+			c.SetReadDeadline(time.Now().Add(30 * time.Second))
+			_, message, err := c.ReadMessage()
+			if err != nil {
+				return err
+			}
+			msgStr := string(message)
+			if msgStr == "2" {
+				c.WriteMessage(websocket.TextMessage, []byte("3"))
+				continue
+			}
+			if msgStr == "40" && !handshakeComplete {
+				handshakeComplete = true
+				subscribeMsg := map[string]string{"channel": channelName}
+				subscribeJSON, _ := json.Marshal(subscribeMsg)
+				socketIOMsg := fmt.Sprintf(`42["subscribe",%s]`, string(subscribeJSON))
+				c.WriteMessage(websocket.TextMessage, []byte(socketIOMsg))
+				w.logState("Resubscribed to %s", channelName)
+				continue
+			}
+			if len(msgStr) >= 2 && msgStr[:2] == "42" {
+				jsonPart := msgStr[2:]
+				var eventArray []interface{}
+				if err := json.Unmarshal([]byte(jsonPart), &eventArray); err != nil {
+					continue
+				}
+				if len(eventArray) >= 3 {
+					eventName, _ := eventArray[0].(string)
+					channel, _ := eventArray[1].(string)
+					if eventName == "Broadcaster" && channel == channelName {
+						dataJSON, _ := json.Marshal(eventArray[2])
+						if err := w.state.Update(w.symbol, w.depthType, dataJSON); err != nil {
+							w.logState("Failed to update order book data: %v", err)
+							continue
+						}
+						w.logState("Updated order book data for %s@%s", w.symbol, w.depthType)
+					}
+				}
+			}
+		}
+	}
+}
+
+func (w *WallexDepthWatcher) setConn(c *websocket.Conn) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.conn = c
+}
+
+func (w *WallexDepthWatcher) setConnState(state ConnectionState) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.connState = state
+}
+
+func (w *WallexDepthWatcher) setHealthErr(err error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.healthErr = err
+}
+
+func (w *WallexDepthWatcher) setLastPing(t time.Time) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.lastPing = t
+}
+
+func (w *WallexDepthWatcher) setLastPong(t time.Time) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.lastPong = t
+}
+
+func (w *WallexDepthWatcher) setClosed() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.closed = true
+}
+
+func (w *WallexDepthWatcher) logState(format string, args ...interface{}) {
+	log.Printf("WallexDepthWatcher | "+format, args...)
+}
+
+// MarketCapData represents the market cap data from Wallex
+type MarketCapData struct {
+	Symbol         string  `json:"symbol"`
+	Ch24h          float64 `json:"24h_ch"`
+	Ch7d           float64 `json:"7d_ch"`
+	Volume24h      string  `json:"24h_volume"`
+	Volume7d       string  `json:"7d_volume"`
+	QuoteVolume24h string  `json:"24h_quoteVolume"`
+	HighPrice24h   string  `json:"24h_highPrice"`
+	LowPrice24h    string  `json:"24h_lowPrice"`
+	LastPrice      string  `json:"lastPrice"`
+	LastQty        string  `json:"lastQty"`
+	BidPrice       string  `json:"bidPrice"`
+	AskPrice       string  `json:"askPrice"`
+	LastTradeSide  string  `json:"lastTradeSide"`
+	BidVolume      string  `json:"bidVolume"`
+	AskVolume      string  `json:"askVolume"`
+	BidCount       int     `json:"bidCount"`
+	AskCount       int     `json:"askCount"`
+	Direction      struct {
+		SELL int `json:"SELL"`
+		BUY  int `json:"BUY"`
+	} `json:"direction"`
+	CreatedAt string `json:"createdAt"`
+}
+
+// MarketCapState holds the latest market cap data for a symbol
+type MarketCapState struct {
+	mu    sync.RWMutex
+	state map[string]*MarketCapData // key: "SYMBOL"
+}
+
+// NewMarketCapState creates a new MarketCapState
+func NewMarketCapState() *MarketCapState {
+	return &MarketCapState{
+		state: make(map[string]*MarketCapData),
+	}
+}
+
+// Update sets the latest market cap data for a symbol
+func (m *MarketCapState) Update(symbol string, data *MarketCapData) {
+	key := normalizeSymbol(symbol)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.state[key] = data
+}
+
+// Get returns the latest market cap data for a symbol
+func (m *MarketCapState) Get(symbol string) (*MarketCapData, bool) {
+	key := normalizeSymbol(symbol)
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	data, ok := m.state[key]
+	return data, ok
+}
+
+// WallexMarketCapWatcher connects to Wallex and updates MarketCapState for a symbol
+type WallexMarketCapWatcher struct {
+	conn   *websocket.Conn
+	cancel context.CancelFunc
+	state  *MarketCapState
+	symbol string
+
+	mu        sync.RWMutex
+	closed    bool
+	healthErr error
+	connState ConnectionState
+	lastPing  time.Time
+	lastPong  time.Time
+}
+
+func NewWallexMarketCapWatcher(state *MarketCapState, symbol string) *WallexMarketCapWatcher {
+	return &WallexMarketCapWatcher{
+		state:     state,
+		symbol:    symbol,
+		connState: Disconnected,
+	}
+}
+
+// IsConnected returns true if the websocket is currently connected
+func (w *WallexMarketCapWatcher) IsConnected() bool {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.connState == Connected
+}
+
+// Health returns the last health error (if any)
+func (w *WallexMarketCapWatcher) Health() error {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.healthErr
+}
+
+// Close closes the websocket connection and cancels the context
+func (w *WallexMarketCapWatcher) Close() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if !w.closed {
+		if w.conn != nil {
+			w.conn.Close()
+		}
+		if w.cancel != nil {
+			w.cancel()
+		}
+		w.closed = true
+		w.connState = Disconnected
+		log.Printf("WallexMarketCapWatcher | Closed connection for %s@marketCap", w.symbol)
+	}
+}
+
+func (w *WallexMarketCapWatcher) Start(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
+	w.cancel = cancel
+
+	go w.run(ctx)
+	return nil
+}
+
+func (w *WallexMarketCapWatcher) run(ctx context.Context) {
+	defer w.setClosed()
+	retryDelay := time.Second
+	for {
+		select {
+		case <-ctx.Done():
+			w.logState("Context cancelled, stopping market cap watcher")
+			return
+		default:
+			if err := w.connectAndStream(ctx); err != nil {
+				w.setHealthErr(err)
+				w.setConnState(Reconnecting)
+				w.logState("Disconnected, retrying in %v: %v", retryDelay, err)
+				time.Sleep(retryDelay)
+				if retryDelay < 60*time.Second {
+					retryDelay *= 2
+				} else {
+					retryDelay = 60 * time.Second
+				}
+				continue
+			}
+			// If connectAndStream returns nil, exit
+			return
+		}
+	}
+}
+
+func (w *WallexMarketCapWatcher) connectAndStream(ctx context.Context) error {
+	w.setConnState(Connecting)
+	w.setHealthErr(nil)
+
+	u := url.URL{Scheme: "wss", Host: "api.wallex.ir", Path: "/socket.io/"}
+	query := u.Query()
+	query.Set("EIO", "4")
+	query.Set("transport", "websocket")
+	u.RawQuery = query.Encode()
+
+	c, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
+	if err != nil {
+		return err
+	}
+	w.setConn(c)
+	w.setConnState(Connected)
+	w.setLastPing(time.Now())
+	w.setLastPong(time.Now())
+	w.logState("Connection established for %s@marketCap", w.symbol)
+	defer func() {
+		c.Close()
+		w.setConn(nil)
+		w.setConnState(Disconnected)
+	}()
+
+	// Socket.IO handshake
+	c.WriteMessage(websocket.TextMessage, []byte("40"))
+
+	// Subscribe to market cap channel
+	channelName := fmt.Sprintf("%s@marketCap", normalizeSymbol(w.symbol))
+	subscribeMsg := map[string]string{"channel": channelName}
+	subscribeJSON, _ := json.Marshal(subscribeMsg)
+	socketIOMsg := fmt.Sprintf(`42["subscribe",%s]`, string(subscribeJSON))
+	c.WriteMessage(websocket.TextMessage, []byte(socketIOMsg))
+
+	pingTicker := time.NewTicker(20 * time.Second)
+	defer pingTicker.Stop()
+
+	handshakeComplete := false
+
+	// Set up pong handler
+	c.SetPongHandler(func(appData string) error {
+		w.setLastPong(time.Now())
+		return nil
+	})
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-pingTicker.C:
+			w.mu.RLock()
+			if w.conn != nil {
+				w.conn.WriteMessage(websocket.PingMessage, nil)
+				w.setLastPing(time.Now())
+			}
+			w.mu.RUnlock()
+		default:
+			c.SetReadDeadline(time.Now().Add(30 * time.Second))
+			_, message, err := c.ReadMessage()
+			if err != nil {
+				return err
+			}
+			msgStr := string(message)
+			if msgStr == "2" {
+				c.WriteMessage(websocket.TextMessage, []byte("3"))
+				continue
+			}
+			if msgStr == "40" && !handshakeComplete {
+				handshakeComplete = true
+				subscribeMsg := map[string]string{"channel": channelName}
+				subscribeJSON, _ := json.Marshal(subscribeMsg)
+				socketIOMsg := fmt.Sprintf(`42["subscribe",%s]`, string(subscribeJSON))
+				c.WriteMessage(websocket.TextMessage, []byte(socketIOMsg))
+				w.logState("Resubscribed to %s", channelName)
+				continue
+			}
+			if len(msgStr) >= 2 && msgStr[:2] == "42" {
+				jsonPart := msgStr[2:]
+				var eventArray []interface{}
+				if err := json.Unmarshal([]byte(jsonPart), &eventArray); err != nil {
+					continue
+				}
+				if len(eventArray) >= 3 {
+					eventName, _ := eventArray[0].(string)
+					channel, _ := eventArray[1].(string)
+					if eventName == "Broadcaster" && channel == channelName {
+						// eventArray[2] is the market cap data
+						dataJSON, _ := json.Marshal(eventArray[2])
+						var marketCapData MarketCapData
+						if err := json.Unmarshal(dataJSON, &marketCapData); err != nil {
+							w.logState("Failed to parse market cap data: %v", err)
+							continue
+						}
+						w.state.Update(w.symbol, &marketCapData)
+						w.logState("Updated market cap data for %s: LastPrice=%s, 24h_volume=%s",
+							w.symbol, marketCapData.LastPrice, marketCapData.Volume24h)
+					}
+				}
+			}
+		}
+	}
+}
+
+func (w *WallexMarketCapWatcher) setConn(c *websocket.Conn) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.conn = c
+}
+
+func (w *WallexMarketCapWatcher) setConnState(state ConnectionState) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.connState = state
+}
+
+func (w *WallexMarketCapWatcher) setHealthErr(err error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.healthErr = err
+}
+
+func (w *WallexMarketCapWatcher) setLastPing(t time.Time) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.lastPing = t
+}
+
+func (w *WallexMarketCapWatcher) setLastPong(t time.Time) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.lastPong = t
+}
+
+func (w *WallexMarketCapWatcher) setClosed() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.closed = true
+}
+
+func (w *WallexMarketCapWatcher) logState(format string, args ...interface{}) {
+	log.Printf("WallexMarketCapWatcher | "+format, args...)
 }
