@@ -11,11 +11,6 @@ import (
 	"github.com/amirphl/simple-trader/internal/indicator"
 )
 
-// Storage interface defines methods for retrieving candle data
-type Storage interface {
-	GetCandles(ctx context.Context, symbol, timeframe, source string, start, end time.Time) ([]candle.Candle, error)
-}
-
 // RSIStrategy implements a trading strategy based on the Relative Strength Index
 type RSIStrategy struct {
 	symbol     string
@@ -57,6 +52,9 @@ func (s *RSIStrategy) Name() string { return "RSI" }
 
 // Symbol returns the symbol this strategy is configured for
 func (s *RSIStrategy) Symbol() string { return s.symbol }
+
+// Timeframe returns the timeframe this strategy is configured for
+func (s *RSIStrategy) Timeframe() string { return "1m" }
 
 // trimPrices ensures the prices array doesn't grow beyond maxHistorySize
 func (s *RSIStrategy) trimPrices() {
