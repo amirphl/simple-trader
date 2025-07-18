@@ -723,7 +723,7 @@ func (w *WallexDepthWatcher) connectAndStream(ctx context.Context) error {
 							w.logState("Failed to update order book data: %v", err)
 							continue
 						}
-						w.logState("Updated order book data for %s@%s", w.symbol, w.depthType)
+						// w.logState("Updated order book data for %s@%s", w.symbol, w.depthType)
 					}
 				}
 			}
