@@ -44,13 +44,13 @@ type MarketCapWatcher interface {
 
 // MarketDepthStateManager interface for managing market depth state
 type MarketDepthStateManager interface {
-	Update(symbol, depthType string, data []byte) error
+	update(symbol, depthType string, data []byte) error
 	Get(symbol, depthType string) (*OrderBook, bool)
 }
 
 // MarketCapStateManager interface for managing market cap state
 type MarketCapStateManager interface {
-	Update(symbol string, data *MarketCapData)
+	update(symbol string, data *MarketCapData)
 	Get(symbol string) (*MarketCapData, bool)
 }
 
@@ -226,8 +226,8 @@ func (w *WallexTradeChannel) setLastPong(t time.Time) {
 	w.lastPong = t
 }
 
-// normalizeSymbol converts e.g. btc-usdt to BTCUSDT for Wallex API
-func normalizeSymbol(symbol string) string {
+// NormalizeSymbol converts e.g. btc-usdt to BTCUSDT for Wallex API
+func NormalizeSymbol(symbol string) string {
 	return strings.ToUpper(strings.ReplaceAll(symbol, "-", ""))
 }
 
@@ -238,7 +238,7 @@ func (w *WallexTradeChannel) Start(ctx context.Context, symbol string) {
 		w.mu.Unlock()
 		return
 	}
-	w.symbol = normalizeSymbol(symbol)
+	w.symbol = NormalizeSymbol(symbol)
 	w.state = Connecting
 	w.mu.Unlock()
 
@@ -517,8 +517,8 @@ func NewMarketDepthState() MarketDepthStateManager {
 }
 
 // Update sets the latest state for a symbol and depth type.
-func (m *MarketDepthState) Update(symbol, depthType string, data []byte) error {
-	key := fmt.Sprintf("%s@%s", normalizeSymbol(symbol), depthType)
+func (m *MarketDepthState) update(symbol, depthType string, data []byte) error {
+	key := fmt.Sprintf("%s@%s", NormalizeSymbol(symbol), depthType)
 
 	var orderBook OrderBook
 	if err := json.Unmarshal(data, &orderBook); err != nil {
@@ -533,7 +533,7 @@ func (m *MarketDepthState) Update(symbol, depthType string, data []byte) error {
 
 // Get returns the latest state for a symbol and depth type.
 func (m *MarketDepthState) Get(symbol, depthType string) (*OrderBook, bool) {
-	key := fmt.Sprintf("%s@%s", normalizeSymbol(symbol), depthType)
+	key := fmt.Sprintf("%s@%s", NormalizeSymbol(symbol), depthType)
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	data, ok := m.state[key]
@@ -660,7 +660,7 @@ func (w *WallexDepthWatcher) connectAndStream(ctx context.Context) error {
 	c.WriteMessage(websocket.TextMessage, []byte("40"))
 
 	// Subscribe to depth channel
-	channelName := fmt.Sprintf("%s@%s", normalizeSymbol(w.symbol), w.depthType)
+	channelName := fmt.Sprintf("%s@%s", NormalizeSymbol(w.symbol), w.depthType)
 	subscribeMsg := map[string]string{"channel": channelName}
 	subscribeJSON, _ := json.Marshal(subscribeMsg)
 	socketIOMsg := fmt.Sprintf(`42["subscribe",%s]`, string(subscribeJSON))
@@ -719,7 +719,7 @@ func (w *WallexDepthWatcher) connectAndStream(ctx context.Context) error {
 					channel, _ := eventArray[1].(string)
 					if eventName == "Broadcaster" && channel == channelName {
 						dataJSON, _ := json.Marshal(eventArray[2])
-						if err := w.state.Update(w.symbol, w.depthType, dataJSON); err != nil {
+						if err := w.state.update(w.symbol, w.depthType, dataJSON); err != nil {
 							w.logState("Failed to update order book data: %v", err)
 							continue
 						}
@@ -890,8 +890,8 @@ func NewMarketCapState() MarketCapStateManager {
 }
 
 // Update sets the latest market cap data for a symbol
-func (m *MarketCapState) Update(symbol string, data *MarketCapData) {
-	key := normalizeSymbol(symbol)
+func (m *MarketCapState) update(symbol string, data *MarketCapData) {
+	key := NormalizeSymbol(symbol)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.state[key] = data
@@ -899,7 +899,7 @@ func (m *MarketCapState) Update(symbol string, data *MarketCapData) {
 
 // Get returns the latest market cap data for a symbol
 func (m *MarketCapState) Get(symbol string) (*MarketCapData, bool) {
-	key := normalizeSymbol(symbol)
+	key := NormalizeSymbol(symbol)
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	data, ok := m.state[key]
@@ -1024,7 +1024,7 @@ func (w *WallexMarketCapWatcher) connectAndStream(ctx context.Context) error {
 	c.WriteMessage(websocket.TextMessage, []byte("40"))
 
 	// Subscribe to market cap channel
-	channelName := fmt.Sprintf("%s@marketCap", normalizeSymbol(w.symbol))
+	channelName := fmt.Sprintf("%s@marketCap", NormalizeSymbol(w.symbol))
 	subscribeMsg := map[string]string{"channel": channelName}
 	subscribeJSON, _ := json.Marshal(subscribeMsg)
 	socketIOMsg := fmt.Sprintf(`42["subscribe",%s]`, string(subscribeJSON))
@@ -1089,7 +1089,7 @@ func (w *WallexMarketCapWatcher) connectAndStream(ctx context.Context) error {
 							w.logState("Failed to parse market cap data: %v", err)
 							continue
 						}
-						w.state.Update(w.symbol, &marketCapData)
+						w.state.update(w.symbol, &marketCapData)
 						w.logState("Updated market cap data for %s: LastPrice=%s, 24h_volume=%s",
 							w.symbol, marketCapData.LastPrice, marketCapData.Volume24h)
 					}
