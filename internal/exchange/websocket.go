@@ -465,6 +465,41 @@ type OrderBookEntry struct {
 	Sum      float64 `json:"sum"`
 }
 
+// UnmarshalJSON custom unmarshaler to handle price as both string and number
+func (o *OrderBookEntry) UnmarshalJSON(data []byte) error {
+	// Create a temporary struct to unmarshal into
+	type tempOrderBookEntry struct {
+		Quantity float64     `json:"quantity"`
+		Price    interface{} `json:"price"` // Use interface{} to handle both string and number
+		Sum      float64     `json:"sum"`
+	}
+
+	var temp tempOrderBookEntry
+	if err := json.Unmarshal(data, &temp); err != nil {
+		return err
+	}
+
+	// Copy quantity and sum
+	o.Quantity = temp.Quantity
+	o.Sum = temp.Sum
+
+	// Handle price conversion
+	switch v := temp.Price.(type) {
+	case string:
+		o.Price = v
+	case float64:
+		o.Price = fmt.Sprintf("%.8f", v) // Convert to string with precision
+	case int:
+		o.Price = fmt.Sprintf("%d", v)
+	case int64:
+		o.Price = fmt.Sprintf("%d", v)
+	default:
+		o.Price = fmt.Sprintf("%v", v) // Fallback for any other type
+	}
+
+	return nil
+}
+
 // OrderBook represents the complete order book (buy or sell depth)
 type OrderBook map[string]OrderBookEntry
 
@@ -760,6 +795,85 @@ type MarketCapData struct {
 		BUY  int `json:"BUY"`
 	} `json:"direction"`
 	CreatedAt string `json:"createdAt"`
+}
+
+// UnmarshalJSON custom unmarshaler to handle string fields that might come as numbers
+func (m *MarketCapData) UnmarshalJSON(data []byte) error {
+	// Create a temporary struct to unmarshal into
+	type tempMarketCapData struct {
+		Symbol         string      `json:"symbol"`
+		Ch24h          float64     `json:"24h_ch"`
+		Ch7d           float64     `json:"7d_ch"`
+		Volume24h      interface{} `json:"24h_volume"`
+		Volume7d       interface{} `json:"7d_volume"`
+		QuoteVolume24h interface{} `json:"24h_quoteVolume"`
+		HighPrice24h   interface{} `json:"24h_highPrice"`
+		LowPrice24h    interface{} `json:"24h_lowPrice"`
+		LastPrice      interface{} `json:"lastPrice"`
+		LastQty        interface{} `json:"lastQty"`
+		BidPrice       interface{} `json:"bidPrice"`
+		AskPrice       interface{} `json:"askPrice"`
+		LastTradeSide  string      `json:"lastTradeSide"`
+		BidVolume      interface{} `json:"bidVolume"`
+		AskVolume      interface{} `json:"askVolume"`
+		BidCount       int         `json:"bidCount"`
+		AskCount       int         `json:"askCount"`
+		Direction      struct {
+			SELL int `json:"SELL"`
+			BUY  int `json:"BUY"`
+		} `json:"direction"`
+		CreatedAt string `json:"createdAt"`
+	}
+
+	var temp tempMarketCapData
+	if err := json.Unmarshal(data, &temp); err != nil {
+		return err
+	}
+
+	// Copy non-string fields
+	m.Symbol = temp.Symbol
+	m.Ch24h = temp.Ch24h
+	m.Ch7d = temp.Ch7d
+	m.LastTradeSide = temp.LastTradeSide
+	m.BidCount = temp.BidCount
+	m.AskCount = temp.AskCount
+	m.Direction = temp.Direction
+	m.CreatedAt = temp.CreatedAt
+
+	// Convert interface{} fields to string
+	m.Volume24h = convertToString(temp.Volume24h)
+	m.Volume7d = convertToString(temp.Volume7d)
+	m.QuoteVolume24h = convertToString(temp.QuoteVolume24h)
+	m.HighPrice24h = convertToString(temp.HighPrice24h)
+	m.LowPrice24h = convertToString(temp.LowPrice24h)
+	m.LastPrice = convertToString(temp.LastPrice)
+	m.LastQty = convertToString(temp.LastQty)
+	m.BidPrice = convertToString(temp.BidPrice)
+	m.AskPrice = convertToString(temp.AskPrice)
+	m.BidVolume = convertToString(temp.BidVolume)
+	m.AskVolume = convertToString(temp.AskVolume)
+
+	return nil
+}
+
+// convertToString converts various types to string
+func convertToString(v interface{}) string {
+	if v == nil {
+		return ""
+	}
+
+	switch val := v.(type) {
+	case string:
+		return val
+	case float64:
+		return fmt.Sprintf("%.8f", val)
+	case int:
+		return fmt.Sprintf("%d", val)
+	case int64:
+		return fmt.Sprintf("%d", val)
+	default:
+		return fmt.Sprintf("%v", val)
+	}
 }
 
 // MarketCapState holds the latest market cap data for a symbol
