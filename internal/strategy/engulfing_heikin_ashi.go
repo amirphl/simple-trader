@@ -46,13 +46,10 @@ func (s *EngulfingHeikinAshi) Timeframe() string { return "1h" }
 
 // OnCandles processes new candles and generates trading signals
 func (s *EngulfingHeikinAshi) OnCandles(ctx context.Context, oneHourCandles []candle.Candle) (Signal, error) {
-	log.Printf("Strategy | [%s Engulfing Heikin Ashi] Received %d 1h candles", s.symbol, len(oneHourCandles))
-
 	// TODO: Handle duplicate candles
 	// TODO: Handle missing candles from last candle in db to first received candle (somewhat possible because of UTC)
 	// TODO: Handle missing candles inside oneHourCandles, validate, sort, truncate (impossible)
 	if len(oneHourCandles) == 0 {
-		log.Printf("Strategy | [%s Engulfing Heikin Ashi] No candles received", s.symbol)
 		return Signal{
 			Time:         time.Now().UTC(),
 			Action:       "hold",
@@ -76,7 +73,6 @@ func (s *EngulfingHeikinAshi) OnCandles(ctx context.Context, oneHourCandles []ca
 	}
 
 	if len(filteredCandles) == 0 {
-		log.Printf("Strategy | [%s Engulfing Heikin Ashi] No matching candles", s.symbol)
 		return Signal{
 			Time:         time.Now().UTC(),
 			Action:       "hold",
@@ -136,7 +132,6 @@ func (s *EngulfingHeikinAshi) OnCandles(ctx context.Context, oneHourCandles []ca
 	lastCandle = &s.candles[len(s.candles)-1]
 	// Check if we have enough data for Engulfing Heikin Ashi calculation
 	if len(s.heikenAshiCandles) < 2 {
-		log.Printf("Strategy | [%s Engulfing Heikin Ashi] Not enough Heiken Ashi candles for pattern detection", s.symbol)
 		return Signal{
 			Time:         lastCandle.Timestamp,
 			Action:       "hold",
@@ -167,7 +162,6 @@ func (s *EngulfingHeikinAshi) OnCandles(ctx context.Context, oneHourCandles []ca
 	}
 
 	if openBelowPrevClose && closeAbovePrevOpen && bodyRatio >= 1.8 {
-		log.Printf("Strategy | [%s Engulfing Heikin Ashi] BUY signal: bullish engulfing detected", s.symbol)
 		return Signal{
 			Time:         currHA.Timestamp,
 			Action:       "buy",
@@ -180,7 +174,6 @@ func (s *EngulfingHeikinAshi) OnCandles(ctx context.Context, oneHourCandles []ca
 
 	// Sell signal: if current Heiken Ashi candle is bearish
 	if currHA.Close < currHA.Open {
-		log.Printf("Strategy | [%s Engulfing Heikin Ashi] SELL signal: bearish heiken ashi candle", s.symbol)
 		return Signal{
 			Time:         currHA.Timestamp,
 			Action:       "sell",
@@ -191,7 +184,6 @@ func (s *EngulfingHeikinAshi) OnCandles(ctx context.Context, oneHourCandles []ca
 		}, nil
 	}
 
-	log.Printf("Strategy | [%s Engulfing Heikin Ashi] Holding", s.symbol)
 	return Signal{
 		Time:         lastCandle.Timestamp,
 		Action:       "hold",

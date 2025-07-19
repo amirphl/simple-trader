@@ -54,7 +54,7 @@ func New(cfg config.Config, storage Storage) []Strategy {
 			// )
 		case "rsi-obos":
 			// strat = strategy.NewRSIObOsStrategy(14, 70, 30)
-		case "engulfing-heikin-ashi":
+		case "Engulfing Heikin Ashi":
 			strat = NewEngulfingHeikinAshi("BTC-USDT", storage)
 		default:
 			// strat = strategy.NewSMACrossoverStrategy(10, 30)
