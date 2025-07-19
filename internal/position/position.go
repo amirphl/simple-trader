@@ -8,6 +8,7 @@ import (
 	"log"
 	"math"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -26,9 +27,12 @@ type Storage interface {
 
 type Position interface {
 	OnSignal(ctx context.Context, signal strategy.Signal)
+	OnSignalV2(ctx context.Context, signal strategy.Signal)
+	OnTick(ctx context.Context, tick Tick, depthState map[string]exchange.OrderBook, marketCapState *exchange.MarketCapData)
 	Stats() (wins, losses, trades int64, winRate, pnl, maxDD float64)
 	StatsV2() (map[string]interface{}, error)
 	DailyPnL() (float64, error)
+	IsActive() bool
 }
 
 // TODO: Transactional updates, atomicity, order status check, commission, slippage, exchange ctx, etc.
@@ -211,7 +215,6 @@ func (p *position) OnSignal(ctx context.Context, signal strategy.Signal) {
 	defer p.mu.Unlock()
 
 	defer func() {
-		// Flush logs and data to persistent storage
 		if err := p.flush(); err != nil {
 			log.Printf("Position | [%s %s] Failed to flush data to storage: %v", p.Symbol, p.StrategyName, err)
 		}
@@ -220,7 +223,7 @@ func (p *position) OnSignal(ctx context.Context, signal strategy.Signal) {
 	// If its new trading day, reset daily stats
 	if time.Now().Day() != p.Time.Day() {
 		p.ResetDailyStats()
-	}
+	} // Flush logs and data to persistent storage
 
 	// Check if trading is disabled
 	if p.TradingDisabled {
@@ -241,23 +244,23 @@ func (p *position) OnSignal(ctx context.Context, signal strategy.Signal) {
 // handleActivePosition manages active positions
 func (p *position) handleActivePosition(ctx context.Context, signal strategy.Signal) {
 	// Check stop loss
-	if p.shouldTriggerStopLoss(signal) {
-		p.executeStopLoss(ctx, signal)
+	if p.shouldTriggerStopLoss(signal.TriggerPrice) {
+		p.executeStopLossTick(ctx, signal.TriggerPrice)
 		return
 	}
 
 	// Handle trailing stop
 	if p.RiskParams.TrailingStopPercent > 0 {
-		p.updateTrailingStop(signal)
-		if p.shouldTriggerTrailingStop(signal) {
-			p.executeTrailingStop(ctx, signal)
+		p.updateTrailingStop(signal.TriggerPrice)
+		if p.shouldTriggerTrailingStop(signal.TriggerPrice) {
+			p.executeTrailingStopTick(ctx, signal.TriggerPrice)
 			return
 		}
 	}
 
 	// Handle take profit
-	if p.shouldTriggerTakeProfit(signal) {
-		p.executeTakeProfit(ctx, signal)
+	if p.shouldTriggerTakeProfit(signal.TriggerPrice) {
+		p.executeTakeProfitTick(ctx, signal.TriggerPrice)
 		return
 	}
 
@@ -273,58 +276,6 @@ func (p *position) handleInactivePosition(ctx context.Context, signal strategy.S
 	if signal.Action == "buy" || signal.Action == "sell" {
 		p.executeEntry(ctx, signal)
 	}
-}
-
-// shouldTriggerStopLoss checks if stop loss should be triggered
-func (p *position) shouldTriggerStopLoss(signal strategy.Signal) bool {
-	if p.RiskParams.StopLossPercent <= 0 {
-		return false
-	}
-
-	if p.Side == "buy" {
-		return signal.TriggerPrice <= p.Entry*(1-p.RiskParams.StopLossPercent/100)
-	}
-	// For sell positions (short)
-	return signal.TriggerPrice >= p.Entry*(1+p.RiskParams.StopLossPercent/100)
-}
-
-// shouldTriggerTakeProfit checks if take profit should be triggered
-func (p *position) shouldTriggerTakeProfit(signal strategy.Signal) bool {
-	if p.RiskParams.TakeProfitPercent <= 0 {
-		return false
-	}
-
-	if p.Side == "buy" {
-		return signal.TriggerPrice >= p.Entry*(1+p.RiskParams.TakeProfitPercent/100)
-	}
-	// For sell positions (short)
-	return signal.TriggerPrice <= p.Entry*(1-p.RiskParams.TakeProfitPercent/100)
-}
-
-// updateTrailingStop updates the trailing stop level
-func (p *position) updateTrailingStop(signal strategy.Signal) {
-	if p.Side == "buy" {
-		profit := signal.TriggerPrice - p.Entry
-		if profit > p.TrailingStop {
-			p.TrailingStop = profit
-		}
-	} else {
-		// For short positions
-		profit := p.Entry - signal.TriggerPrice
-		if profit > p.TrailingStop {
-			p.TrailingStop = profit
-		}
-	}
-}
-
-// shouldTriggerTrailingStop checks if trailing stop should be triggered
-func (p *position) shouldTriggerTrailingStop(signal strategy.Signal) bool {
-	// TODO: Logic
-	if p.Side == "buy" {
-		return signal.TriggerPrice <= p.Entry+p.TrailingStop-(p.Entry*p.RiskParams.TrailingStopPercent/100)
-	}
-	// For short positions
-	return signal.TriggerPrice >= p.Entry-p.TrailingStop+(p.Entry*p.RiskParams.TrailingStopPercent/100)
 }
 
 // executeStopLoss executes a stop loss order
@@ -451,6 +402,7 @@ func (p *position) createEntryOrder(signal strategy.Signal, side string) order.O
 	// }
 	orderSize := p.RiskParams.Balance * p.RiskParams.RiskPercent / 100
 
+	// TODO : Decide using market cap and orderbook
 	var orderReq order.OrderRequest
 
 	switch p.OrderSpec.Type {
@@ -866,4 +818,213 @@ func (p *position) StatsV2() (map[string]interface{}, error) {
 	}
 
 	return stats, nil
+}
+
+// Tick represents a market tick (price update)
+type Tick interface {
+	Price() float64
+	Timestamp() time.Time
+}
+
+// OnTick processes a new tick with optional market depth and market cap information
+func (p *position) OnTick(ctx context.Context, tick Tick, depthState map[string]exchange.OrderBook, marketCapState *exchange.MarketCapData) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if !p.Active || p.TradingDisabled {
+		return
+	}
+
+	// Store market depth for later use if provided
+	if depthState != nil {
+		// Process market depth data
+
+		buyBook, ok := depthState[fmt.Sprintf("%s@buyDepth", exchange.NormalizeSymbol(p.Symbol))]
+		if ok {
+			log.Printf("Position | [%s %s] Received buy depth with %d entries", p.Symbol, p.StrategyName, len(buyBook))
+
+			// Example: Get best buy price (highest price in buy book)
+			var bestBuyPrice float64
+			for _, entry := range buyBook {
+				if price, err := strconv.ParseFloat(entry.Price, 64); err == nil {
+					if price > bestBuyPrice {
+						bestBuyPrice = price
+					}
+				}
+			}
+			log.Printf("Position | [%s %s] Best buy price: %.8f", p.Symbol, p.StrategyName, bestBuyPrice)
+		} else {
+			log.Printf("Position | [%s %s] No buy depth found", p.Symbol, p.StrategyName)
+		}
+
+		sellBook, ok := depthState[fmt.Sprintf("%s@sellDepth", exchange.NormalizeSymbol(p.Symbol))]
+		if ok {
+			log.Printf("Position | [%s %s] Received sell depth with %d entries", p.Symbol, p.StrategyName, len(sellBook))
+
+			// Example: Get best sell price (lowest price in sell book)
+			var bestSellPrice float64
+			first := true
+			for _, entry := range sellBook {
+				if price, err := strconv.ParseFloat(entry.Price, 64); err == nil {
+					if first || price < bestSellPrice {
+						bestSellPrice = price
+						first = false
+					}
+				}
+			}
+			log.Printf("Position | [%s %s] Best sell price: %.8f", p.Symbol, p.StrategyName, bestSellPrice)
+		} else {
+			log.Printf("Position | [%s %s] No sell depth found", p.Symbol, p.StrategyName)
+		}
+	}
+
+	// Process market cap data if provided
+	if marketCapState != nil {
+		log.Printf("Position | [%s %s] Received market cap data: LastPrice=%s, 24h_volume=%s, BidPrice=%s, AskPrice=%s",
+			p.Symbol, p.StrategyName,
+			marketCapState.LastPrice,
+			marketCapState.Volume24h,
+			marketCapState.BidPrice,
+			marketCapState.AskPrice)
+
+		// Additional market cap data processing can be done here
+	}
+
+	flush := false
+
+	// Use tick.Price for all stop/take/trailing logic
+	if p.shouldTriggerStopLoss(tick.Price()) {
+		p.executeStopLossTick(ctx, tick.Price())
+		flush = true
+		return
+	}
+	if p.shouldTriggerTakeProfit(tick.Price()) {
+		p.executeTakeProfitTick(ctx, tick.Price())
+		flush = true
+		return
+	}
+	if p.RiskParams.TrailingStopPercent > 0 {
+		p.updateTrailingStop(tick.Price())
+		if p.shouldTriggerTrailingStop(tick.Price()) {
+			p.executeTrailingStopTick(ctx, tick.Price())
+			return
+		}
+		flush = true
+	}
+
+	if flush {
+		if err := p.flush(); err != nil {
+			log.Printf("Position | [%s %s] Failed to flush data to storage: %v", p.Symbol, p.StrategyName, err)
+		}
+	}
+}
+
+// OnSignalV2 processes a new signal for open/close logic (lower frequency)
+func (p *position) OnSignalV2(ctx context.Context, signal strategy.Signal) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	defer func() {
+		if err := p.flush(); err != nil {
+			log.Printf("Position | [%s %s] Failed to flush data to storage: %v", p.Symbol, p.StrategyName, err)
+		}
+	}()
+
+	// If its new trading day, reset daily stats
+	if time.Now().Day() != p.Time.Day() {
+		p.ResetDailyStats()
+	} // Flush logs and data to persistent storage
+
+	if p.TradingDisabled {
+		log.Printf("Position | [%s %s] Trading disabled, ignoring signal", p.Symbol, signal.StrategyName)
+		return
+	}
+
+	if p.Active {
+		// Manual close (sell signal)
+		if (signal.Action == "sell" && p.Side == "buy") || (signal.Action == "buy" && p.Side == "sell") {
+			p.executeManualExit(ctx, signal)
+		}
+	} else {
+		// Open position (buy signal)
+		if signal.Action == "buy" || signal.Action == "sell" {
+			p.executeEntry(ctx, signal)
+		}
+	}
+}
+
+// --- Tick-based stop/take/trailing logic ---
+func (p *position) shouldTriggerStopLoss(price float64) bool {
+	if p.RiskParams.StopLossPercent <= 0 {
+		return false
+	}
+	if p.Side == "buy" {
+		return price <= p.Entry*(1-p.RiskParams.StopLossPercent/100)
+	}
+	return price >= p.Entry*(1+p.RiskParams.StopLossPercent/100)
+}
+
+func (p *position) shouldTriggerTakeProfit(price float64) bool {
+	if p.RiskParams.TakeProfitPercent <= 0 {
+		return false
+	}
+	if p.Side == "buy" {
+		return price >= p.Entry*(1+p.RiskParams.TakeProfitPercent/100)
+	}
+	return price <= p.Entry*(1-p.RiskParams.TakeProfitPercent/100)
+}
+
+func (p *position) updateTrailingStop(price float64) {
+	if p.Side == "buy" {
+		profit := price - p.Entry
+		if profit > p.TrailingStop {
+			p.TrailingStop = profit
+		}
+	} else {
+		profit := p.Entry - price
+		if profit > p.TrailingStop {
+			p.TrailingStop = profit
+		}
+	}
+}
+
+func (p *position) shouldTriggerTrailingStop(price float64) bool {
+	if p.Side == "buy" {
+		return price <= p.Entry+p.TrailingStop-(p.Entry*p.RiskParams.TrailingStopPercent/100)
+	}
+	return price >= p.Entry-p.TrailingStop+(p.Entry*p.RiskParams.TrailingStopPercent/100)
+}
+
+func (p *position) executeStopLossTick(ctx context.Context, price float64) {
+	// Create a dummy signal for exit
+	signal := strategy.Signal{
+		Time:         time.Now(),
+		Action:       "sell",
+		Reason:       "stop_loss_tick",
+		StrategyName: p.StrategyName,
+		TriggerPrice: price,
+	}
+	p.executeStopLoss(ctx, signal)
+}
+
+func (p *position) executeTakeProfitTick(ctx context.Context, price float64) {
+	signal := strategy.Signal{
+		Time:         time.Now(),
+		Action:       "sell",
+		Reason:       "take_profit_tick",
+		StrategyName: p.StrategyName,
+		TriggerPrice: price,
+	}
+	p.executeTakeProfit(ctx, signal)
+}
+
+func (p *position) executeTrailingStopTick(ctx context.Context, price float64) {
+	signal := strategy.Signal{
+		Time:         time.Now(),
+		Action:       "sell",
+		Reason:       "trailing_stop_tick",
+		StrategyName: p.StrategyName,
+		TriggerPrice: price,
+	}
+	p.executeTrailingStop(ctx, signal)
 }
