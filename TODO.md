@@ -90,3 +90,29 @@ Position sizing based on account balance/risk:
 Currently, order size is fixed.
 Further refinements (e.g., dynamic warm-up based on strategy parameters), or want this in all live trading variants (with ingestion, etc.)
 
+
+Write tests for other models in postgres.go
+Write tests for remaining functions of candle/
+
+
+
+proper save state -> shutdown -> restart -> restore last state -> warmup (get new state) -> run -><- change state
+phase 1: load everything or load old (ok), start (ingest single or batch, transactional) -> ok, finish or crash utc or local time for wallex
+generate readme
+channel unsubscribe
+// UTC *********
+// TX on CTX
+// rerun tests specially for strategy rsi
+// It is not guaranteed that order fills
+// location of subscription
+// position must decide on ticks too not only candles
+// front
+// opened positions, unfilled positions, failing orders, tick data using websocket, multitimeframe channel
+// test position with real money
+// stop loss or take profit on tick, signal on candle
+// read candles from db instead of channel.
+// Dont store ticks in db, store in cache, CSP for last tick
+
+bitcoin price correlation on doge coin
+
+read websocket.go logic
