@@ -76,10 +76,11 @@ func (s *RSIStrategy) OnCandles(ctx context.Context, oneMinCandles []candle.Cand
 		log.Printf("Strategy | [%s RSI] No candles received", s.symbol)
 		return Signal{
 			Time:         time.Now().UTC(),
-			Action:       "hold",
+			Position:     Hold,
 			Reason:       "no candles",
 			StrategyName: s.Name(),
 			TriggerPrice: 0,
+			Candle:       nil,
 		}, nil
 	}
 
@@ -95,10 +96,11 @@ func (s *RSIStrategy) OnCandles(ctx context.Context, oneMinCandles []candle.Cand
 		log.Printf("Strategy | [%s RSI] No matching candles", s.symbol)
 		return Signal{
 			Time:         time.Now().UTC(),
-			Action:       "hold",
+			Position:     Hold,
 			Reason:       "no matching candles",
 			StrategyName: s.Name(),
 			TriggerPrice: 0,
+			Candle:       nil,
 		}, nil
 	}
 
@@ -156,11 +158,11 @@ func (s *RSIStrategy) OnCandles(ctx context.Context, oneMinCandles []candle.Cand
 		log.Printf("Strategy | [%s RSI] Not enough data for RSI calculation", s.symbol)
 		return Signal{
 			Time:         s.lastCandle.Timestamp,
-			Action:       "hold",
+			Position:     Hold,
 			Reason:       "warming up",
 			StrategyName: s.Name(),
 			TriggerPrice: s.lastCandle.Close,
-			Candle:       *s.lastCandle,
+			Candle:       s.lastCandle,
 		}, nil
 	}
 
@@ -170,11 +172,11 @@ func (s *RSIStrategy) OnCandles(ctx context.Context, oneMinCandles []candle.Cand
 		log.Printf("Strategy | [%s RSI] Error calculating RSI: %v\n", s.symbol, err)
 		return Signal{
 			Time:         s.lastCandle.Timestamp,
-			Action:       "hold",
+			Position:     Hold,
 			Reason:       "RSI calculation error",
 			StrategyName: s.Name(),
 			TriggerPrice: s.lastCandle.Close,
-			Candle:       *s.lastCandle,
+			Candle:       s.lastCandle,
 		}, nil
 	}
 
@@ -184,11 +186,11 @@ func (s *RSIStrategy) OnCandles(ctx context.Context, oneMinCandles []candle.Cand
 			s.symbol, rsi, s.Oversold, s.lastCandle.Close)
 		return Signal{
 			Time:         s.lastCandle.Timestamp,
-			Action:       "buy",
+			Position:     LongBullish,
 			Reason:       "RSI oversold",
 			StrategyName: s.Name(),
 			TriggerPrice: s.lastCandle.Close,
-			Candle:       *s.lastCandle,
+			Candle:       s.lastCandle,
 		}, nil
 	}
 
@@ -198,11 +200,11 @@ func (s *RSIStrategy) OnCandles(ctx context.Context, oneMinCandles []candle.Cand
 			s.symbol, rsi, s.Overbought, s.lastCandle.Close)
 		return Signal{
 			Time:         s.lastCandle.Timestamp,
-			Action:       "sell",
+			Position:     LongBearish,
 			Reason:       "RSI overbought",
 			StrategyName: s.Name(),
 			TriggerPrice: s.lastCandle.Close,
-			Candle:       *s.lastCandle,
+			Candle:       s.lastCandle,
 		}, nil
 	}
 
@@ -239,11 +241,11 @@ func (s *RSIStrategy) OnCandles(ctx context.Context, oneMinCandles []candle.Cand
 
 	return Signal{
 		Time:         s.lastCandle.Timestamp,
-		Action:       "hold",
+		Position:     Hold,
 		Reason:       "RSI neutral",
 		StrategyName: s.Name(),
 		TriggerPrice: s.lastCandle.Close,
-		Candle:       *s.lastCandle,
+		Candle:       s.lastCandle,
 	}, nil
 }
 

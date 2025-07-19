@@ -73,7 +73,7 @@ func TestRSIStrategy_OnCandles(t *testing.T) {
 		overbought     float64
 		oversold       float64
 		candles        []candle.Candle
-		expectedSignal []string // "buy", "sell", "hold"
+		expectedSignal []Position // "long", "short", "hold"
 		expectedReason []string
 	}{
 		{
@@ -95,9 +95,9 @@ func TestRSIStrategy_OnCandles(t *testing.T) {
 				createCandle(12, "2023-01-01T10:00:00Z"), // RSI = 72.15 (overbought)
 				createCandle(13, "2023-01-01T11:00:00Z"), // RSI = 77.72 (overbought)
 			},
-			expectedSignal: []string{
-				"hold", "hold", "hold", "hold", "hold",
-				"hold", "hold", "hold", "hold", "hold", "sell", "sell",
+			expectedSignal: []Position{
+				Hold, Hold, Hold, Hold, Hold,
+				Hold, Hold, Hold, Hold, Hold, ShortBearish, ShortBearish,
 			},
 			expectedReason: []string{
 				"warming up", "warming up", "warming up", "warming up", "warming up",
@@ -116,8 +116,8 @@ func TestRSIStrategy_OnCandles(t *testing.T) {
 				createCandle(13, "2023-01-01T03:00:00Z"), // RSI = 100 (overbought)
 				createCandle(14, "2023-01-01T04:00:00Z"), // RSI = 100 (overbought)
 			},
-			expectedSignal: []string{
-				"hold", "hold", "hold", "sell", "sell",
+			expectedSignal: []Position{
+				Hold, Hold, Hold, ShortBearish, ShortBearish,
 			},
 			expectedReason: []string{
 				"warming up", "warming up", "warming up", "RSI overbought", "RSI overbought",
@@ -135,8 +135,8 @@ func TestRSIStrategy_OnCandles(t *testing.T) {
 				createCandle(17, "2023-01-01T03:00:00Z"), // RSI = 0 (oversold)
 				createCandle(16, "2023-01-01T04:00:00Z"), // RSI = 0 (oversold)
 			},
-			expectedSignal: []string{
-				"hold", "hold", "hold", "buy", "buy",
+			expectedSignal: []Position{
+				Hold, Hold, Hold, LongBullish, LongBullish,
 			},
 			expectedReason: []string{
 				"warming up", "warming up", "warming up", "RSI oversold", "RSI oversold",
@@ -154,8 +154,8 @@ func TestRSIStrategy_OnCandles(t *testing.T) {
 				createCandle(10, "2023-01-01T03:00:00Z"), // RSI = 100 (overbought) - flat prices have RSI=100
 				createCandle(10, "2023-01-01T04:00:00Z"), // RSI = 100 (overbought)
 			},
-			expectedSignal: []string{
-				"hold", "hold", "hold", "sell", "sell",
+			expectedSignal: []Position{
+				Hold, Hold, Hold, ShortBearish, ShortBearish,
 			},
 			expectedReason: []string{
 				"warming up", "warming up", "warming up", "RSI overbought", "RSI overbought",
@@ -173,8 +173,8 @@ func TestRSIStrategy_OnCandles(t *testing.T) {
 				createCandle(11, "2023-01-01T03:00:00Z"), // RSI = 75 (neutral)
 				createCandle(10, "2023-01-01T04:00:00Z"), // RSI = 37.5 (neutral)
 			},
-			expectedSignal: []string{
-				"hold", "hold", "hold", "hold", "hold",
+			expectedSignal: []Position{
+				Hold, Hold, Hold, Hold, Hold,
 			},
 			expectedReason: []string{
 				"warming up", "warming up", "RSI neutral", "RSI neutral", "RSI neutral",
@@ -192,8 +192,8 @@ func TestRSIStrategy_OnCandles(t *testing.T) {
 				createCandle(200, "2023-01-01T03:00:00Z"), // RSI = 75 (overbought)
 				createCandle(1, "2023-01-01T04:00:00Z"),   // RSI = 42 (neutral)
 			},
-			expectedSignal: []string{
-				"hold", "hold", "hold", "sell", "hold",
+			expectedSignal: []Position{
+				Hold, Hold, Hold, ShortBearish, Hold,
 			},
 			expectedReason: []string{
 				"warming up", "warming up", "warming up", "RSI overbought", "RSI neutral",
@@ -214,9 +214,9 @@ func TestRSIStrategy_OnCandles(t *testing.T) {
 				createCandle(10, "2023-01-01T06:00:00Z"), // RSI = 52.00 (neutral)
 				createCandle(11, "2023-01-01T07:00:00Z"), // RSI = 61.60 (overbought)
 			},
-			expectedSignal: []string{
-				"hold", "hold", "hold", "hold", "hold",
-				"hold", "hold", "sell",
+			expectedSignal: []Position{
+				Hold, Hold, Hold, Hold, Hold,
+				Hold, Hold, ShortBearish,
 			},
 			expectedReason: []string{
 				"warming up", "warming up", "warming up", "warming up", "warming up",
@@ -229,8 +229,8 @@ func TestRSIStrategy_OnCandles(t *testing.T) {
 			overbought: 70,
 			oversold:   30,
 			candles:    []candle.Candle{},
-			expectedSignal: []string{
-				"hold",
+			expectedSignal: []Position{
+				Hold,
 			},
 			expectedReason: []string{
 				"no candles",
@@ -244,8 +244,8 @@ func TestRSIStrategy_OnCandles(t *testing.T) {
 			candles: []candle.Candle{
 				{Symbol: "OTHER", Close: 10},
 			},
-			expectedSignal: []string{
-				"hold",
+			expectedSignal: []Position{
+				Hold,
 			},
 			expectedReason: []string{
 				"no matching candles",
@@ -275,7 +275,7 @@ func TestRSIStrategy_OnCandles(t *testing.T) {
 
 				signal, err := strategy.OnCandles(context.Background(), []candle.Candle{c})
 				require.NoError(t, err)
-				assert.Equal(t, tt.expectedSignal[i], signal.Action, "signal mismatch at index %d", i)
+				assert.Equal(t, tt.expectedSignal[i], signal.Position, "signal mismatch at index %d", i)
 				assert.Equal(t, tt.expectedReason[i], signal.Reason, "reason mismatch at index %d", i)
 				if c.Symbol == symbol {
 					assert.Equal(t, c.Timestamp, signal.Time, "timestamp mismatch at index %d", i)
@@ -314,7 +314,7 @@ func TestRSIStrategy_HistoricalDataHandling(t *testing.T) {
 	require.NoError(t, err)
 
 	// Should immediately have a valid signal because of historical data
-	assert.Equal(t, "sell", signal.Action)
+	assert.Equal(t, ShortBearish, signal.Position)
 	assert.Equal(t, "RSI overbought", signal.Reason)
 
 	// Verify the mock was called
@@ -402,16 +402,16 @@ func TestRSIStrategy_SignalFlipping(t *testing.T) {
 	// Create a sequence that will generate buy and sell signals
 	testCases := []struct {
 		price          float64
-		expectedSignal string
+		expectedSignal Position
 	}{
-		{5.0, "buy"},   // Oversold
-		{6.0, "hold"},  // Neutral
-		{10.0, "hold"}, // Neutral
-		{15.0, "sell"}, // overbought
-		{20.0, "sell"}, // Overbought
-		{25.0, "sell"}, // Still overbought
-		{15.0, "hold"}, // Back to neutral
-		{5.0, "buy"},   // Oversold again
+		{5.0, LongBullish},   // Oversold
+		{6.0, Hold},          // Neutral
+		{10.0, Hold},         // Neutral
+		{15.0, ShortBearish}, // overbought
+		{20.0, ShortBearish}, // Overbought
+		{25.0, ShortBearish}, // Still overbought
+		{15.0, Hold},         // Back to neutral
+		{5.0, LongBullish},   // Oversold again
 	}
 
 	for i, tc := range testCases {
@@ -420,7 +420,7 @@ func TestRSIStrategy_SignalFlipping(t *testing.T) {
 
 		signal, err := strategy.OnCandles(context.Background(), []candle.Candle{c})
 		require.NoError(t, err)
-		assert.Equal(t, tc.expectedSignal, signal.Action, "signal mismatch at index %d", i)
+		assert.Equal(t, tc.expectedSignal, signal.Position, "signal mismatch at index %d", i)
 	}
 }
 

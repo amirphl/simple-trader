@@ -23,13 +23,23 @@ type Strategy interface {
 	WarmupPeriod() int                                                            // Returns the number of candles needed for warm-up
 }
 
+type Position int8
+
+const (
+	LongBullish  Position = 1
+	LongBearish  Position = 2
+	ShortBullish Position = -2
+	ShortBearish Position = -1
+	Hold         Position = 0
+)
+
 type Signal struct {
-	Time         time.Time
-	Action       string        // "buy", "sell", "hold"
-	Reason       string        // indicator/pattern/price action
-	StrategyName string        // TODO: FILL
-	TriggerPrice float64       // TODO: FILL
-	Candle       candle.Candle // TODO: FILL
+	Time         time.Time      `json:"time"`
+	Position     Position       `json:"position"`
+	Reason       string         `json:"reason"`        // indicator/pattern/price action
+	StrategyName string         `json:"strategy_name"` // TODO: FILL
+	TriggerPrice float64        `json:"trigger_price"` // TODO: FILL
+	Candle       *candle.Candle `json:"candle"`        // TODO: FILL
 }
 
 // TODO:
@@ -43,7 +53,7 @@ func New(cfg config.Config, storage Storage) []Strategy {
 		case "ema":
 			// strat = strategy.NewEMACrossoverStrategy(10, 30)
 		case "rsi":
-			strat = NewRSIStrategy("BTC-USDT", 14, 70, 30, storage) // TODO: Make it configutable.
+			strat = NewRSIStrategy("ADA-USDT", 14, 70, 30, storage) // TODO: Make it configutable.
 		case "macd":
 			// strat = strategy.NewMACDStrategy(12, 26, 9)
 		case "composite":
@@ -55,7 +65,7 @@ func New(cfg config.Config, storage Storage) []Strategy {
 		case "rsi-obos":
 			// strat = strategy.NewRSIObOsStrategy(14, 70, 30)
 		case "Engulfing Heikin Ashi":
-			strat = NewEngulfingHeikinAshi("BTC-USDT", storage)
+			strat = NewEngulfingHeikinAshi("DOGE-USDT", storage)
 		default:
 			// strat = strategy.NewSMACrossoverStrategy(10, 30)
 		}
