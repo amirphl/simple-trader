@@ -4,21 +4,27 @@ import (
 	"context"
 	"database/sql"
 	"encoding/csv"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"math"
+	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 
+	"strconv"
+
 	"github.com/amirphl/simple-trader/internal/candle"
 	"github.com/amirphl/simple-trader/internal/config"
 	"github.com/amirphl/simple-trader/internal/db"
-	"github.com/amirphl/simple-trader/internal/db/conf"
+	dbconfig "github.com/amirphl/simple-trader/internal/db/conf"
 	"github.com/amirphl/simple-trader/internal/exchange"
 	"github.com/amirphl/simple-trader/internal/journal"
 	"github.com/amirphl/simple-trader/internal/notifier"
@@ -26,71 +32,6 @@ import (
 	"github.com/amirphl/simple-trader/internal/strategy"
 	"github.com/lib/pq"
 )
-
-// orderStatusChecker periodically checks the status of open orders
-// and updates the database accordingly
-func orderStatusChecker(ctx context.Context, dbAdapter db.DB, ex exchange.Exchange, checkInterval time.Duration) {
-	ticker := time.NewTicker(checkInterval)
-	defer ticker.Stop()
-
-	log.Println("Starting order status checker")
-
-	for {
-		select {
-		case <-ctx.Done():
-			log.Println("Order status checker stopped")
-			return
-		case <-ticker.C:
-			// Get all open orders from database
-			orders, err := dbAdapter.GetOpenOrders(ctx)
-			if err != nil {
-				log.Printf("Failed to fetch open orders: %v", err)
-				continue
-			}
-
-			if len(orders) == 0 {
-				continue
-			}
-
-			log.Printf("Checking status of %d open orders", len(orders))
-
-			for _, o := range orders {
-				orderResp, err := ex.GetOrderStatus(ctx, o.OrderID)
-				if err != nil {
-					log.Printf("Error fetching order status for %s: %v", o.OrderID, err)
-					continue
-				}
-
-				switch orderResp.Status {
-				case "FILLED":
-					log.Printf("Order %s filled", o.OrderID)
-					// TODO: Tx
-					dbAdapter.LogEvent(ctx, journal.Event{
-						Time:        time.Now(),
-						Type:        "order",
-						Description: "status_check_order_filled",
-						Data:        map[string]any{"order": orderResp},
-					})
-					if err := dbAdapter.CloseOrder(ctx, o.OrderID); err != nil {
-						log.Printf("Failed to close order %s: %v", o.OrderID, err)
-					}
-				case "CANCELED", "EXPIRED", "REJECTED":
-					log.Printf("Order %s %s", o.OrderID, orderResp.Status)
-					// TODO: Tx
-					dbAdapter.LogEvent(ctx, journal.Event{
-						Time:        time.Now(),
-						Type:        "order",
-						Description: "status_check_order_canceled_or_expired",
-						Data:        map[string]any{"order": orderResp},
-					})
-					if err := dbAdapter.CloseOrder(ctx, o.OrderID); err != nil {
-						log.Printf("Failed to close order %s: %v", o.OrderID, err)
-					}
-				}
-			}
-		}
-	}
-}
 
 func main() {
 	// Load configuration
@@ -118,19 +59,16 @@ func main() {
 	}
 
 	// Initialize database connection
-	dbConfig, err := conf.NewConfig(cfg.DBConnStr, cfg.DBMaxOpen, cfg.DBMaxIdle)
+	dbCfg, err := dbconfig.NewConfig(cfg.DBConnStr, cfg.DBMaxOpen, cfg.DBMaxIdle)
 	if err != nil {
 		log.Fatalf("Failed to create DB config: %v", err)
 	}
 
-	dbadapter, err := db.New(*dbConfig)
+	storage, err := db.New(*dbCfg)
 	if err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
 	log.Println("Connected to Postgres/TimescaleDB")
-
-	// Create aggregator for candle processing
-	aggregator := candle.NewAggregator(dbadapter)
 
 	// Set up notification system
 	telegramNotifier := notifier.NewTelegramNotifier(cfg.TelegramToken, cfg.TelegramChatID, cfg.ProxyURL, cfg.NotificationRetries, cfg.NotificationDelay)
@@ -139,29 +77,25 @@ func main() {
 	ex := exchange.NewWallexExchange(cfg.WallexAPIKey, telegramNotifier)
 
 	// Create strategies
-	strats := strategy.New(cfg, dbadapter)
+	strats := strategy.New(cfg, storage)
 	if len(strats) == 0 {
 		log.Fatalf("No valid strategies configured. Check your configuration.")
 	}
 
-	// Define default timeframe
-	const defaultTimeframe = "1m"
-
 	switch cfg.Mode {
 	case "live":
-		runLiveTrading(ctx, cfg, dbadapter, aggregator, ex, strats, telegramNotifier)
+		runLiveTrading(ctx, cfg, strats, storage, ex, telegramNotifier)
 	case "backtest":
-		runBacktest(ctx, cfg, dbadapter, ex, strats, defaultTimeframe)
+		runBacktest(ctx, cfg, strats, storage)
 	default:
 		log.Fatalf("Unsupported mode: %s", cfg.Mode)
 	}
 
-	// Wait for shutdown signal
 	<-sigCh
 	log.Println("Graceful shutdown initiated...")
 
 	// Allow some time for cleanup
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
 
 	// Wait for context to be done (either timeout or cancel)
@@ -249,32 +183,66 @@ func runMigrations(ctx context.Context, connStr string) error {
 func runLiveTrading(
 	ctx context.Context,
 	cfg config.Config,
-	dbadapter db.DB,
-	aggregator candle.Aggregator,
-	ex exchange.Exchange,
 	strats []strategy.Strategy,
+	storage db.DB,
+	ex exchange.Exchange,
 	notifier notifier.Notifier,
 ) {
-	// Setup exchanges map
-	exchanges := map[string]candle.Exchange{
-		"wallex": ex,
+	// --- Wallex websocket tick streaming to positions ---
+	tickChans := make(map[string]<-chan exchange.WallexTrade)
+	websocketChannels := make(map[string]exchange.TradeChannel)
+
+	// Market depth and market cap state managers
+	depthState := exchange.NewMarketDepthState()
+	marketCapState := exchange.NewMarketCapState()
+
+	// Market depth and market cap watchers
+	depthWatchers := make(map[string]exchange.DepthWatcher)
+	marketCapWatchers := make(map[string]exchange.MarketCapWatcher)
+
+	for _, symbol := range cfg.Symbols {
+		// Trade channel
+		tradeChan := exchange.NewWallexTradeChannel()
+		tradeChan.Start(ctx, symbol)
+		websocketChannels[symbol] = tradeChan
+
+		// Subscribe to the channel for this symbol
+		ch, err := tradeChan.Subscribe(symbol, 100)
+		if err != nil {
+			log.Fatalf("Failed to subscribe to %s websocket: %v", symbol, err)
+		}
+		tickChans[symbol] = ch
+
+		// Market depth watchers (buy and sell)
+		buyDepthWatcher := exchange.NewWallexDepthWatcher(depthState, symbol, "buyDepth")
+		sellDepthWatcher := exchange.NewWallexDepthWatcher(depthState, symbol, "sellDepth")
+		buyDepthWatcher.Start(ctx)
+		sellDepthWatcher.Start(ctx)
+		depthWatchers[symbol+"_buy"] = buyDepthWatcher
+		depthWatchers[symbol+"_sell"] = sellDepthWatcher
+
+		// Market cap watcher
+		marketCapWatcher := exchange.NewWallexMarketCapWatcher(marketCapState, symbol)
+		marketCapWatcher.Start(ctx)
+		marketCapWatchers[symbol] = marketCapWatcher
 	}
+
+	// Start data logger for all symbols
+	go dataLogger(ctx, cfg.Symbols, tickChans, depthState, marketCapState)
 
 	// Create ingestion config with flexible timeframe support
-	ingestionCfg := candle.DefaultIngestionConfig()
-	ingestionCfg.Symbols = cfg.Symbols
-
-	// Create and start ingestion service
-	ingestionSvc := candle.NewIngestionService(ctx, dbadapter, aggregator, exchanges, ingestionCfg)
+	ingestionCfg := candle.DefaultIngestionConfig(cfg.Symbols, ex)
+	ingester := candle.NewCandleIngester(storage)
+	ingestionSvc := candle.NewIngestionService(ctx, ingester, ingestionCfg)
 	if err := ingestionSvc.Start(); err != nil {
-		log.Fatalf("Failed to start candle ingestion service: %v", err)
+		log.Fatalf("runLiveTrading | Failed to start candle ingestion service: %v", err)
 	}
-	log.Println("Candle ingestion service started with flexible timeframe support")
+	log.Println("runLiveTrading | Candle ingestion service started")
 
 	// Setup recovery in case of panic
 	defer func() {
 		if r := recover(); r != nil {
-			log.Printf("Recovered from panic in live trading: %v", r)
+			log.Printf("runLiveTrading | Recovered from panic in live trading: %v", r)
 			// Try to notify about the panic
 			notifier.Send(fmt.Sprintf("PANIC in trading system: %v", r))
 			if ingestionSvc != nil {
@@ -284,14 +252,11 @@ func runLiveTrading(
 	}()
 
 	// Start order status checker
-	checkInterval := time.Minute
-	go orderStatusChecker(ctx, dbadapter, ex, checkInterval)
-
-	// Print initial ingestion stats
-	printIngestionStats(ingestionSvc)
+	const checkInterval = time.Minute
+	go orderStatusChecker(ctx, storage, ex, checkInterval)
 
 	// Monitor and report stats periodically
-	statsInterval := 3 * time.Minute
+	const statsInterval = 3 * time.Minute
 	go monitorIngestionStats(ctx, ingestionSvc, statsInterval)
 
 	// Start trading for each strategy
@@ -300,12 +265,79 @@ func runLiveTrading(
 		wg.Add(1)
 		go func(s strategy.Strategy) {
 			defer wg.Done()
-			runTradingLoop(ctx, s, ingestionSvc, dbadapter, ex, notifier, cfg)
+			if err := runTradingLoop(ctx, cfg, s, storage, ex, notifier, websocketChannels, depthState, marketCapState); err != nil {
+				log.Printf("runLiveTrading | Error running trading loop for %s: %v", s.Name(), err)
+			}
 		}(strat)
 	}
 
 	// Wait for all trading loops to complete
 	wg.Wait()
+}
+
+// orderStatusChecker periodically checks the status of open orders
+// and updates the database accordingly
+func orderStatusChecker(ctx context.Context, storage db.DB, ex exchange.Exchange, checkInterval time.Duration) {
+	ticker := time.NewTicker(checkInterval)
+	defer ticker.Stop()
+
+	log.Println("orderStatusChecker |Starting order status checker")
+
+	for {
+		select {
+		case <-ctx.Done():
+			log.Println("orderStatusChecker | Order status checker stopped")
+			return
+		case <-ticker.C:
+			// Get all open orders from database
+			orders, err := storage.GetOpenOrders(ctx)
+			if err != nil {
+				log.Printf("orderStatusChecker | Failed to fetch open orders: %v", err)
+				continue
+			}
+
+			if len(orders) == 0 {
+				continue
+			}
+
+			log.Printf("orderStatusChecker | Checking status of %d open orders", len(orders))
+
+			for _, o := range orders {
+				orderResp, err := ex.GetOrderStatus(ctx, o.OrderID)
+				if err != nil {
+					log.Printf("orderStatusChecker | Error fetching order status for %s: %v", o.OrderID, err)
+					continue
+				}
+
+				switch orderResp.Status {
+				case "FILLED":
+					log.Printf("orderStatusChecker | Order %s filled", o.OrderID)
+					// TODO: Tx
+					storage.LogEvent(ctx, journal.Event{
+						Time:        time.Now(),
+						Type:        "order",
+						Description: "status_check_order_filled",
+						Data:        map[string]any{"order": orderResp},
+					})
+					if err := storage.CloseOrder(ctx, o.OrderID); err != nil {
+						log.Printf("orderStatusChecker | Failed to close order %s: %v", o.OrderID, err)
+					}
+				case "CANCELED", "EXPIRED", "REJECTED":
+					log.Printf("orderStatusChecker | Order %s %s", o.OrderID, orderResp.Status)
+					// TODO: Tx
+					storage.LogEvent(ctx, journal.Event{
+						Time:        time.Now(),
+						Type:        "order",
+						Description: "status_check_order_canceled_or_expired",
+						Data:        map[string]any{"order": orderResp},
+					})
+					if err := storage.CloseOrder(ctx, o.OrderID); err != nil {
+						log.Printf("orderStatusChecker | Failed to close order %s: %v", o.OrderID, err)
+					}
+				}
+			}
+		}
+	}
 }
 
 // monitorIngestionStats periodically prints ingestion statistics
@@ -326,7 +358,7 @@ func monitorIngestionStats(ctx context.Context, ingestionSvc candle.IngestionSer
 // printIngestionStats prints the current ingestion statistics
 func printIngestionStats(ingestionSvc candle.IngestionService) {
 	stats := ingestionSvc.GetIngestionStats()
-	log.Println("Candle Ingestion Stats:")
+	log.Println("monitorIngestionStats | Candle Ingestion Stats:")
 	for symbol, symbolStats := range stats {
 		log.Printf("  %s:", symbol)
 		for timeframe, timeframeStats := range symbolStats {
@@ -338,177 +370,221 @@ func printIngestionStats(ingestionSvc candle.IngestionService) {
 // runTradingLoop handles the trading loop for a specific strategy
 func runTradingLoop(
 	ctx context.Context,
+	cfg config.Config,
 	strat strategy.Strategy,
-	ingestionSvc candle.IngestionService,
-	dbadapter db.DB,
+	storage db.DB,
 	ex exchange.Exchange,
 	notifier notifier.Notifier,
-	cfg config.Config,
-) {
-	log.Printf("Starting trading loop with %s strategy", strat.Name())
-
-	// Subscribe to candle updates
-	candleCh := ingestionSvc.Subscribe()
-	defer ingestionSvc.UnSubscribe(candleCh)
+	websocketChannels map[string]exchange.TradeChannel,
+	depthState exchange.MarketDepthStateManager,
+	marketCapState exchange.MarketCapStateManager,
+) error {
+	log.Printf("runTradingLoop | Starting trading loop with %s strategy", strat.Name())
 
 	// Load position manager
-	pos := position.New(cfg, strat.Name(), strat.Symbol(), dbadapter, ex, notifier)
+	pos, err := position.Load(strat.Name(), strat.Symbol(), storage, ex, notifier)
+	if err != nil {
+		log.Printf("runTradingLoop | Failed to start trading loop with %s strategy: %w", strat.Name(), err)
+		return err
+	}
 
-	// Live performance tracking
-	lastDay := time.Now().Day()
-	dailyPnL := 0.0
-	tradingDisabled := false
+	if pos.IsActive() {
+		log.Printf("runTradingLoop | Position is active, stopping trading loop with %s strategy", strat.Name())
+		return fmt.Errorf("position is active, stopping trading loop with %s strategy", strat.Name())
+	}
 
-	// Warmup tracking
-	warmupPeriod := strat.WarmupPeriod()
-	candlesSeen := 0
+	symbol := strat.Symbol()
+	websocketChan, ok := websocketChannels[symbol]
+	if !ok {
+		log.Printf("runTradingLoop | No websocket channel found for symbol %s", symbol)
+		return fmt.Errorf("no websocket channel found for symbol %s", symbol)
+	}
 
-	// Status check ticker
-	statusTicker := time.NewTicker(60 * time.Second)
-	defer statusTicker.Stop()
+	// Subscribe to the websocket channel for this strategy
+	strategyID := fmt.Sprintf("%s-%s", strat.Name(), symbol)
+	tickCh, err := websocketChan.Subscribe(strategyID, 100)
+	if err != nil {
+		log.Printf("runTradingLoop | Failed to subscribe to websocket for %s: %v", strategyID, err)
+		return fmt.Errorf("failed to subscribe to websocket for %s: %w", strategyID, err)
+	}
+	defer websocketChan.Unsubscribe(strategyID)
 
-	for {
-		select {
-		case candles, ok := <-candleCh:
-			if !ok {
-				log.Printf("[%s] Candle channel closed", strat.Name())
+	var wg sync.WaitGroup
+	wg.Add(1)
+
+	// Goroutine for feeding ticks
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-ctx.Done():
 				return
+			case tick, ok := <-tickCh:
+				if !ok {
+					log.Printf("runTradingLoop | [%s] Tick channel closed", strat.Name())
+					return
+				}
+				// Create market depth state for this tick
+				posDepthState := make(map[string]exchange.OrderBook)
+
+				// Get latest market depth data if available from exchange state
+				buyDepth, buyOk := depthState.Get(symbol, "buyDepth")
+				sellDepth, sellOk := depthState.Get(symbol, "sellDepth")
+
+				if buyOk && buyDepth != nil {
+					posDepthState[fmt.Sprintf("%s@buyDepth", exchange.NormalizeSymbol(symbol))] = *buyDepth
+				}
+
+				if sellOk && sellDepth != nil {
+					posDepthState[fmt.Sprintf("%s@sellDepth", exchange.NormalizeSymbol(symbol))] = *sellDepth
+				}
+
+				// Get latest market cap data if available
+				marketCap, _ := marketCapState.Get(symbol)
+
+				pos.OnTick(ctx, wallexTradeToTick(tick), posDepthState, marketCap)
 			}
+		}
+	}()
 
-			if len(candles) == 0 {
-				continue
-			}
-
-			// Process candles with strategy
-			signal, err := strat.OnCandles(ctx, candles)
-			if err != nil {
-				log.Printf("[%s] Error processing candles: %v", strat.Name(), err)
-				continue
-			}
-
-			// Update warmup counter
-			candlesSeen += len(candles)
-
-			// Skip trading during warmup period
-			if candlesSeen < warmupPeriod {
-				continue
-			}
-
-			// Skip if trading is disabled
-			if tradingDisabled {
-				continue
-			}
-
-			// Process signal with position manager
-			if signal.Action != "hold" {
-				pos.OnSignal(ctx, signal)
-			}
-
-		case <-statusTicker.C:
-			// Reset daily loss counter on new day
-			currentDay := time.Now().Day()
-			if currentDay != lastDay {
-				tradingDisabled = false
-				dailyPnL = 0.0
-				lastDay = currentDay
-
-				// Log state change: new trading day
-				// TODO: Tx
-				dbadapter.LogEvent(ctx, journal.Event{
-					Time:        time.Now(),
-					Type:        "state",
-					Description: "new_trading_day",
-					Data: map[string]any{
-						"symbol":    strat.Symbol(),
-						"timeframe": "1m", // Default timeframe
-						"day":       lastDay,
-					},
-				})
-			}
-
-			// Check if max daily loss reached
-			if cfg.MaxDailyLoss > 0 && dailyPnL <= -cfg.MaxDailyLoss {
-				if !tradingDisabled {
-					log.Printf("[%s] Trading disabled due to max daily loss reached", strat.Name())
-					dbadapter.LogEvent(ctx, journal.Event{
+	// Goroutine for feeding signals (candle/strategy)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		// Existing signal/candle logic (statusTicker, candle fetching, etc.)
+		lastDay := time.Now().Day()
+		dailyPnL := 0.0
+		tradingDisabled := false
+		dur := candle.GetTimeframeDuration(strat.Timeframe())
+		statusTicker := time.NewTicker(30 * time.Second)
+		defer statusTicker.Stop()
+		var lastProcessed time.Time
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-statusTicker.C:
+				currentDay := time.Now().Day()
+				if currentDay != lastDay {
+					tradingDisabled = false
+					dailyPnL = 0.0
+					lastDay = currentDay
+					storage.LogEvent(ctx, journal.Event{
 						Time:        time.Now(),
 						Type:        "state",
-						Description: "trading_disabled_max_daily_loss",
-						Data:        map[string]any{"strategy_name": strat.Name()},
+						Description: "new_trading_day",
+						Data: map[string]any{
+							"symbol": strat.Symbol(),
+							"day":    lastDay,
+						},
 					})
-					tradingDisabled = true
 				}
+				if cfg.MaxDailyLoss > 0 && dailyPnL <= -cfg.MaxDailyLoss {
+					if !tradingDisabled {
+						log.Printf("runTradingLoop | [%s] Trading disabled due to max daily loss reached", strat.Name())
+						storage.LogEvent(ctx, journal.Event{
+							Time:        time.Now(),
+							Type:        "state",
+							Description: "trading_disabled_max_daily_loss",
+							Data: map[string]any{
+								"strategy_name": strat.Name(),
+								"day":           lastDay,
+							},
+						})
+						tradingDisabled = true
+					}
+				}
+				todayPnL, err := pos.DailyPnL()
+				if err != nil {
+					log.Printf("runTradingLoop | [%s] Error getting daily PnL: %v", strat.Name(), err)
+				} else {
+					dailyPnL = todayPnL
+				}
+				now := time.Now().UTC()
+				var from time.Time
+				if lastProcessed.IsZero() {
+					from = now.AddDate(-1, 0, 0).Truncate(dur)
+				} else {
+					from = lastProcessed.Add(time.Second)
+				}
+				to := now
+				candles, err := storage.GetCandles(ctx, symbol, strat.Timeframe(), "", from, to)
+				if err != nil {
+					log.Printf("runTradingLoop | [%s] Error fetching new candles: %v", strat.Name(), err)
+					continue
+				}
+				if len(candles) == 0 {
+					continue
+				}
+				signal, err := strat.OnCandles(ctx, candles)
+				if err != nil {
+					log.Printf("runTradingLoop | [%s] Error processing candles: %v", strat.Name(), err)
+					continue
+				}
+				pos.OnSignalV2(ctx, signal)
+				lastProcessed = candles[len(candles)-1].Timestamp
 			}
-
-			// Update daily PnL from position manager
-			// TODO:
-			todayPnL, err := pos.DailyPnL()
-			if err != nil {
-				log.Printf("[%s] Error getting daily PnL: %v", strat.Name(), err)
-			} else {
-				dailyPnL = todayPnL
-			}
-
-		case <-ctx.Done():
-			log.Printf("[%s] Trading loop stopped", strat.Name())
-			return
 		}
-	}
+	}()
+
+	wg.Wait()
+	return nil
 }
 
 // runBacktest handles the backtest mode
 func runBacktest(
 	ctx context.Context,
 	cfg config.Config,
-	dbadapter db.DB,
-	ex exchange.Exchange,
 	strats []strategy.Strategy,
-	timeframe string,
+	storage db.DB,
 ) {
-	for _, symbol := range cfg.Symbols {
+	for _, strat := range strats {
 		// Load candles for backtesting
-		candles, err := loadBacktestCandles(ctx, dbadapter, ex, symbol, timeframe, cfg.BacktestFrom.Time, cfg.BacktestTo.Time)
+		candles, err := loadBacktestCandles(ctx, storage, strat.Symbol(), strat.Timeframe(), cfg.BacktestFrom.Time, cfg.BacktestTo.Time, cfg.ProxyURL)
 		if err != nil {
-			log.Fatalf("Error loading candles for backtest: %v", err)
+			log.Fatalf("runBacktest | Error loading candles for backtest: %v", err)
 		}
 
-		log.Printf("Loaded %d candles for backtest [%s-%s]",
+		log.Printf("runBacktest | Loaded %d candles for backtest [%s-%s]",
 			len(candles), cfg.BacktestFrom.Time.Format(time.RFC3339), cfg.BacktestTo.Time.Format(time.RFC3339))
 
-		// Run backtest for each strategy
-		for _, strat := range strats {
-			backtestResults := runStrategyBacktest(strat, candles, cfg)
+		backtestResults := runStrategyBacktest(strat, candles, cfg)
 
-			// Print backtest results
-			printBacktestResults(strat, backtestResults)
+		// Print backtest results
+		printBacktestResults(strat, backtestResults)
 
-			// Save backtest results to CSV
-			saveBacktestResults(backtestResults)
-		}
+		// Save backtest results to CSV
+		saveBacktestResults(backtestResults)
+
 	}
 }
 
-// loadBacktestCandles loads candles for backtesting, downloading from exchange if necessary
+// loadBacktestCandles loads candles for backtesting, downloading from public API if necessary
 func loadBacktestCandles(
 	ctx context.Context,
-	dbadapter db.DB,
-	ex exchange.Exchange,
+	storage db.DB,
 	symbol, timeframe string,
 	from, to time.Time,
+	proxyURL string,
 ) ([]candle.Candle, error) {
 	// Try to load candles from database first
-	candles, err := dbadapter.GetCandles(ctx, symbol, timeframe, "", from, to)
+	candles, err := storage.GetCandles(ctx, symbol, timeframe, "", from, to.Add(-time.Nanosecond)) // ensure exclusive upper bound
 	if err != nil {
-		return nil, fmt.Errorf("error loading candles from database: %w", err)
+		return nil, fmt.Errorf("loadBacktestCandles | error loading candles from database: %w", err)
 	}
 
-	// If no candles found in database, download from exchange
+	// If no candles found in database, download from public API
 	if len(candles) == 0 {
-		log.Printf("No historical candles found in DB for %s, downloading from exchange...", symbol)
+		log.Printf("loadBacktestCandles | No historical candles found in DB for %s, downloading from public API...", symbol)
 
 		// Download candles in chunks to avoid hitting API limits
 		currTime := from
-		maxChunkDays := 30
+		maxChunkDays := 14 // Download two weeks at a time
+		allDownloadedCandles := make([]candle.Candle, 0)
+
+		// Create a rate limiter - 1 request per 1 seconds to avoid rate limits
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
 
 		for currTime.Before(to) {
 			next := currTime.Add(time.Duration(maxChunkDays) * 24 * time.Hour)
@@ -516,9 +592,12 @@ func loadBacktestCandles(
 				next = to
 			}
 
+			// Wait for rate limiter
+			<-ticker.C
+
 			// Create a context with timeout for the API call
 			downloadCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-			downloadedCandles, err := ex.FetchCandles(downloadCtx, symbol, timeframe, currTime.Unix(), next.Unix())
+			downloadedCandles, err := downloadCandlesFromPublicAPI(downloadCtx, symbol, timeframe, currTime, next, proxyURL)
 			cancel()
 
 			if err != nil {
@@ -526,35 +605,284 @@ func loadBacktestCandles(
 					currTime.Format(time.RFC3339), next.Format(time.RFC3339), err)
 			}
 
-			// Save downloaded candles to database
-			if len(downloadedCandles) > 0 {
-				saveCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-				// NOTE: 1m truncated
-				err = dbadapter.SaveCandles(saveCtx, downloadedCandles)
-				cancel()
+			log.Printf("loadBacktestCandles | Downloaded %d candles for %s from %s to %s",
+				len(downloadedCandles), symbol, currTime.Format("2006-01-02"), next.Format("2006-01-02"))
 
-				if err != nil {
-					return nil, fmt.Errorf("error saving candles to database: %w", err)
-				}
-
-				log.Printf("Downloaded and saved %d candles [%s-%s]",
-					len(downloadedCandles), currTime.Format(time.RFC3339), next.Format(time.RFC3339))
-			} else {
-				log.Printf("No candles available from %s to %s",
-					currTime.Format(time.RFC3339), next.Format(time.RFC3339))
-			}
+			// Add downloaded candles to our collection
+			allDownloadedCandles = append(allDownloadedCandles, downloadedCandles...)
 
 			currTime = next
 		}
 
-		// Load the downloaded candles
-		candles, err = dbadapter.GetCandles(ctx, symbol, timeframe, "", from, to)
+		if len(allDownloadedCandles) == 0 {
+			return nil, fmt.Errorf("no candles available for %s from %s to %s",
+				symbol, from.Format(time.RFC3339), to.Format(time.RFC3339))
+		}
+
+		// Process downloaded candles (sort, trim, generate missing, eliminate duplicates)
+		processedCandles := processCandles(allDownloadedCandles, symbol, timeframe, from, to)
+
+		// Save processed candles to database
+		if len(processedCandles) > 0 {
+			saveCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			err = storage.SaveCandles(saveCtx, processedCandles)
+			cancel()
+
+			if err != nil {
+				return nil, fmt.Errorf("error saving candles to database: %w", err)
+			}
+
+			log.Printf("loadBacktestCandles | Saved %d processed candles to database", len(processedCandles))
+		}
+
+		// Load the saved candles
+		candles, err = storage.GetCandles(ctx, symbol, timeframe, "", from, to.Add(-time.Nanosecond))
 		if err != nil {
-			return nil, fmt.Errorf("error loading downloaded candles: %w", err)
+			return nil, fmt.Errorf("loadBacktestCandles | error loading downloaded candles: %w", err)
 		}
 	}
 
+	// Filter out any candle with timestamp >= to (exclusive upper bound)
+	var filtered []candle.Candle
+	for _, c := range candles {
+		if c.Timestamp.Before(to) {
+			filtered = append(filtered, c)
+		}
+	}
+
+	return filtered, nil
+}
+
+// downloadCandlesFromPublicAPI downloads candles from a public cryptocurrency API
+func downloadCandlesFromPublicAPI(ctx context.Context, symbol, timeframe string, start, end time.Time, proxyURL string) ([]candle.Candle, error) {
+	// Map timeframe to API format
+	var interval string
+	switch timeframe {
+	case "1m":
+		interval = "1m"
+	case "5m":
+		interval = "5m"
+	case "15m":
+		interval = "15m"
+	case "30m":
+		interval = "30m"
+	case "1h":
+		interval = "1h"
+	case "4h":
+		interval = "4h"
+	case "1d":
+		interval = "1d"
+	default:
+		return nil, fmt.Errorf("unsupported timeframe: %s", timeframe)
+	}
+
+	// Convert symbol to uppercase and format for API
+	apiSymbol := strings.ToUpper(strings.ReplaceAll(symbol, "-", ""))
+
+	// Calculate start and end timestamps in milliseconds
+	startMs := start.UnixNano() / int64(time.Millisecond)
+	endMs := end.UnixNano() / int64(time.Millisecond)
+
+	// Construct API URL (using Binance public API as an example)
+	apiURL := fmt.Sprintf(
+		"https://api.binance.com/api/v3/klines?symbol=%s&interval=%s&startTime=%d&endTime=%d", // TODO: limit=1000
+		apiSymbol, interval, startMs, endMs,
+	)
+	log.Printf("downloadCandlesFromPublicAPI | API URL: %s", apiURL)
+
+	// Create HTTP client with timeout and optional proxy
+	transport := &http.Transport{}
+	if proxyURL != "" {
+		proxyParsed, err := url.Parse(proxyURL)
+		if err != nil {
+			return nil, fmt.Errorf("invalid proxy URL: %w", err)
+		}
+		transport.Proxy = http.ProxyURL(proxyParsed)
+	}
+	client := &http.Client{
+		Timeout:   10 * time.Second,
+		Transport: transport,
+	}
+
+	// Create request with context
+	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+	// Set a browser-like User-Agent
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
+	req.Header.Set("Accept", "application/json")
+	// Send request
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("error sending request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Check response status
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	// Read and log response body for debugging
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("error reading response body: %w", err)
+	}
+
+	// Parse response body
+	var rawCandles [][]any
+	if err := json.Unmarshal(bodyBytes, &rawCandles); err != nil {
+		log.Printf("downloadCandlesFromPublicAPI | JSON decode error: %v", err)
+		return nil, fmt.Errorf("error decoding response: %w", err)
+	}
+
+	// Convert raw candles to our Candle struct
+	candles := make([]candle.Candle, 0, len(rawCandles))
+	for _, raw := range rawCandles {
+		if len(raw) < 6 {
+			continue // Skip invalid entries
+		}
+
+		// Robustly parse timestamp
+		var timestamp int64
+		switch v := raw[0].(type) {
+		case float64:
+			timestamp = int64(v)
+		case string:
+			timestamp, err = strconv.ParseInt(v, 10, 64)
+			if err != nil {
+				log.Printf("downloadCandlesFromPublicAPI | Error parsing timestamp string: %v", err)
+				continue
+			}
+		default:
+			log.Printf("downloadCandlesFromPublicAPI | Unexpected timestamp type: %T", v)
+			continue
+		}
+
+		// Robustly parse open, high, low, close, volume
+		parseNum := func(val any) float64 {
+			switch n := val.(type) {
+			case float64:
+				return n
+			case string:
+				f, err := strconv.ParseFloat(n, 64)
+				if err != nil {
+					log.Printf("downloadCandlesFromPublicAPI | Error parsing float string: %v", err)
+					return 0
+				}
+				return f
+			default:
+				log.Printf("downloadCandlesFromPublicAPI | Unexpected number type: %T", n)
+				return 0
+			}
+		}
+		open := parseNum(raw[1])
+		high := parseNum(raw[2])
+		low := parseNum(raw[3])
+		close := parseNum(raw[4])
+		volume := parseNum(raw[5])
+
+		// Create candle
+		c := candle.Candle{
+			Timestamp: time.Unix(timestamp/1000, 0).UTC(),
+			Open:      open,
+			High:      high,
+			Low:       low,
+			Close:     close,
+			Volume:    volume,
+			Symbol:    symbol,
+			Timeframe: timeframe,
+			Source:    "binance",
+		}
+
+		candles = append(candles, c)
+	}
+
 	return candles, nil
+}
+
+// processCandles sorts, trims, generates missing candles, and eliminates duplicates
+func processCandles(candles []candle.Candle, symbol, timeframe string, start, to time.Time) []candle.Candle {
+	if len(candles) == 0 {
+		return candles
+	}
+
+	// 1. Sort candles by timestamp
+	sort.Slice(candles, func(i, j int) bool {
+		return candles[i].Timestamp.Before(candles[j].Timestamp)
+	})
+
+	// 2. Eliminate duplicates using a map
+	candleMap := make(map[time.Time]candle.Candle)
+	for _, c := range candles {
+		// Truncate timestamp to timeframe
+		duration := candle.GetTimeframeDuration(timeframe)
+		c.Timestamp = c.Timestamp.Truncate(duration)
+
+		// Only keep the first occurrence of each timestamp
+		if _, exists := candleMap[c.Timestamp]; !exists {
+			candleMap[c.Timestamp] = c
+		}
+	}
+
+	// 3. Trim candles to requested time range (exclusive upper bound)
+	var trimmedCandles []candle.Candle
+	for ts, c := range candleMap {
+		if (ts.Equal(start) || ts.After(start)) && ts.Before(to) {
+			trimmedCandles = append(trimmedCandles, c)
+		}
+	}
+
+	// Re-sort after trimming
+	sort.Slice(trimmedCandles, func(i, j int) bool {
+		return trimmedCandles[i].Timestamp.Before(trimmedCandles[j].Timestamp)
+	})
+
+	// 4. Generate missing candles
+	if len(trimmedCandles) == 0 {
+		return trimmedCandles
+	}
+
+	var completeCandles []candle.Candle
+	duration := candle.GetTimeframeDuration(timeframe)
+
+	// Start from the first candle's timestamp
+	currentTime := trimmedCandles[0].Timestamp
+	lastTime := trimmedCandles[len(trimmedCandles)-1].Timestamp
+
+	// Use the first candle's close price as base for synthetic candles
+	basePrice := trimmedCandles[0].Close
+
+	i := 0 // Index for trimmedCandles
+	for !currentTime.After(lastTime) && currentTime.Before(to) {
+		if i < len(trimmedCandles) && trimmedCandles[i].Timestamp.Equal(currentTime) {
+			// We have a real candle for this timestamp
+			completeCandles = append(completeCandles, trimmedCandles[i])
+			basePrice = trimmedCandles[i].Close // Update base price for future synthetic candles
+			i++
+		} else {
+			// Create synthetic candle
+			syntheticCandle := candle.Candle{
+				Timestamp: currentTime,
+				Open:      basePrice,
+				High:      basePrice,
+				Low:       basePrice,
+				Close:     basePrice,
+				Volume:    0, // Synthetic candles have zero volume
+				Symbol:    symbol,
+				Timeframe: timeframe,
+				Source:    "synthetic",
+			}
+			completeCandles = append(completeCandles, syntheticCandle)
+		}
+
+		// Move to next time interval
+		currentTime = currentTime.Add(duration)
+	}
+
+	return completeCandles
 }
 
 // BacktestResults holds the results of a backtest
@@ -581,6 +909,11 @@ type TradeLogEntry struct {
 	ExitTime  time.Time
 }
 
+type CandleWithSignal struct {
+	Candle candle.Candle    `json:"candle"`
+	Signal *strategy.Signal `json:"signal,omitempty"`
+}
+
 // runStrategyBacktest runs a backtest for a specific strategy
 func runStrategyBacktest(strat strategy.Strategy, candles []candle.Candle, cfg config.Config) BacktestResults {
 	var results BacktestResults
@@ -593,6 +926,9 @@ func runStrategyBacktest(strat strategy.Strategy, candles []candle.Candle, cfg c
 	var dailyPnL float64
 	var lastDay int = -1
 	var trailingStop float64
+
+	// For charting: store all candles and their signals
+	var candlesWithSignals []CandleWithSignal
 
 	// Risk parameters
 	stopLossPercent := cfg.StopLossPercent
@@ -612,9 +948,15 @@ func runStrategyBacktest(strat strategy.Strategy, candles []candle.Candle, cfg c
 
 		// Get signal from strategy
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		sig, _ := strat.OnCandles(ctx, []candle.Candle{c}) // TODO: context.Background() is not good, we need to pass a context that is cancelled when the strategy is stopped
+		sig, _ := strat.OnCandles(ctx, []candle.Candle{c})
+		cancel()
 		signals = append(signals, sig)
+
+		var signalPtr *strategy.Signal
+		if sig.Action == "buy" || sig.Action == "sell" {
+			signalPtr = &sig
+		}
+		candlesWithSignals = append(candlesWithSignals, CandleWithSignal{Candle: c, Signal: signalPtr})
 
 		// Process buy signal
 		if sig.Action == "buy" && !active && (maxDailyLoss == 0 || dailyPnL > -maxDailyLoss) {
@@ -717,6 +1059,17 @@ func runStrategyBacktest(strat strategy.Strategy, candles []candle.Candle, cfg c
 	stratMetrics := strat.PerformanceMetrics()
 	for k, v := range stratMetrics {
 		results.Metrics[k] = v
+	}
+
+	// Output candlesWithSignals as JSON for charting
+	chartDataFile := "backtest_chart_data.json"
+	f, err := os.Create(chartDataFile)
+	if err == nil {
+		json.NewEncoder(f).Encode(candlesWithSignals)
+		f.Close()
+		log.Printf("Saved chart data to %s", chartDataFile)
+	} else {
+		log.Printf("Failed to save chart data: %v", err)
 	}
 
 	return results
@@ -874,4 +1227,168 @@ func saveCSV(filename string, rows [][]string) error {
 
 	log.Printf("Saved results to %s", filename)
 	return nil
+}
+
+// Helper to adapt WallexTrade to position.Tick interface
+func wallexTradeToTick(trade exchange.WallexTrade) position.Tick {
+	price, _ := strconv.ParseFloat(trade.Price, 64)
+	ts := trade.Timestamp
+	return &simpleTick{price: price, timestamp: ts}
+}
+
+type simpleTick struct {
+	price     float64
+	timestamp time.Time
+}
+
+func (t *simpleTick) Price() float64       { return t.price }
+func (t *simpleTick) Timestamp() time.Time { return t.timestamp }
+
+// dataLogger writes trade data, market depth, and market cap to files
+func dataLogger(ctx context.Context, symbols []string, tickChans map[string]<-chan exchange.WallexTrade, depthState exchange.MarketDepthStateManager, marketCapState exchange.MarketCapStateManager) {
+	// Create data directory if it doesn't exist
+	dataDir := "data"
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		log.Printf("Failed to create data directory: %v", err)
+		return
+	}
+
+	// Create files for each symbol
+	files := make(map[string]*os.File)
+	defer func() {
+		for _, file := range files {
+			if file != nil {
+				file.Close()
+			}
+		}
+	}()
+
+	// Initialize files for each symbol
+	for _, symbol := range symbols {
+		filename := fmt.Sprintf("%s/%s_trades.csv", dataDir, strings.ToLower(symbol))
+
+		// Check if file exists to determine if we need to write header
+		fileExists := false
+		if stat, err := os.Stat(filename); err == nil {
+			fileExists = stat.Size() > 0
+		}
+
+		// Open file in append mode (O_APPEND ensures we append, not overwrite)
+		file, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			log.Printf("Failed to open file for %s: %v", symbol, err)
+			continue
+		}
+		files[symbol] = file
+
+		// Write CSV header only if file is new/empty
+		if !fileExists {
+			header := "timestamp,price,quantity,is_buy_order,symbol,market_depth_buy,market_depth_sell,market_cap_last_price,market_cap_24h_volume,market_cap_bid_price,market_cap_ask_price\n"
+			if _, err := file.WriteString(header); err != nil {
+				log.Printf("Failed to write header for %s: %v", symbol, err)
+			}
+			log.Printf("Created new trade log file: %s", filename)
+		} else {
+			log.Printf("Appending to existing trade log file: %s", filename)
+		}
+	}
+
+	// Process trades from all symbols
+	for {
+		select {
+		case <-ctx.Done():
+			log.Println("Data logger shutting down...")
+			return
+		default:
+			// Check each symbol's trade channel
+			for symbol, tickCh := range tickChans {
+				select {
+				case trade, ok := <-tickCh:
+					if !ok {
+						log.Printf("Trade channel closed for %s", symbol)
+						continue
+					}
+
+					// Get latest market depth and market cap data
+					buyDepth, _ := depthState.Get(symbol, "buyDepth")
+					sellDepth, _ := depthState.Get(symbol, "sellDepth")
+					marketCap, _ := marketCapState.Get(symbol)
+
+					// Format the data line
+					line := formatTradeData(trade, symbol, buyDepth, sellDepth, marketCap)
+
+					// Write to file
+					if file, exists := files[symbol]; exists {
+						if _, err := file.WriteString(line + "\n"); err != nil {
+							log.Printf("Failed to write trade data for %s: %v", symbol, err)
+							continue
+						}
+						file.Sync() // Ensure data is written immediately
+					}
+
+				default:
+					// No trade available, continue to next symbol
+					continue
+				}
+			}
+
+			// Small delay to prevent busy waiting
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+}
+
+// formatTradeData formats trade data with market depth and market cap information
+func formatTradeData(trade exchange.WallexTrade, symbol string, buyDepth *exchange.OrderBook, sellDepth *exchange.OrderBook, marketCap *exchange.MarketCapData) string {
+	// Extract best prices from order books
+	var bestBuyPrice, bestSellPrice string
+	if buyDepth != nil && len(*buyDepth) > 0 {
+		// Find highest buy price (best buy)
+		var maxPrice float64
+		for _, entry := range *buyDepth {
+			if price, err := strconv.ParseFloat(entry.Price, 64); err == nil && price > maxPrice {
+				maxPrice = price
+				bestBuyPrice = entry.Price
+			}
+		}
+	}
+
+	if sellDepth != nil && len(*sellDepth) > 0 {
+		// Find lowest sell price (best sell)
+		var minPrice float64
+		first := true
+		for _, entry := range *sellDepth {
+			if price, err := strconv.ParseFloat(entry.Price, 64); err == nil {
+				if first || price < minPrice {
+					minPrice = price
+					bestSellPrice = entry.Price
+					first = false
+				}
+			}
+		}
+	}
+
+	// Extract market cap data
+	var lastPrice, volume24h, bidPrice, askPrice string
+	if marketCap != nil {
+		lastPrice = marketCap.LastPrice
+		volume24h = marketCap.Volume24h
+		bidPrice = marketCap.BidPrice
+		askPrice = marketCap.AskPrice
+	}
+
+	// Format CSV line
+	return fmt.Sprintf("%s,%s,%s,%t,%s,%s,%s,%s,%s,%s,%s",
+		trade.Timestamp.Format("2006-01-02 15:04:05.000"),
+		trade.Price,
+		trade.Quantity,
+		trade.IsBuyOrder,
+		symbol,
+		bestBuyPrice,
+		bestSellPrice,
+		lastPrice,
+		volume24h,
+		bidPrice,
+		askPrice,
+	)
 }
