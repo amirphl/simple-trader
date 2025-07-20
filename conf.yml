@@ -11,6 +11,15 @@ proxy_url: "http://localhost:9090"
 # Trading Mode
 mode: "backtest"  # Options: live, backtest
 
+# Multi-symbol backtest configuration
+multi_symbol_backtest: false  # Set to true to run backtest on top N symbols
+top_symbols_count: 100        # Number of top symbols to backtest (default: 100)
+
+# API retry configuration (useful for proxy environments)
+api_retry_max_attempts: 5     # Maximum retry attempts for API calls
+api_retry_base_delay: 1s      # Base delay between retries
+api_retry_max_delay: 30s      # Maximum delay between retries
+
 # Backtest Configuration
 backtest_from: "2022-01-01"  # Format: YYYY-MM-DD
 backtest_to: "2023-01-01"    # Format: YYYY-MM-DD
@@ -36,7 +45,7 @@ notification_retries: 3
 notification_delay: 5s
 
 # Multi-Symbol Configuration
-symbols: ["BTC-USDT", "ETH-USDT"]
+symbols: ["ADA-USDT", "ETH-USDT"]
 
 # Strategies Combinations
 strategies: ["rsi", "macd"]

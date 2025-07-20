@@ -68,6 +68,15 @@ type Config struct {
 	SlippagePercent     float64               `yaml:"slippage_percent"`
 	CommissionPercent   float64               `yaml:"commission_percent"`
 	ProxyURL            string                `yaml:"proxy_url"`
+
+	// Multi-symbol backtest configuration
+	MultiSymbolBacktest bool `yaml:"multi_symbol_backtest"`
+	TopSymbolsCount     int  `yaml:"top_symbols_count"`
+
+	// API retry configuration
+	APIRetryMaxAttempts int           `yaml:"api_retry_max_attempts"`
+	APIRetryBaseDelay   time.Duration `yaml:"api_retry_base_delay"`
+	APIRetryMaxDelay    time.Duration `yaml:"api_retry_max_delay"`
 }
 
 // RiskParams defines risk management parameters for trading strategies
@@ -124,9 +133,18 @@ func LoadConfig() (Config, error) {
 	limitSpread := flag.Float64("limit-spread", 0.0, "Limit order spread as percent (e.g., 0.1 for 0.1%)")
 	balance := flag.Float64("balance", 0.0, "Balance in account currency (e.g., 100.0)")
 	riskMapFlag := flag.String("risk-map", "", "Comma-separated strategy:risk:stoploss:trailing triples (e.g., rsi:1.0:2.0:0.5)")
-	commissionPercent := flag.Float64("commission-percent", 0.0, "Commission percent per trade (e.g., 0.1 for 0.1%)")
-	slippagePercent := flag.Float64("slippage-percent", 0.0, "Slippage percent per trade (e.g., 0.05 for 0.05%)")
-	proxyURL := flag.String("proxy-url", "", "Proxy URL for Telegram notifications")
+	commissionPercent := flag.Float64("commission-percent", 0.1, "Commission percent (e.g., 0.1 for 0.1%)")
+	slippagePercent := flag.Float64("slippage-percent", 0.05, "Slippage percent (e.g., 0.05 for 0.05%)")
+	proxyURL := flag.String("proxy-url", "", "Proxy URL for API calls")
+
+	// Multi-symbol backtest flags
+	multiSymbolBacktest := flag.Bool("multi-symbol-backtest", false, "Run backtest on top N symbols from Binance")
+	topSymbolsCount := flag.Int("top-symbols-count", 100, "Number of top symbols to backtest (default: 100)")
+
+	// API retry flags
+	apiRetryMaxAttempts := flag.Int("api-retry-max-attempts", 5, "Maximum retry attempts for API calls (default: 5)")
+	apiRetryBaseDelay := flag.Duration("api-retry-base-delay", 1*time.Second, "Base delay for API retry (default: 1s)")
+	apiRetryMaxDelay := flag.Duration("api-retry-max-delay", 30*time.Second, "Maximum delay for API retry (default: 30s)")
 
 	configFile := flag.String("config", "", "Path to YAML config file")
 	flag.Parse()
@@ -199,9 +217,6 @@ func LoadConfig() (Config, error) {
 		}
 	}
 
-	s := "/home/amirphl/sources/simple-trader/.env.yml" // TODO: remove this
-	configFile = &s
-
 	// Load from YAML file if specified
 	if *configFile != "" {
 		data, err := os.ReadFile(*configFile)
@@ -246,6 +261,11 @@ func LoadConfig() (Config, error) {
 		SlippagePercent:     *slippagePercent,
 		CommissionPercent:   *commissionPercent,
 		ProxyURL:            *proxyURL,
+		MultiSymbolBacktest: *multiSymbolBacktest,
+		TopSymbolsCount:     *topSymbolsCount,
+		APIRetryMaxAttempts: *apiRetryMaxAttempts,
+		APIRetryBaseDelay:   *apiRetryBaseDelay,
+		APIRetryMaxDelay:    *apiRetryMaxDelay,
 	}, nil
 }
 
