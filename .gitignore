@@ -5,3 +5,4 @@ simple-trader
 *.csv
 .cursor
 .vscode
+backtest_chart_data.json
