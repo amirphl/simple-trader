@@ -12,15 +12,15 @@ import (
 )
 
 type Candle struct {
-	Timestamp time.Time
-	Open      float64
-	High      float64
-	Low       float64
-	Close     float64
-	Volume    float64
-	Symbol    string
-	Timeframe string
-	Source    string
+	Timestamp time.Time `json:"timestamp"`
+	Open      float64   `json:"open"`
+	High      float64   `json:"high"`
+	Low       float64   `json:"low"`
+	Close     float64   `json:"close"`
+	Volume    float64   `json:"volume"`
+	Symbol    string    `json:"symbol"`
+	Timeframe string    `json:"timeframe"`
+	Source    string    `json:"source"`
 }
 
 // Validate checks if a candle has valid data
