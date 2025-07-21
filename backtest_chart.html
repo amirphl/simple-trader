@@ -1,0 +1,867 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Backtest Chart - Trading Strategy</title>
+    <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background-color: #f8f9fa; }
+        .chart-container { display: flex; flex-direction: column; gap: 20px; }
+        .chart { height: 500px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); background-color: white; border-radius: 5px; }
+        .signal-buy { color: #26a69a; font-weight: bold; }
+        .signal-sell { color: #ef5350; font-weight: bold; }
+        .signal-short { color: #ef5350; font-weight: bold; }
+        .signal-cover { color: #26a69a; font-weight: bold; }
+        .stats { margin: 20px 0; padding: 15px; background: white; border-radius: 5px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        h1 { color: #333; }
+        h2 { color: #555; font-size: 18px; margin: 10px 0; }
+        .legend { display: flex; justify-content: center; margin-top: 10px; flex-wrap: wrap; }
+        .legend-item { display: flex; align-items: center; margin: 0 10px 5px 10px; }
+        .legend-color { width: 20px; height: 20px; margin-right: 5px; border-radius: 3px; }
+        .buy-color { background-color: #26a69a; }
+        .sell-color { background-color: #ef5350; }
+        .short-color { background-color: #ef5350; }
+        .cover-color { background-color: #26a69a; }
+        .regular-color { background-color: #2962FF; }
+        .heikin-color { background-color: #FF6D00; opacity: 0.7; }
+        .chart-toggle { margin: 10px 0; }
+        #tooltip {
+            position: absolute;
+            display: none;
+            padding: 10px;
+            background-color: rgba(255, 255, 255, 0.98);
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+            font-size: 12px;
+            z-index: 1000;
+            max-width: 400px;
+            min-width: 300px;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+        #tooltip .close-btn {
+            position: absolute;
+            top: 5px;
+            right: 10px;
+            cursor: pointer;
+            font-size: 18px;
+            font-weight: bold;
+            color: #999;
+            line-height: 1;
+            padding: 0;
+            background: none;
+            border: none;
+        }
+        #tooltip .close-btn:hover {
+            color: #333;
+        }
+        #tooltip table {
+            border-collapse: collapse;
+            width: 100%;
+        }
+        #tooltip th, #tooltip td {
+            padding: 4px 8px;
+            text-align: left;
+            border-bottom: 1px solid #eee;
+        }
+        #tooltip th {
+            font-weight: bold;
+            background-color: #f8f9fa;
+        }
+        #tooltip .signal-row {
+            background-color: #fff3cd;
+            font-weight: bold;
+        }
+        #tooltip .trade-row {
+            background-color: #d1ecf1;
+        }
+        #equity-chart { height: 150px; margin-top: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); background-color: white; border-radius: 5px; }
+        .controls {
+            display: flex;
+            margin-bottom: 10px;
+            gap: 10px;
+            align-items: center;
+        }
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        .checkbox {
+            margin-right: 5px;
+        }
+        .error {
+            color: red;
+            padding: 20px;
+            text-align: center;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <h1>Backtest Chart - Trading Strategy</h1>
+    
+    <p style="text-align: center; color: #666; margin-bottom: 20px;">
+        <strong>Click on any candle</strong> to view detailed information | Use checkboxes below to toggle overlays
+    </p>
+    
+    <div class="controls">
+        <div class="control-group">
+            <input type="checkbox" id="showHeikinAshi" class="checkbox" checked>
+            <label for="showHeikinAshi">Show Heikin Ashi Chart</label>
+        </div>
+        <div class="control-group">
+            <input type="checkbox" id="showVolume" class="checkbox" checked>
+            <label for="showVolume">Show Volume</label>
+        </div>
+        <div class="control-group">
+            <input type="checkbox" id="showSignalLabels" class="checkbox" checked>
+            <label for="showSignalLabels">Show Signal Labels</label>
+        </div>
+        <div class="control-group">
+            <input type="checkbox" id="showAllCandleSignals" class="checkbox" checked>
+            <label for="showAllCandleSignals">Show L/S/H on All Candles</label>
+        </div>
+    </div>
+    
+    <div class="chart-container">
+        <div id="main-chart" class="chart"></div>
+        <div id="heikin-ashi-chart" class="chart" style="height: 300px;"></div>
+        <div id="equity-chart" class="chart"></div>
+    </div>
+    
+    <div id="tooltip"></div>
+    
+    <div class="legend">
+        <div class="legend-item"><div class="legend-color regular-color"></div><span>Regular Candles</span></div>
+        <div class="legend-item"><div class="legend-color heikin-color"></div><span>Heikin Ashi Candles</span></div>
+        <div class="legend-item"><div class="legend-color buy-color"></div><span>Long Entry (L)</span></div>
+        <div class="legend-item"><div class="legend-color sell-color"></div><span>Long Exit (X)</span></div>
+        <div class="legend-item"><div class="legend-color short-color"></div><span>Short Entry (S)</span></div>
+        <div class="legend-item"><div class="legend-color cover-color"></div><span>Short Exit (X)</span></div>
+    </div>
+    
+    <div class="stats">
+        <h3>Chart Data</h3>
+        <p>Total Candles: <span id="candleCount">0</span></p>
+        <p>Long Entries: <span id="longEntries" class="signal-buy">0</span></p>
+        <p>Long Exits: <span id="longExits" class="signal-sell">0</span></p>
+        <p>Short Entries: <span id="shortEntries" class="signal-short">0</span></p>
+        <p>Short Exits: <span id="shortExits" class="signal-cover">0</span></p>
+    </div>
+    
+    <script>
+        // Check if LightweightCharts is available
+        function checkLibrary() {
+            if (typeof LightweightCharts === 'undefined') {
+                document.getElementById('main-chart').innerHTML = '<div class="error">Error: LightweightCharts library not loaded. Please check your internet connection.</div>';
+                return false;
+            }
+            return true;
+        }
+    
+        // Load chart data
+        fetch('backtest_chart_data.json')
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('Failed to load chart data: ' + response.status);
+                }
+                return response.json();
+            })
+            .then(data => {
+                if (!checkLibrary()) {
+                    return;
+                }
+
+                console.log(data);
+                
+                try {
+                    // Validate data structure
+                    if (!Array.isArray(data)) {
+                        throw new Error('Data is not an array: ' + typeof data);
+                    }
+                    
+                    if (data.length === 0) {
+                        throw new Error('Data array is empty');
+                    }
+                    
+                    console.log('Data array length:', data.length);
+                    console.log('First item structure:', data[0]);
+                    
+                    // Check if first item has expected structure
+                    if (!data[0].candle) {
+                        throw new Error('First item missing candle property');
+                    }
+                    
+                    if (!data[0].candle.timestamp) {
+                        throw new Error('First candle missing timestamp property');
+                    }
+                    
+                    console.log('Data validation passed, creating charts...');
+
+                    // Create main chart
+                    const mainChart = LightweightCharts.createChart(document.getElementById('main-chart'), {
+                        width: 1200,
+                        height: 500,
+                        layout: {
+                            backgroundColor: '#ffffff',
+                            textColor: '#333',
+                            fontFamily: 'Arial, sans-serif',
+                        },
+                        grid: {
+                            vertLines: { color: '#f0f0f0' },
+                            horzLines: { color: '#f0f0f0' },
+                        },
+                        crosshair: {
+                            mode: LightweightCharts.CrosshairMode.Normal,
+                        },
+                        rightPriceScale: {
+                            borderColor: '#cccccc',
+                            scaleMargins: {
+                                top: 0.1,
+                                bottom: 0.3,
+                            },
+                        },
+                        timeScale: {
+                            borderColor: '#cccccc',
+                            timeVisible: true,
+                            secondsVisible: false,
+                        },
+                    });
+                    
+                    // Create Heikin Ashi chart
+                    const heikinAshiChart = LightweightCharts.createChart(document.getElementById('heikin-ashi-chart'), {
+                        width: 1200,
+                        height: 300,
+                        layout: {
+                            backgroundColor: '#ffffff',
+                            textColor: '#333',
+                            fontFamily: 'Arial, sans-serif',
+                        },
+                        grid: {
+                            vertLines: { color: '#f0f0f0' },
+                            horzLines: { color: '#f0f0f0' },
+                        },
+                        crosshair: {
+                            mode: LightweightCharts.CrosshairMode.Normal,
+                        },
+                        rightPriceScale: {
+                            borderColor: '#cccccc',
+                            scaleMargins: {
+                                top: 0.1,
+                                bottom: 0.2,
+                            },
+                        },
+                        timeScale: {
+                            borderColor: '#cccccc',
+                            timeVisible: true,
+                            secondsVisible: false,
+                        },
+                    });
+
+                    // Create equity chart
+                    const equityChart = LightweightCharts.createChart(document.getElementById('equity-chart'), {
+                        width: 1200,
+                        height: 150,
+                        layout: {
+                            backgroundColor: '#ffffff',
+                            textColor: '#333',
+                            fontFamily: 'Arial, sans-serif',
+                        },
+                        grid: {
+                            vertLines: { color: '#f0f0f0' },
+                            horzLines: { color: '#f0f0f0' },
+                        },
+                        rightPriceScale: {
+                            borderColor: '#cccccc',
+                        },
+                        timeScale: {
+                            borderColor: '#cccccc',
+                            timeVisible: true,
+                            secondsVisible: false,
+                        },
+                    });
+
+                    // Regular candlestick series (main chart)
+                    const regularCandlestickSeries = mainChart.addCandlestickSeries({
+                        upColor: '#26a69a',
+                        downColor: '#ef5350',
+                        borderVisible: false,
+                        wickUpColor: '#26a69a',
+                        wickDownColor: '#ef5350',
+                    });
+                    
+                    // Heikin Ashi candlestick series (separate chart)
+                    const heikinAshiCandlestickSeries = heikinAshiChart.addCandlestickSeries({
+                        upColor: '#26a69a',
+                        downColor: '#ef5350',
+                        borderVisible: true,
+                        borderUpColor: '#1e7e64',
+                        borderDownColor: '#d32f2f',
+                        wickUpColor: '#26a69a',
+                        wickDownColor: '#ef5350',
+                        wickVisible: true,
+                    });
+
+                    // Volume series
+                    const volumeSeries = mainChart.addHistogramSeries({
+                        color: '#26a69a',
+                        priceFormat: {
+                            type: 'volume',
+                        },
+                        priceScaleId: '',
+                        scaleMargins: {
+                            top: 0.8,
+                            bottom: 0,
+                        },
+                    });
+                    
+                    // Series for signal text labels on main chart
+                    // Note: We'll store these markers and toggle them on the candlestick series
+                    
+                    // Series for signal indicators on ALL candles  
+                    // Note: We'll store these markers and toggle them on the candlestick series
+                    
+                    // Series for equity curve
+                    const equitySeries = equityChart.addLineSeries({
+                        color: '#2962FF',
+                        lineWidth: 2,
+                    });
+
+                    // Convert data to chart format
+                    let regularCandleData = [];
+                    let heikinAshiCandleData = [];
+                    let volumeData = [];
+                    let mainMarkers = [];
+                    let heikinAshiMarkers = [];
+                    let exitMarkers = []; // Separate array for exit markers
+                    let signalLabels = [];
+                    let allCandleSignals = [];
+                    let equityData = [];
+                    let longEntries = 0;
+                    let longExits = 0;
+                    let shortEntries = 0;
+                    let shortExits = 0;
+                    
+                    // Store detailed candle data for tooltip (ALL candles)
+                    let candleDetails = {};
+
+                    data.forEach((item, index) => {
+                        try {
+                            const candle = item.candle;
+                            const haCandle = item.heikin_ashi;
+                            const signal = item.signal;
+                            
+                            // Debug logging for first few items
+                            if (regularCandleData.length < 3) {
+                                console.log('Processing item:', item);
+                                console.log('Candle timestamp:', candle.timestamp);
+                                console.log('Candle data:', candle);
+                            }
+                            
+                            // Handle different timestamp formats
+                            let ts;
+                            if (typeof candle.timestamp === 'string') {
+                                ts = new Date(candle.timestamp);
+                            } else if (typeof candle.timestamp === 'number') {
+                                // Handle both seconds and milliseconds
+                                ts = candle.timestamp > 1e12 ? new Date(candle.timestamp) : new Date(candle.timestamp * 1000);
+                            } else {
+                                console.error('Invalid timestamp format:', candle.timestamp);
+                                return; // Skip this candle
+                            }
+                            
+                            if (isNaN(ts.getTime())) {
+                                console.error('Invalid timestamp:', candle.timestamp);
+                                return; // Skip this candle
+                            }
+                            
+                            // Add regular candlestick data
+                            const time = Math.floor(ts.getTime() / 1000);
+                            
+                            // Validate candle data
+                            if (!candle.open || !candle.high || !candle.low || !candle.close) {
+                                console.error('Invalid candle data:', candle);
+                                return; // Skip this candle
+                            }
+                            
+                            regularCandleData.push({
+                                time: time,
+                                open: parseFloat(candle.open),
+                                high: parseFloat(candle.high),
+                                low: parseFloat(candle.low),
+                                close: parseFloat(candle.close),
+                            });
+                            
+                            // Add Heikin Ashi candlestick data if available
+                            if (haCandle && haCandle.open && haCandle.high && haCandle.low && haCandle.close) {
+                                heikinAshiCandleData.push({
+                                    time: time,
+                                    open: parseFloat(haCandle.open),
+                                    high: parseFloat(haCandle.high),
+                                    low: parseFloat(haCandle.low),
+                                    close: parseFloat(haCandle.close),
+                                });
+                            }
+
+                            // Add volume data
+                            volumeData.push({
+                                time: time,
+                                value: parseFloat(candle.volume || 0),
+                                color: candle.close >= candle.open ? 'rgba(38, 166, 154, 0.5)' : 'rgba(239, 83, 80, 0.5)',
+                            });
+                            
+                            // Add equity data
+                            equityData.push({
+                                time: time,
+                                value: parseFloat(item.equity || 0),
+                            });
+                            
+                            // Store detailed info for tooltip (ALL candles, not just those with signals)
+                            candleDetails[time] = {
+                                date: ts.toLocaleString(),
+                                candle: {
+                                    open: parseFloat(candle.open),
+                                    high: parseFloat(candle.high),
+                                    low: parseFloat(candle.low),
+                                    close: parseFloat(candle.close),
+                                    volume: parseFloat(candle.volume || 0),
+                                },
+                                heikinAshi: haCandle && haCandle.open ? {
+                                    open: parseFloat(haCandle.open),
+                                    high: parseFloat(haCandle.high),
+                                    low: parseFloat(haCandle.low),
+                                    close: parseFloat(haCandle.close),
+                                } : null,
+                                balance: parseFloat(item.balance || 0),
+                                equity: parseFloat(item.equity || 0),
+                                activeTrade: item.active_trade || false,
+                                signal: signal,
+                                tradeInfo: item.trade_info,
+                                tradeDetails: item.trade_details || '',
+                            };
+
+                            // Add markers and text labels for signals
+                            if (signal && signal.position !== undefined) {
+                                let shape, color, text, position, labelText;
+                                
+                                if (signal.position === 1) { // Long
+                                    shape = 'arrowUp';
+                                    color = '#26a69a';
+                                    text = 'L';
+                                    labelText = 'LONG';
+                                    position = 'belowBar';
+                                    longEntries++;
+                                } else if (signal.position === -1) { // Short
+                                    shape = 'arrowDown';
+                                    color = '#ef5350';
+                                    text = 'S';
+                                    labelText = 'SHORT';
+                                    position = 'aboveBar';
+                                    shortEntries++;
+                                }
+                                
+                                if (shape) {
+                                    // Add arrow markers to both charts
+                                    const marker = {
+                                        time: time,
+                                        position: position,
+                                        color: color,
+                                        shape: shape,
+                                        text: text,
+                                        size: 2,
+                                    };
+                                    mainMarkers.push(marker);
+                                    heikinAshiMarkers.push(marker);
+                                    
+                                    // Add text label above the candle on main chart (for significant signals only)
+                                    signalLabels.push({
+                                        time: time,
+                                        position: 'aboveBar',
+                                        color: color,
+                                        shape: 'circle',
+                                        text: labelText,
+                                        size: 1,
+                                    });
+                                }
+                            }
+                            
+                            // Add signal character for ALL candles (L/S/H)
+                            let signalChar = 'H'; // Default to Hold
+                            let signalColor = '#999999'; // Gray for hold
+                            let signalShape = 'circle'; // Default shape
+                            
+                            if (signal && signal.position !== undefined) {
+                                if (signal.position === 1) {
+                                    signalChar = 'L';
+                                    signalColor = '#26a69a'; // Green for long
+                                    signalShape = 'arrowUp';
+                                } else if (signal.position === -1) {
+                                    signalChar = 'S';
+                                    signalColor = '#ef5350'; // Red for short
+                                    signalShape = 'arrowDown';
+                                } else {
+                                    signalChar = 'H';
+                                    signalColor = '#999999'; // Gray for hold
+                                    signalShape = 'circle';
+                                }
+                            }
+                            
+                            // Add signal character above every candle
+                            allCandleSignals.push({
+                                time: time,
+                                position: 'aboveBar',
+                                color: signalColor,
+                                shape: signalShape,
+                                text: signalChar,
+                                size: 0.8,
+                            });
+                            
+                            // Add markers for trade exits
+                            if (item.trade_info && item.trade_info.exit > 0) {
+                                let shape, color, text, position, labelText, labelPosition;
+                                
+                                if (item.trade_info.side === 'long') {
+                                    shape = 'square'; // Use different shape for exit
+                                    color = '#ff6b6b'; // Different red color
+                                    text = 'X';
+                                    labelText = 'EXIT LONG';
+                                    // Position exit marker opposite to entry (entry was belowBar for long)
+                                    position = 'aboveBar';
+                                    labelPosition = 'aboveBar';
+                                    longExits++;
+                                } else if (item.trade_info.side === 'short') {
+                                    shape = 'square'; // Use different shape for exit
+                                    color = '#4ecdc4'; // Different green color
+                                    text = 'X';
+                                    labelText = 'EXIT SHORT';
+                                    // Position exit marker opposite to entry (entry was aboveBar for short)
+                                    position = 'belowBar';
+                                    labelPosition = 'belowBar';
+                                    shortExits++;
+                                }
+                                
+                                if (shape) {
+                                    // Add exit markers to both charts with different styling
+                                    const marker = {
+                                        time: time,
+                                        position: position,
+                                        color: color,
+                                        shape: shape,
+                                        text: text,
+                                        size: 1.5, // Slightly smaller than entry markers
+                                    };
+                                    mainMarkers.push(marker);
+                                    heikinAshiMarkers.push(marker);
+                                    exitMarkers.push(marker); // Add to exitMarkers array
+                                    
+                                    // Add text label for exit with offset position
+                                    signalLabels.push({
+                                        time: time,
+                                        position: labelPosition,
+                                        color: color,
+                                        shape: 'circle',
+                                        text: labelText,
+                                        size: 0.8, // Smaller text label
+                                    });
+                                }
+                            }
+                        } catch (error) {
+                            console.error('Error processing item at index', index, ':', error, 'Item:', item);
+                            // Continue processing other items
+                        }
+                    });
+
+                    // Update stats
+                    document.getElementById('candleCount').textContent = data.length;
+                    document.getElementById('longEntries').textContent = longEntries;
+                    document.getElementById('longExits').textContent = longExits;
+                    document.getElementById('shortEntries').textContent = shortEntries;
+                    document.getElementById('shortExits').textContent = shortExits;
+
+                    // Validate processed data before setting to chart
+                    console.log('Processed data summary:');
+                    console.log('Regular candles:', regularCandleData.length);
+                    console.log('Heikin Ashi candles:', heikinAshiCandleData.length);
+                    console.log('Volume data:', volumeData.length);
+                    console.log('Equity data:', equityData.length);
+                    console.log('Main markers:', mainMarkers.length);
+                    console.log('Signal labels:', signalLabels.length);
+                    console.log('All candle signals:', allCandleSignals.length);
+                    
+                    if (regularCandleData.length === 0) {
+                        throw new Error('No regular candle data processed');
+                    }
+                    
+                    console.log('Sample regular candle:', regularCandleData[0]);
+                    console.log('Sample equity data:', equityData[0]);
+                    if (allCandleSignals.length > 0) {
+                        console.log('Sample all-candle signal:', allCandleSignals[0]);
+                    }
+                    if (signalLabels.length > 0) {
+                        console.log('Sample signal label:', signalLabels[0]);
+                    }
+
+                    // Variables to store marker arrays for toggling
+                    let allMarkersForMain = [];
+                    let allMarkersForHA = [];
+                    let signalLabelsVisible = true;
+                    let allCandleSignalsVisible = true;
+
+                    // Combine all markers for main chart
+                    allMarkersForMain = [...mainMarkers];
+                    if (signalLabelsVisible) {
+                        allMarkersForMain = allMarkersForMain.concat(signalLabels);
+                    }
+                    if (allCandleSignalsVisible) {
+                        allMarkersForMain = allMarkersForMain.concat(allCandleSignals);
+                    }
+                    
+                    // Combine all markers for Heikin Ashi chart
+                    allMarkersForHA = [...heikinAshiMarkers];
+
+                    // Set data
+                    regularCandlestickSeries.setData(regularCandleData);
+                    if (heikinAshiCandleData.length > 0) {
+                        heikinAshiCandlestickSeries.setData(heikinAshiCandleData);
+                    }
+                    volumeSeries.setData(volumeData);
+                    regularCandlestickSeries.setMarkers(allMarkersForMain);
+                    if (heikinAshiCandleData.length > 0) {
+                        heikinAshiCandlestickSeries.setMarkers(allMarkersForHA);
+                    }
+                    equitySeries.setData(equityData);
+
+                    console.log('Chart data set successfully');
+                    console.log('Signal labels series set with', signalLabels.length, 'markers');
+                    console.log('All candle signals series set with', allCandleSignals.length, 'markers');
+
+                    // Fit content
+                    mainChart.timeScale().fitContent();
+                    heikinAshiChart.timeScale().fitContent();
+                    equityChart.timeScale().fitContent();
+                    
+                    // Sync all charts' timescales
+                    mainChart.timeScale().subscribeVisibleLogicalRangeChange(range => {
+                        heikinAshiChart.timeScale().setVisibleLogicalRange(range);
+                        equityChart.timeScale().setVisibleLogicalRange(range);
+                    });
+                    
+                    heikinAshiChart.timeScale().subscribeVisibleLogicalRangeChange(range => {
+                        mainChart.timeScale().setVisibleLogicalRange(range);
+                        equityChart.timeScale().setVisibleLogicalRange(range);
+                    });
+                    
+                    equityChart.timeScale().subscribeVisibleLogicalRangeChange(range => {
+                        mainChart.timeScale().setVisibleLogicalRange(range);
+                        heikinAshiChart.timeScale().setVisibleLogicalRange(range);
+                    });
+                    
+                    // Add tooltip functionality
+                    const tooltip = document.getElementById('tooltip');
+                    let isTooltipVisible = false;
+                    
+                    // Hide tooltip when clicking elsewhere
+                    document.addEventListener('click', (event) => {
+                        if (!tooltip.contains(event.target) && !document.getElementById('main-chart').contains(event.target)) {
+                            tooltip.style.display = 'none';
+                            isTooltipVisible = false;
+                        }
+                    });
+                    
+                    // Function to show tooltip
+                    function showTooltip(param, chartElement) {
+                        if (!param.time) {
+                            tooltip.style.display = 'none';
+                            isTooltipVisible = false;
+                            return;
+                        }
+                        
+                        const details = candleDetails[param.time];
+                        
+                        if (details) {
+                            // Position tooltip near the click point
+                            const rect = chartElement.getBoundingClientRect();
+                            
+                            tooltip.style.display = 'block';
+                            tooltip.style.left = Math.min(param.point.x + rect.left + 15, window.innerWidth - 420) + 'px';
+                            tooltip.style.top = Math.max(param.point.y + rect.top - 50, 10) + 'px';
+                            isTooltipVisible = true;
+                            
+                            let html = '<table>';
+                            html += '<button class="close-btn" onclick="document.getElementById(\'tooltip\').style.display=\'none\'">×</button>';
+                            html += '<tr><th colspan="2" style="text-align:center;background:#e3f2fd;">[DATE] ' + details.date + '</th></tr>';
+                            
+                            // Regular candle data
+                            html += '<tr><th colspan="2" style="text-align:center;background:#f0f0f0;">[CANDLE] Regular Candle</th></tr>';
+                            html += '<tr><td>Open</td><td>' + details.candle.open.toFixed(4) + '</td></tr>';
+                            html += '<tr><td>High</td><td>' + details.candle.high.toFixed(4) + '</td></tr>';
+                            html += '<tr><td>Low</td><td>' + details.candle.low.toFixed(4) + '</td></tr>';
+                            html += '<tr><td>Close</td><td>' + details.candle.close.toFixed(4) + '</td></tr>';
+                            html += '<tr><td>Volume</td><td>' + details.candle.volume.toFixed(2) + '</td></tr>';
+                            
+                            // Heikin Ashi candle data if available
+                            if (details.heikinAshi) {
+                                html += '<tr><th colspan="2" style="text-align:center;background:#fff3e0;">[HA] Heikin Ashi Candle</th></tr>';
+                                html += '<tr><td>Open</td><td>' + details.heikinAshi.open.toFixed(4) + '</td></tr>';
+                                html += '<tr><td>High</td><td>' + details.heikinAshi.high.toFixed(4) + '</td></tr>';
+                                html += '<tr><td>Low</td><td>' + details.heikinAshi.low.toFixed(4) + '</td></tr>';
+                                html += '<tr><td>Close</td><td>' + details.heikinAshi.close.toFixed(4) + '</td></tr>';
+                            }
+                            
+                            // Account information
+                            html += '<tr><th colspan="2" style="text-align:center;background:#e8f5e8;">[ACCOUNT] Account</th></tr>';
+                            html += '<tr><td>Balance</td><td>$' + details.balance.toFixed(2) + '</td></tr>';
+                            html += '<tr><td>Equity</td><td>$' + details.equity.toFixed(2) + '</td></tr>';
+                            
+                            if (details.activeTrade) {
+                                html += '<tr><td>Active Trade</td><td style="color: #ff9800; font-weight: bold;">[YES] Yes</td></tr>';
+                            } else {
+                                html += '<tr><td>Active Trade</td><td>[NO] No</td></tr>';
+                            }
+                            
+                            // Signal information (if present)
+                            if (details.signal) {
+                                html += '<tr class="signal-row"><th colspan="2" style="text-align:center;background:#fff3cd;">[SIGNAL] Signal Information</th></tr>';
+                                html += '<tr class="signal-row"><td>Position</td><td>';
+                                if (details.signal.position === 1) {
+                                    html += '<span style="color: #26a69a; font-weight: bold;">[UP] LONG</span>';
+                                } else if (details.signal.position === -1) {
+                                    html += '<span style="color: #ef5350; font-weight: bold;">[DOWN] SHORT</span>';
+                                } else {
+                                    html += '<span style="color: #666;">[HOLD] HOLD</span>';
+                                }
+                                html += '</td></tr>';
+                                html += '<tr class="signal-row"><td>Reason</td><td>' + (details.signal.reason || 'N/A') + '</td></tr>';
+                                html += '<tr class="signal-row"><td>Strategy</td><td>' + (details.signal.strategy_name || 'N/A') + '</td></tr>';
+                                if (details.signal.trigger_price !== undefined && details.signal.trigger_price !== null) {
+                                    html += '<tr class="signal-row"><td>Trigger Price</td><td>' + details.signal.trigger_price.toFixed(4) + '</td></tr>';
+                                }
+                            }
+                            
+                            // Trade information (if present)
+                            if (details.tradeInfo) {
+                                html += '<tr class="trade-row"><th colspan="2" style="text-align:center;background:#d1ecf1;">[TRADE] Trade Information</th></tr>';
+                                if (details.tradeInfo.entry && details.tradeInfo.entry > 0) {
+                                    html += '<tr class="trade-row"><td>Entry Price</td><td>' + details.tradeInfo.entry.toFixed(4) + '</td></tr>';
+                                    if (details.tradeInfo.entry_time) {
+                                        let entryTime;
+                                        try {
+                                            entryTime = new Date(details.tradeInfo.entry_time);
+                                            if (isNaN(entryTime.getTime())) {
+                                                entryTime = 'Invalid Date';
+                                            } else {
+                                                entryTime = entryTime.toLocaleString();
+                                            }
+                                        } catch (e) {
+                                            entryTime = 'Invalid Date';
+                                        }
+                                        html += '<tr class="trade-row"><td>Entry Time</td><td>' + entryTime + '</td></tr>';
+                                    }
+                                }
+                                if (details.tradeInfo.exit && details.tradeInfo.exit > 0) {
+                                    html += '<tr class="trade-row"><td>Exit Price</td><td>' + details.tradeInfo.exit.toFixed(4) + '</td></tr>';
+                                    if (details.tradeInfo.exit_time) {
+                                        let exitTime;
+                                        try {
+                                            exitTime = new Date(details.tradeInfo.exit_time);
+                                            if (isNaN(exitTime.getTime())) {
+                                                exitTime = 'Invalid Date';
+                                            } else {
+                                                exitTime = exitTime.toLocaleString();
+                                            }
+                                        } catch (e) {
+                                            exitTime = 'Invalid Date';
+                                        }
+                                        html += '<tr class="trade-row"><td>Exit Time</td><td>' + exitTime + '</td></tr>';
+                                    }
+                                    if (details.tradeInfo.pnl !== undefined && details.tradeInfo.pnl !== null) {
+                                        html += '<tr class="trade-row"><td>P&L</td><td style="color: ' + (details.tradeInfo.pnl >= 0 ? '#26a69a' : '#ef5350') + '; font-weight: bold;">$' + details.tradeInfo.pnl.toFixed(2) + '</td></tr>';
+                                    }
+                                    html += '<tr class="trade-row"><td>Exit Reason</td><td>' + (details.tradeInfo.reason || 'N/A') + '</td></tr>';
+                                }
+                                html += '<tr class="trade-row"><td>Side</td><td>' + (details.tradeInfo.side || 'N/A') + '</td></tr>';
+                                if (details.tradeInfo.quantity !== undefined && details.tradeInfo.quantity !== null) {
+                                    html += '<tr class="trade-row"><td>Quantity</td><td>' + details.tradeInfo.quantity.toFixed(4) + '</td></tr>';
+                                }
+                                if (details.tradeInfo.cost !== undefined && details.tradeInfo.cost !== null) {
+                                    html += '<tr class="trade-row"><td>Cost</td><td>$' + details.tradeInfo.cost.toFixed(2) + '</td></tr>';
+                                }
+                                if (details.tradeInfo.mae !== undefined && details.tradeInfo.mae !== null) {
+                                    html += '<tr class="trade-row"><td>MAE</td><td style="color: #ef5350;">$' + details.tradeInfo.mae.toFixed(2) + '</td></tr>';
+                                }
+                                if (details.tradeInfo.mfe !== undefined && details.tradeInfo.mfe !== null) {
+                                    html += '<tr class="trade-row"><td>MFE</td><td style="color: #26a69a;">$' + details.tradeInfo.mfe.toFixed(2) + '</td></tr>';
+                                }
+                            }
+                            
+                            // Trade details (if present)
+                            if (details.tradeDetails) {
+                                html += '<tr><th colspan="2" style="text-align:center;background:#f0f0f0;">[DETAILS] Trade Details</th></tr>';
+                                html += '<tr><td colspan="2" style="font-style: italic;">' + details.tradeDetails + '</td></tr>';
+                            }
+                            
+                            html += '</table>';
+                            tooltip.innerHTML = html;
+                        }
+                    }
+                    
+                    // Add click handlers to both charts
+                    mainChart.subscribeClick(param => {
+                        showTooltip(param, document.getElementById('main-chart'));
+                    });
+                    
+                    heikinAshiChart.subscribeClick(param => {
+                        showTooltip(param, document.getElementById('heikin-ashi-chart'));
+                    });
+                    
+                    // Control visibility of charts and series
+                    document.getElementById('showHeikinAshi').addEventListener('change', function() {
+                        document.getElementById('heikin-ashi-chart').style.display = this.checked ? 'block' : 'none';
+                    });
+                    
+                    document.getElementById('showVolume').addEventListener('change', function() {
+                        volumeSeries.setVisible(this.checked);
+                    });
+                    
+                    // Function to update markers based on visibility settings
+                    function updateMarkers() {
+                        // Rebuild main chart markers
+                        allMarkersForMain = [...mainMarkers];
+                        if (signalLabelsVisible) {
+                            allMarkersForMain = allMarkersForMain.concat(signalLabels);
+                        }
+                        if (allCandleSignalsVisible) {
+                            allMarkersForMain = allMarkersForMain.concat(allCandleSignals);
+                        }
+                        
+                        // Set the updated markers
+                        regularCandlestickSeries.setMarkers(allMarkersForMain);
+                    }
+
+                    document.getElementById('showSignalLabels').addEventListener('change', function() {
+                        console.log('Toggle Signal Labels:', this.checked);
+                        signalLabelsVisible = this.checked;
+                        updateMarkers();
+                    });
+                    
+                    document.getElementById('showAllCandleSignals').addEventListener('change', function() {
+                        console.log('Toggle All Candle Signals:', this.checked);
+                        allCandleSignalsVisible = this.checked;
+                        updateMarkers();
+                    });
+                    
+                } catch (error) {
+                    console.error('Error creating charts:', error);
+                    document.getElementById('main-chart').innerHTML = '<div class="error">Error creating charts: ' + error.message + '</div>';
+                }
+            })
+            .catch(error => {
+                console.error('Error loading chart data:', error);
+                document.getElementById('main-chart').innerHTML = '<div class="error">Error loading chart data: ' + error.message + '</div>';
+            });
+    </script>
+</body>
+</html>
