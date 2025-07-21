@@ -1,0 +1,745 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multi-Symbol Backtest Results</title>
+    <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        .loading {
+            text-align: center;
+            padding: 50px;
+            font-size: 18px;
+            color: #666;
+        }
+        .error {
+            text-align: center;
+            padding: 50px;
+            color: #dc3545;
+            background: #f8d7da;
+            border: 1px solid #f5c6cb;
+            border-radius: 5px;
+            margin: 20px;
+        }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            padding: 30px;
+            background: #f8f9fa;
+        }
+        .stat-card {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+        .stat-value {
+            font-size: 2em;
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 5px;
+        }
+        .stat-label {
+            color: #666;
+            font-size: 0.9em;
+        }
+        .positive { color: #28a745; }
+        .negative { color: #dc3545; }
+        .symbol-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(600px, 1fr));
+            gap: 30px;
+            padding: 30px;
+        }
+        .symbol-card {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        .symbol-header {
+            background: #343a40;
+            color: white;
+            padding: 15px 20px;
+            font-weight: bold;
+            font-size: 1.1em;
+        }
+        .symbol-stats {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 15px;
+            padding: 20px;
+            background: #f8f9fa;
+        }
+        .symbol-stat {
+            text-align: center;
+        }
+        .symbol-stat-value {
+            font-size: 1.3em;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+        .symbol-stat-label {
+            font-size: 0.8em;
+            color: #666;
+        }
+        .charts-container {
+            padding: 20px;
+        }
+        .chart-container {
+            margin-bottom: 20px;
+        }
+        .chart-container h4 {
+            margin: 0 0 10px 0;
+            font-size: 16px;
+            color: #333;
+            text-align: center;
+            background: #f8f9fa;
+            padding: 8px;
+            border-radius: 4px;
+        }
+        .heikin-ashi-container {
+            border-top: 2px solid #dee2e6;
+            padding-top: 20px;
+        }
+        .controls {
+            padding: 20px;
+            background: #f8f9fa;
+            border-top: 1px solid #dee2e6;
+        }
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+        .control-group label {
+            font-weight: 500;
+        }
+        .top-performers {
+            padding: 30px;
+            background: white;
+        }
+        .performers-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            margin-top: 20px;
+        }
+        .performer-list {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+        }
+        .performer-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px 0;
+            border-bottom: 1px solid #dee2e6;
+        }
+        .performer-item:last-child {
+            border-bottom: none;
+        }
+        .refresh-btn {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 20px;
+        }
+        .refresh-btn:hover {
+            background: #0056b3;
+        }
+        
+        /* Tooltip styles */
+        .tooltip {
+            position: absolute;
+            background: #ffffff;
+            border: 2px solid #333;
+            border-radius: 8px;
+            padding: 10px;
+            font-size: 12px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            z-index: 1000;
+            display: none;
+            max-width: 400px;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+        .tooltip table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .tooltip th, .tooltip td {
+            padding: 4px 8px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        .tooltip th {
+            background-color: #f5f5f5;
+            font-weight: bold;
+        }
+        .tooltip .close-btn {
+            position: absolute;
+            top: 5px;
+            right: 8px;
+            background: #dc3545;
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            cursor: pointer;
+            font-size: 12px;
+            line-height: 1;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Multi-Symbol Backtest Results</h1>
+            <div id="strategy-info"></div>
+        </div>
+        
+        <button class="refresh-btn" onclick="loadData()">Refresh Data</button>
+        
+        <div id="loading" class="loading">
+            Loading backtest data...
+        </div>
+        
+        <div id="error-message" class="error" style="display: none;">
+        </div>
+        
+        <div id="content" style="display: none;">
+            <div id="stats-grid" class="stats-grid">
+                <!-- Stats will be populated here -->
+            </div>
+            
+            <div id="symbol-grid" class="symbol-grid">
+                <!-- Symbol charts will be populated here -->
+            </div>
+            
+            <div class="top-performers">
+                <h2>Performance Summary</h2>
+                <div class="performers-grid">
+                    <div>
+                        <h3>Top 10 Performers</h3>
+                        <div id="top-performers" class="performer-list">
+                            <!-- Top performers will be populated here -->
+                        </div>
+                    </div>
+                    <div>
+                        <h3>Bottom 5 Performers</h3>
+                        <div id="bottom-performers" class="performer-list">
+                            <!-- Bottom performers will be populated here -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tooltip for candle details -->
+    <div id="tooltip" class="tooltip"></div>
+
+    <script>
+        let backtestData = null;
+        let charts = {};
+
+        // Helper function to get CSS class based on value comparison
+        function getClass(value, threshold) {
+            return value >= threshold ? 'positive' : 'negative';
+        }
+
+        // Helper function to format currency
+        function formatCurrency(value) {
+            return new Intl.NumberFormat('en-US', { 
+                style: 'currency', 
+                currency: 'USD' 
+            }).format(value);
+        }
+
+        // Helper function to format percentage
+        function formatPercentage(value) {
+            return (value * 100).toFixed(2) + '%';
+        }
+
+        // Load data from JSON file
+        async function loadData() {
+            const loadingEl = document.getElementById('loading');
+            const errorEl = document.getElementById('error-message');
+            const contentEl = document.getElementById('content');
+            
+            loadingEl.style.display = 'block';
+            errorEl.style.display = 'none';
+            contentEl.style.display = 'none';
+
+            try {
+                const response = await fetch('multi_symbol_backtest_data.json?' + Date.now()); // Cache busting
+                if (!response.ok) {
+                    throw new Error(`Failed to load data: ${response.status} ${response.statusText}`);
+                }
+                
+                backtestData = await response.json();
+                console.log('Loaded backtest data:', backtestData);
+                
+                // Validate the structure of loaded data
+                if (!backtestData || typeof backtestData !== 'object') {
+                    throw new Error('Invalid JSON structure: root object is missing');
+                }
+                
+                if (!backtestData.results) {
+                    throw new Error('Invalid JSON structure: "results" property is missing');
+                }
+                
+                if (!backtestData.results.results) {
+                    throw new Error('Invalid JSON structure: "results.results" property is missing');
+                }
+                
+                console.log('Chart data loaded - symbols:', backtestData.chartData ? backtestData.chartData.length : 0);
+                
+                loadingEl.style.display = 'none';
+                contentEl.style.display = 'block';
+                
+                // Populate the UI
+                populateHeader();
+                populateStats();
+                populateSymbolCharts();
+                populatePerformanceSummary();
+                
+            } catch (error) {
+                console.error('Error loading data:', error);
+                loadingEl.style.display = 'none';
+                errorEl.style.display = 'block';
+                errorEl.innerHTML = `
+                    <h3>Failed to Load Data</h3>
+                    <p>${error.message}</p>
+                    <p>Please ensure the <code>multi_symbol_backtest_data.json</code> file exists and run the backtest to generate it.</p>
+                    <button onclick="loadData()" style="margin-top: 10px; padding: 8px 16px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer;">Retry</button>
+                `;
+            }
+        }
+
+        // Populate header information
+        function populateHeader() {
+            const results = backtestData.results;
+            const strategyInfo = document.getElementById('strategy-info');
+            
+            const startTime = new Date(results.start_time).toLocaleDateString();
+            const endTime = new Date(results.end_time).toLocaleDateString();
+            const duration = Math.round((new Date(results.end_time) - new Date(results.start_time)) / (1000 * 60 * 60)); // hours
+            
+            strategyInfo.innerHTML = `
+                <h2>${results.strategy} Strategy</h2>
+                <p>Period: ${startTime} to ${endTime} | Duration: ${duration}h</p>
+            `;
+        }
+
+        // Populate statistics grid
+        function populateStats() {
+            const results = backtestData.results;
+            const metrics = results.overall_metrics;
+            const statsGrid = document.getElementById('stats-grid');
+            
+            const stats = [
+                {
+                    value: results.total_symbols,
+                    label: 'Total Symbols',
+                    class: ''
+                },
+                {
+                    value: results.successful_runs,
+                    label: 'Successful Runs',
+                    class: ''
+                },
+                {
+                    value: Math.round(metrics.total_trades || 0),
+                    label: 'Total Trades',
+                    class: ''
+                },
+                {
+                    value: formatPercentage(metrics.overall_win_rate || 0),
+                    label: 'Overall Win Rate',
+                    class: getClass((metrics.overall_win_rate || 0) * 100, 50)
+                },
+                {
+                    value: formatCurrency(metrics.total_pnl || 0),
+                    label: 'Total P&L',
+                    class: getClass(metrics.total_pnl || 0, 0)
+                },
+                {
+                    value: formatCurrency(metrics.avg_pnl_per_symbol || 0),
+                    label: 'Avg P&L per Symbol',
+                    class: getClass(metrics.avg_pnl_per_symbol || 0, 0)
+                },
+                {
+                    value: `${Math.round(metrics.profitable_symbols_count || 0)}/${results.successful_runs}`,
+                    label: 'Profitable Symbols',
+                    class: ''
+                },
+                {
+                    value: formatPercentage(metrics.profitable_symbols_ratio || 0),
+                    label: 'Success Rate',
+                    class: getClass((metrics.profitable_symbols_ratio || 0) * 100, 50)
+                }
+            ];
+
+            statsGrid.innerHTML = stats.map(stat => `
+                <div class="stat-card">
+                    <div class="stat-value ${stat.class}">${stat.value}</div>
+                    <div class="stat-label">${stat.label}</div>
+                </div>
+            `).join('');
+        }
+
+        // Populate symbol charts
+        function populateSymbolCharts() {
+            const results = backtestData.results.results;
+            const chartData = backtestData.chartData;
+            const symbolGrid = document.getElementById('symbol-grid');
+            
+            // Check if we have valid data
+            if (!results || typeof results !== 'object') {
+                console.error('No valid results data found');
+                return;
+            }
+            
+            if (!chartData || !Array.isArray(chartData)) {
+                console.warn('No chart data available, charts will not be displayed');
+            }
+            
+            let symbolIndex = 0;
+            symbolGrid.innerHTML = '';
+            
+            for (const [symbol, result] of Object.entries(results)) {
+                const pnl = result.equity - result.starting_balance;
+                const winRate = result.trades > 0 ? (result.wins / result.trades) * 100 : 0;
+                
+                const symbolCard = document.createElement('div');
+                symbolCard.className = 'symbol-card';
+                symbolCard.innerHTML = `
+                    <div class="symbol-header">${symbol}</div>
+                    <div class="symbol-stats">
+                        <div class="symbol-stat">
+                            <div class="symbol-stat-value ${getClass(pnl, 0)}">${formatCurrency(pnl)}</div>
+                            <div class="symbol-stat-label">P&L</div>
+                        </div>
+                        <div class="symbol-stat">
+                            <div class="symbol-stat-value">${result.trades}</div>
+                            <div class="symbol-stat-label">Trades</div>
+                        </div>
+                        <div class="symbol-stat">
+                            <div class="symbol-stat-value ${getClass(winRate, 50)}">${winRate.toFixed(1)}%</div>
+                            <div class="symbol-stat-label">Win Rate</div>
+                        </div>
+                    </div>
+                    <div class="charts-container">
+                        <div class="chart-container">
+                            <h4>Regular Candles</h4>
+                            <div id="chart-${symbolIndex}" style="height: 350px;"></div>
+                        </div>
+                        <div class="chart-container heikin-ashi-container" id="heikin-ashi-container-${symbolIndex}">
+                            <h4>Heikin Ashi Candles</h4>
+                            <div id="heikin-ashi-chart-${symbolIndex}" style="height: 250px;"></div>
+                        </div>
+                    </div>
+                    <div class="controls">
+                        <div class="control-group">
+                            <label><input type="checkbox" id="showHeikinAshi-${symbolIndex}" checked onchange="toggleHeikinAshi(${symbolIndex})"> Show Heikin Ashi</label>
+                            <label><input type="checkbox" id="showVolume-${symbolIndex}" checked> Show Volume</label>
+                            <label><input type="checkbox" id="showSignals-${symbolIndex}" checked> Show Signals</label>
+                        </div>
+                    </div>
+                `;
+                
+                symbolGrid.appendChild(symbolCard);
+                
+                // Create chart for this symbol only if chart data is available
+                if (chartData && Array.isArray(chartData)) {
+                    createChart(symbol, symbolIndex, chartData);
+                } else {
+                    // Show message in chart container if no data
+                    const chartContainer = document.getElementById(`chart-${symbolIndex}`);
+                    if (chartContainer) {
+                        chartContainer.innerHTML = `
+                            <div style="display: flex; align-items: center; justify-content: center; height: 100%; color: #666; font-style: italic;">
+                                Chart data not available for ${symbol}
+                            </div>
+                        `;
+                    }
+                }
+                symbolIndex++;
+            }
+        }
+
+        // Create individual chart
+        function createChart(symbol, index, allChartData) {
+            // Validate input parameters
+            if (!allChartData || !Array.isArray(allChartData)) {
+                console.warn(`Invalid chart data array for symbol: ${symbol}`);
+                return;
+            }
+            
+            // Find chart data for this symbol
+            const symbolData = allChartData.find(data => data && data.symbol === symbol);
+            if (!symbolData || !symbolData.data || !Array.isArray(symbolData.data) || symbolData.data.length === 0) {
+                console.warn(`No chart data found for symbol: ${symbol}`);
+                const chartContainer = document.getElementById(`chart-${index}`);
+                if (chartContainer) {
+                    chartContainer.innerHTML = `
+                        <div style="display: flex; align-items: center; justify-content: center; height: 100%; color: #666; font-style: italic;">
+                            No chart data available for ${symbol}
+                        </div>
+                    `;
+                }
+                return;
+            }
+
+            const chartContainer = document.getElementById(`chart-${index}`);
+            if (!chartContainer) {
+                console.warn(`Chart container not found for index: ${index}`);
+                return;
+            }
+
+            // Validate LightweightCharts availability
+            if (typeof LightweightCharts === 'undefined') {
+                console.error('LightweightCharts library not loaded');
+                chartContainer.innerHTML = `
+                    <div style="display: flex; align-items: center; justify-content: center; height: 100%; color: #dc3545; font-style: italic;">
+                        LightweightCharts library not loaded
+                    </div>
+                `;
+                return;
+            }
+            
+            const chart = LightweightCharts.createChart(chartContainer, {
+                width: chartContainer.clientWidth,
+                height: 350,
+                layout: {
+                    backgroundColor: '#ffffff',
+                    textColor: '#333',
+                },
+                grid: {
+                    vertLines: { color: '#f0f0f0' },
+                    horzLines: { color: '#f0f0f0' },
+                },
+                timeScale: {
+                    borderColor: '#cccccc',
+                },
+                rightPriceScale: {
+                    borderColor: '#cccccc',
+                },
+            });
+            
+            // Validate chart creation
+            if (!chart || typeof chart.addCandlestickSeries !== 'function') {
+                console.error('Chart creation failed or addCandlestickSeries not available');
+                chartContainer.innerHTML = `
+                    <div style="display: flex; align-items: center; justify-content: center; height: 100%; color: #dc3545; font-style: italic;">
+                        Chart creation failed
+                    </div>
+                `;
+                return;
+            }
+
+            // Process chart data
+            const regularCandleData = [];
+            const heikinAshiCandleData = [];
+            const volumeData = [];
+            const markers = [];
+
+            symbolData.data.forEach((item, itemIndex) => {
+                try {
+                    const candle = item.candle;
+                    const haCandle = item.heikin_ashi;
+
+                    if (!candle || !candle.timestamp) {
+                        console.warn(`Invalid candle data at index ${itemIndex} for symbol ${symbol}`);
+                        return;
+                    }
+
+                    const time = Math.floor(new Date(candle.timestamp).getTime() / 1000);
+                    
+                    // Validate that we got a valid timestamp
+                    if (isNaN(time) || time <= 0) {
+                        console.warn(`Invalid timestamp in candle data at index ${itemIndex} for symbol ${symbol}: ${candle.timestamp}`);
+                        return;
+                    }
+
+                regularCandleData.push({
+                    time: time,
+                    open: parseFloat(candle.open),
+                    high: parseFloat(candle.high),
+                    low: parseFloat(candle.low),
+                    close: parseFloat(candle.close),
+                });
+
+                if (haCandle && haCandle.open) {
+                    heikinAshiCandleData.push({
+                        time: time,
+                        open: parseFloat(haCandle.open),
+                        high: parseFloat(haCandle.high),
+                        low: parseFloat(haCandle.low),
+                        close: parseFloat(haCandle.close),
+                    });
+                }
+
+                volumeData.push({
+                    time: time,
+                    value: parseFloat(candle.volume || 0),
+                    color: candle.close >= candle.open ? 'rgba(38, 166, 154, 0.5)' : 'rgba(239, 83, 80, 0.5)',
+                });
+
+                // Add signal markers
+                const signal = item.signal;
+                if (signal && signal.position !== undefined && signal.position !== 0) {
+                    let shape, color, text, position;
+
+                    if (signal.position === 1) { // Long bullish
+                        shape = 'arrowUp';
+                        color = '#26a69a';
+                        text = 'L';
+                        position = 'belowBar';
+                    } else if (signal.position === -1) { // Short bearish
+                        shape = 'arrowDown';
+                        color = '#ef5350';
+                        text = 'S';
+                        position = 'aboveBar';
+                    } else if (signal.position === -2) { // Short bullish
+                        shape = 'arrowDown';
+                        color = '#d7793b';
+                        text = 'S*';
+                        position = 'aboveBar';
+                    } else if (signal.position === 2) { // Long bearish
+                        shape = 'arrowUp';
+                        color = '#127aaf';
+                        text = 'L*';
+                        position = 'belowBar';
+                    }
+
+                    if (shape) {
+                        markers.push({
+                            time: time,
+                            position: position,
+                            color: color,
+                            shape: shape,
+                            text: text,
+                            size: 1,
+                        });
+                    }
+                }
+                } catch (error) {
+                    console.error(`Error processing candle data at index ${itemIndex} for symbol ${symbol}:`, error);
+                }
+            });
+
+            // Add series to chart
+            const candlestickSeries = chart.addCandlestickSeries({
+                upColor: '#26a69a',
+                downColor: '#ef5350',
+                borderVisible: false,
+                wickUpColor: '#26a69a',
+                wickDownColor: '#ef5350',
+            });
+
+            candlestickSeries.setData(regularCandleData);
+            candlestickSeries.setMarkers(markers);
+
+            // Store chart reference
+            charts[symbol] = {
+                chart: chart,
+                candlestickSeries: candlestickSeries,
+                data: symbolData.data,
+                results: symbolData.results
+            };
+
+            chart.timeScale().fitContent();
+        }
+
+        // Populate performance summary
+        function populatePerformanceSummary() {
+            const results = backtestData.results.results;
+            
+            // Calculate performances
+            const performances = Object.entries(results).map(([symbol, result]) => ({
+                symbol: symbol,
+                pnl: result.equity - result.starting_balance
+            }));
+
+            // Sort by PnL
+            performances.sort((a, b) => b.pnl - a.pnl);
+
+            // Top 10 performers
+            const topPerformers = document.getElementById('top-performers');
+            const top10 = performances.slice(0, 10);
+            topPerformers.innerHTML = top10.map((perf, index) => `
+                <div class="performer-item">
+                    <span>${index + 1}. ${perf.symbol}</span>
+                    <span class="${getClass(perf.pnl, 0)}">${formatCurrency(perf.pnl)}</span>
+                </div>
+            `).join('');
+
+            // Bottom 5 performers
+            const bottomPerformers = document.getElementById('bottom-performers');
+            const bottom5 = performances.slice(-5);
+            bottomPerformers.innerHTML = bottom5.map((perf, index) => `
+                <div class="performer-item">
+                    <span>${performances.length - bottom5.length + index + 1}. ${perf.symbol}</span>
+                    <span class="${getClass(perf.pnl, 0)}">${formatCurrency(perf.pnl)}</span>
+                </div>
+            `).join('');
+        }
+
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            Object.values(charts).forEach(chartData => {
+                if (chartData.chart) {
+                    chartData.chart.applyOptions({ 
+                        width: chartData.chart.options().width 
+                    });
+                }
+            });
+        });
+
+        // Check if LightweightCharts is available
+        function checkLibraryAvailability() {
+            console.log('LightweightCharts available:', typeof LightweightCharts !== 'undefined');
+            console.log('LightweightCharts object:', LightweightCharts);
+            if (typeof LightweightCharts !== 'undefined') {
+                console.log('createChart method:', typeof LightweightCharts.createChart);
+            }
+        }
+
+        // Load data when page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            checkLibraryAvailability();
+            loadData();
+        });
+    </script>
+</body>
+</html> 
