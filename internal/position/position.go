@@ -738,8 +738,21 @@ func (p *position) sendSignalNotification(ctx context.Context, signal strategy.S
 		timestamp = signal.Candle.Timestamp.Format(time.RFC3339)
 	}
 
+	posStr := "unknown"
+	if signal.Position == strategy.Hold {
+		posStr = "hold"
+	} else if signal.Position == strategy.LongBullish {
+		posStr = "long bullish"
+	} else if signal.Position == strategy.LongBearish {
+		posStr = "long bearish"
+	} else if signal.Position == strategy.ShortBullish {
+		posStr = "short bullish"
+	} else if signal.Position == strategy.ShortBearish {
+		posStr = "short bearish"
+	}
+
 	msg := fmt.Sprintf("[%s %s] signal for %s at %s: %s (%s)",
-		p.Symbol, signal.StrategyName, p.Symbol, timestamp, signal.Position, signal.Reason)
+		p.Symbol, signal.StrategyName, p.Symbol, timestamp, posStr, signal.Reason)
 
 	if err := p.Notifier.SendWithRetry(msg); err != nil {
 		log.Printf("Position | [%s %s] Notification failed: %v", p.Symbol, signal.StrategyName, err)
