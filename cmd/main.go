@@ -3,24 +3,20 @@ package main
 import (
 	"context"
 	"database/sql"
-	"encoding/csv"
-	"encoding/json"
 	"fmt"
-	"io"
 	"log"
-	"math"
-	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
-	"sort"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 
+	"math/rand"
 	"strconv"
 
+	"github.com/amirphl/simple-trader/internal/backtest"
 	"github.com/amirphl/simple-trader/internal/candle"
 	"github.com/amirphl/simple-trader/internal/config"
 	"github.com/amirphl/simple-trader/internal/db"
@@ -33,8 +29,25 @@ import (
 	"github.com/lib/pq"
 )
 
+// Helper to adapt WallexTrade to position.Tick interface
+func wallexTradeToTick(trade exchange.WallexTrade) position.Tick {
+	price, _ := strconv.ParseFloat(trade.Price, 64)
+	ts := trade.Timestamp
+	return &simpleTick{price: price, timestamp: ts}
+}
+
+type simpleTick struct {
+	price     float64
+	timestamp time.Time
+}
+
+func (t *simpleTick) Price() float64       { return t.price }
+func (t *simpleTick) Timestamp() time.Time { return t.timestamp }
+
 func main() {
-	// Load configuration
+	// Initialize random seed for jitter in retry logic
+	rand.Seed(time.Now().UnixNano())
+
 	cfg := config.MustLoadConfig()
 	log.Println("Starting Simple Trader in mode:", cfg.Mode)
 
@@ -74,7 +87,7 @@ func main() {
 	telegramNotifier := notifier.NewTelegramNotifier(cfg.TelegramToken, cfg.TelegramChatID, cfg.ProxyURL, cfg.NotificationRetries, cfg.NotificationDelay)
 
 	// Create exchange connection
-	ex := exchange.NewWallexExchange(cfg.WallexAPIKey, telegramNotifier)
+	wallexExchange := exchange.NewWallexExchange(cfg.WallexAPIKey, telegramNotifier)
 
 	// Create strategies
 	strats := strategy.New(cfg, storage)
@@ -82,11 +95,16 @@ func main() {
 		log.Fatalf("No valid strategies configured. Check your configuration.")
 	}
 
+	// Handle different modes
 	switch cfg.Mode {
 	case "live":
-		runLiveTrading(ctx, cfg, strats, storage, ex, telegramNotifier)
+		runLiveTrading(ctx, cfg, strats, storage, wallexExchange, telegramNotifier)
 	case "backtest":
-		runBacktest(ctx, cfg, strats, storage)
+		if cfg.MultiSymbolBacktest {
+			backtest.RunMultiSymbolBacktest(ctx, cfg, storage)
+		} else {
+			backtest.RunBacktest(ctx, cfg, strats, storage)
+		}
 	default:
 		log.Fatalf("Unsupported mode: %s", cfg.Mode)
 	}
@@ -163,8 +181,9 @@ func runMigrations(ctx context.Context, connStr string) error {
 	}
 	defer db.Close()
 
+	// ISSUE:
 	// Read the schema.sql file
-	schemaSQL, err := os.ReadFile("scripts/schema.sql")
+	schemaSQL, err := os.ReadFile("/home/amirphl/sources/simple-trader/scripts/schema.sql")
 	if err != nil {
 		return fmt.Errorf("failed to read schema.sql: %w", err)
 	}
@@ -384,7 +403,7 @@ func runTradingLoop(
 	// Load position manager
 	pos, err := position.Load(strat.Name(), strat.Symbol(), storage, ex, notifier)
 	if err != nil {
-		log.Printf("runTradingLoop | Failed to start trading loop with %s strategy: %w", strat.Name(), err)
+		log.Printf("runTradingLoop | Failed to start trading loop with %s strategy: %v", strat.Name(), err)
 		return err
 	}
 
@@ -530,719 +549,6 @@ func runTradingLoop(
 	wg.Wait()
 	return nil
 }
-
-// runBacktest handles the backtest mode
-func runBacktest(
-	ctx context.Context,
-	cfg config.Config,
-	strats []strategy.Strategy,
-	storage db.DB,
-) {
-	for _, strat := range strats {
-		// Load candles for backtesting
-		candles, err := loadBacktestCandles(ctx, storage, strat.Symbol(), strat.Timeframe(), cfg.BacktestFrom.Time, cfg.BacktestTo.Time, cfg.ProxyURL)
-		if err != nil {
-			log.Fatalf("runBacktest | Error loading candles for backtest: %v", err)
-		}
-
-		log.Printf("runBacktest | Loaded %d candles for backtest [%s-%s]",
-			len(candles), cfg.BacktestFrom.Time.Format(time.RFC3339), cfg.BacktestTo.Time.Format(time.RFC3339))
-
-		backtestResults := runStrategyBacktest(strat, candles, cfg)
-
-		// Print backtest results
-		printBacktestResults(strat, backtestResults)
-
-		// Save backtest results to CSV
-		saveBacktestResults(backtestResults)
-
-	}
-}
-
-// loadBacktestCandles loads candles for backtesting, downloading from public API if necessary
-func loadBacktestCandles(
-	ctx context.Context,
-	storage db.DB,
-	symbol, timeframe string,
-	from, to time.Time,
-	proxyURL string,
-) ([]candle.Candle, error) {
-	// Try to load candles from database first
-	candles, err := storage.GetCandles(ctx, symbol, timeframe, "", from, to.Add(-time.Nanosecond)) // ensure exclusive upper bound
-	if err != nil {
-		return nil, fmt.Errorf("loadBacktestCandles | error loading candles from database: %w", err)
-	}
-
-	// If no candles found in database, download from public API
-	if len(candles) == 0 {
-		log.Printf("loadBacktestCandles | No historical candles found in DB for %s, downloading from public API...", symbol)
-
-		// Download candles in chunks to avoid hitting API limits
-		currTime := from
-		maxChunkDays := 14 // Download two weeks at a time
-		allDownloadedCandles := make([]candle.Candle, 0)
-
-		// Create a rate limiter - 1 request per 1 seconds to avoid rate limits
-		ticker := time.NewTicker(2 * time.Second)
-		defer ticker.Stop()
-
-		for currTime.Before(to) {
-			next := currTime.Add(time.Duration(maxChunkDays) * 24 * time.Hour)
-			if next.After(to) {
-				next = to
-			}
-
-			// Wait for rate limiter
-			<-ticker.C
-
-			// Create a context with timeout for the API call
-			downloadCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-			downloadedCandles, err := downloadCandlesFromPublicAPI(downloadCtx, symbol, timeframe, currTime, next, proxyURL)
-			cancel()
-
-			if err != nil {
-				return nil, fmt.Errorf("error fetching candles from %s to %s: %w",
-					currTime.Format(time.RFC3339), next.Format(time.RFC3339), err)
-			}
-
-			log.Printf("loadBacktestCandles | Downloaded %d candles for %s from %s to %s",
-				len(downloadedCandles), symbol, currTime.Format("2006-01-02"), next.Format("2006-01-02"))
-
-			// Add downloaded candles to our collection
-			allDownloadedCandles = append(allDownloadedCandles, downloadedCandles...)
-
-			currTime = next
-		}
-
-		if len(allDownloadedCandles) == 0 {
-			return nil, fmt.Errorf("no candles available for %s from %s to %s",
-				symbol, from.Format(time.RFC3339), to.Format(time.RFC3339))
-		}
-
-		// Process downloaded candles (sort, trim, generate missing, eliminate duplicates)
-		processedCandles := processCandles(allDownloadedCandles, symbol, timeframe, from, to)
-
-		// Save processed candles to database
-		if len(processedCandles) > 0 {
-			saveCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-			err = storage.SaveCandles(saveCtx, processedCandles)
-			cancel()
-
-			if err != nil {
-				return nil, fmt.Errorf("error saving candles to database: %w", err)
-			}
-
-			log.Printf("loadBacktestCandles | Saved %d processed candles to database", len(processedCandles))
-		}
-
-		// Load the saved candles
-		candles, err = storage.GetCandles(ctx, symbol, timeframe, "", from, to.Add(-time.Nanosecond))
-		if err != nil {
-			return nil, fmt.Errorf("loadBacktestCandles | error loading downloaded candles: %w", err)
-		}
-	}
-
-	// Filter out any candle with timestamp >= to (exclusive upper bound)
-	var filtered []candle.Candle
-	for _, c := range candles {
-		if c.Timestamp.Before(to) {
-			filtered = append(filtered, c)
-		}
-	}
-
-	return filtered, nil
-}
-
-// downloadCandlesFromPublicAPI downloads candles from a public cryptocurrency API
-func downloadCandlesFromPublicAPI(ctx context.Context, symbol, timeframe string, start, end time.Time, proxyURL string) ([]candle.Candle, error) {
-	// Map timeframe to API format
-	var interval string
-	switch timeframe {
-	case "1m":
-		interval = "1m"
-	case "5m":
-		interval = "5m"
-	case "15m":
-		interval = "15m"
-	case "30m":
-		interval = "30m"
-	case "1h":
-		interval = "1h"
-	case "4h":
-		interval = "4h"
-	case "1d":
-		interval = "1d"
-	default:
-		return nil, fmt.Errorf("unsupported timeframe: %s", timeframe)
-	}
-
-	// Convert symbol to uppercase and format for API
-	apiSymbol := strings.ToUpper(strings.ReplaceAll(symbol, "-", ""))
-
-	// Calculate start and end timestamps in milliseconds
-	startMs := start.UnixNano() / int64(time.Millisecond)
-	endMs := end.UnixNano() / int64(time.Millisecond)
-
-	// Construct API URL (using Binance public API as an example)
-	apiURL := fmt.Sprintf(
-		"https://api.binance.com/api/v3/klines?symbol=%s&interval=%s&startTime=%d&endTime=%d", // TODO: limit=1000
-		apiSymbol, interval, startMs, endMs,
-	)
-	log.Printf("downloadCandlesFromPublicAPI | API URL: %s", apiURL)
-
-	// Create HTTP client with timeout and optional proxy
-	transport := &http.Transport{}
-	if proxyURL != "" {
-		proxyParsed, err := url.Parse(proxyURL)
-		if err != nil {
-			return nil, fmt.Errorf("invalid proxy URL: %w", err)
-		}
-		transport.Proxy = http.ProxyURL(proxyParsed)
-	}
-	client := &http.Client{
-		Timeout:   10 * time.Second,
-		Transport: transport,
-	}
-
-	// Create request with context
-	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-	// Set a browser-like User-Agent
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
-	req.Header.Set("Accept", "application/json")
-	// Send request
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("error sending request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	// Check response status
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(body))
-	}
-
-	// Read and log response body for debugging
-	bodyBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("error reading response body: %w", err)
-	}
-
-	// Parse response body
-	var rawCandles [][]any
-	if err := json.Unmarshal(bodyBytes, &rawCandles); err != nil {
-		log.Printf("downloadCandlesFromPublicAPI | JSON decode error: %v", err)
-		return nil, fmt.Errorf("error decoding response: %w", err)
-	}
-
-	// Convert raw candles to our Candle struct
-	candles := make([]candle.Candle, 0, len(rawCandles))
-	for _, raw := range rawCandles {
-		if len(raw) < 6 {
-			continue // Skip invalid entries
-		}
-
-		// Robustly parse timestamp
-		var timestamp int64
-		switch v := raw[0].(type) {
-		case float64:
-			timestamp = int64(v)
-		case string:
-			timestamp, err = strconv.ParseInt(v, 10, 64)
-			if err != nil {
-				log.Printf("downloadCandlesFromPublicAPI | Error parsing timestamp string: %v", err)
-				continue
-			}
-		default:
-			log.Printf("downloadCandlesFromPublicAPI | Unexpected timestamp type: %T", v)
-			continue
-		}
-
-		// Robustly parse open, high, low, close, volume
-		parseNum := func(val any) float64 {
-			switch n := val.(type) {
-			case float64:
-				return n
-			case string:
-				f, err := strconv.ParseFloat(n, 64)
-				if err != nil {
-					log.Printf("downloadCandlesFromPublicAPI | Error parsing float string: %v", err)
-					return 0
-				}
-				return f
-			default:
-				log.Printf("downloadCandlesFromPublicAPI | Unexpected number type: %T", n)
-				return 0
-			}
-		}
-		open := parseNum(raw[1])
-		high := parseNum(raw[2])
-		low := parseNum(raw[3])
-		close := parseNum(raw[4])
-		volume := parseNum(raw[5])
-
-		// Create candle
-		c := candle.Candle{
-			Timestamp: time.Unix(timestamp/1000, 0).UTC(),
-			Open:      open,
-			High:      high,
-			Low:       low,
-			Close:     close,
-			Volume:    volume,
-			Symbol:    symbol,
-			Timeframe: timeframe,
-			Source:    "binance",
-		}
-
-		candles = append(candles, c)
-	}
-
-	return candles, nil
-}
-
-// processCandles sorts, trims, generates missing candles, and eliminates duplicates
-func processCandles(candles []candle.Candle, symbol, timeframe string, start, to time.Time) []candle.Candle {
-	if len(candles) == 0 {
-		return candles
-	}
-
-	// 1. Sort candles by timestamp
-	sort.Slice(candles, func(i, j int) bool {
-		return candles[i].Timestamp.Before(candles[j].Timestamp)
-	})
-
-	// 2. Eliminate duplicates using a map
-	candleMap := make(map[time.Time]candle.Candle)
-	for _, c := range candles {
-		// Truncate timestamp to timeframe
-		duration := candle.GetTimeframeDuration(timeframe)
-		c.Timestamp = c.Timestamp.Truncate(duration)
-
-		// Only keep the first occurrence of each timestamp
-		if _, exists := candleMap[c.Timestamp]; !exists {
-			candleMap[c.Timestamp] = c
-		}
-	}
-
-	// 3. Trim candles to requested time range (exclusive upper bound)
-	var trimmedCandles []candle.Candle
-	for ts, c := range candleMap {
-		if (ts.Equal(start) || ts.After(start)) && ts.Before(to) {
-			trimmedCandles = append(trimmedCandles, c)
-		}
-	}
-
-	// Re-sort after trimming
-	sort.Slice(trimmedCandles, func(i, j int) bool {
-		return trimmedCandles[i].Timestamp.Before(trimmedCandles[j].Timestamp)
-	})
-
-	// 4. Generate missing candles
-	if len(trimmedCandles) == 0 {
-		return trimmedCandles
-	}
-
-	var completeCandles []candle.Candle
-	duration := candle.GetTimeframeDuration(timeframe)
-
-	// Start from the first candle's timestamp
-	currentTime := trimmedCandles[0].Timestamp
-	lastTime := trimmedCandles[len(trimmedCandles)-1].Timestamp
-
-	// Use the first candle's close price as base for synthetic candles
-	basePrice := trimmedCandles[0].Close
-
-	i := 0 // Index for trimmedCandles
-	for !currentTime.After(lastTime) && currentTime.Before(to) {
-		if i < len(trimmedCandles) && trimmedCandles[i].Timestamp.Equal(currentTime) {
-			// We have a real candle for this timestamp
-			completeCandles = append(completeCandles, trimmedCandles[i])
-			basePrice = trimmedCandles[i].Close // Update base price for future synthetic candles
-			i++
-		} else {
-			// Create synthetic candle
-			syntheticCandle := candle.Candle{
-				Timestamp: currentTime,
-				Open:      basePrice,
-				High:      basePrice,
-				Low:       basePrice,
-				Close:     basePrice,
-				Volume:    0, // Synthetic candles have zero volume
-				Symbol:    symbol,
-				Timeframe: timeframe,
-				Source:    "synthetic",
-			}
-			completeCandles = append(completeCandles, syntheticCandle)
-		}
-
-		// Move to next time interval
-		currentTime = currentTime.Add(duration)
-	}
-
-	return completeCandles
-}
-
-// BacktestResults holds the results of a backtest
-type BacktestResults struct {
-	Equity      float64
-	MaxEquity   float64
-	MaxDrawdown float64
-	Wins        int
-	Losses      int
-	Trades      int
-	WinPnls     []float64
-	LossPnls    []float64
-	EquityCurve []float64
-	TradeLog    []TradeLogEntry
-	Metrics     map[string]float64
-}
-
-// TradeLogEntry represents a single trade in the backtest
-type TradeLogEntry struct {
-	Entry     float64
-	Exit      float64
-	PnL       float64
-	EntryTime time.Time
-	ExitTime  time.Time
-}
-
-type CandleWithSignal struct {
-	Candle candle.Candle    `json:"candle"`
-	Signal *strategy.Signal `json:"signal,omitempty"`
-}
-
-// runStrategyBacktest runs a backtest for a specific strategy
-func runStrategyBacktest(strat strategy.Strategy, candles []candle.Candle, cfg config.Config) BacktestResults {
-	var results BacktestResults
-	results.Metrics = make(map[string]float64)
-
-	// Initialize backtest variables
-	var signals []strategy.Signal
-	var lastBuyPrice float64
-	var active bool
-	var dailyPnL float64
-	var lastDay int = -1
-	var trailingStop float64
-
-	// For charting: store all candles and their signals
-	var candlesWithSignals []CandleWithSignal
-
-	// Risk parameters
-	stopLossPercent := cfg.StopLossPercent
-	trailingStopPercent := cfg.TrailingStopPercent
-	maxDailyLoss := cfg.MaxDailyLoss
-	slippage := cfg.SlippagePercent / 100.0
-	commission := cfg.CommissionPercent / 100.0
-
-	// Process each candle
-	for _, c := range candles {
-		// Reset daily PnL on new day
-		if lastDay != c.Timestamp.Day() {
-			dailyPnL = 0
-			trailingStop = 0
-			lastDay = c.Timestamp.Day()
-		}
-
-		// Get signal from strategy
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		sig, _ := strat.OnCandles(ctx, []candle.Candle{c})
-		cancel()
-		signals = append(signals, sig)
-
-		var signalPtr *strategy.Signal
-		if sig.Action == "buy" || sig.Action == "sell" {
-			signalPtr = &sig
-		}
-		candlesWithSignals = append(candlesWithSignals, CandleWithSignal{Candle: c, Signal: signalPtr})
-
-		// Process buy signal
-		if sig.Action == "buy" && !active && (maxDailyLoss == 0 || dailyPnL > -maxDailyLoss) {
-			// Simulate slippage and commission on entry
-			entryPrice := c.Close * (1 + slippage)
-			entryPrice += entryPrice * commission
-			lastBuyPrice = entryPrice
-			active = true
-			results.Trades++
-
-			// Record trade entry
-			results.TradeLog = append(results.TradeLog, TradeLogEntry{
-				Entry:     entryPrice,
-				EntryTime: c.Timestamp,
-			})
-			trailingStop = 0
-		} else if active {
-			// Calculate stop loss price
-			stopLossPrice := lastBuyPrice * (1 - stopLossPercent/100)
-			price := c.Close
-
-			// Simulate slippage and commission on exit
-			exitPrice := price * (1 - slippage)
-			exitPrice -= exitPrice * commission
-
-			pnl := 0.0
-			stopTriggered := false
-			trailingTriggered := false
-
-			// Check stop loss
-			if stopLossPercent > 0 && price <= stopLossPrice {
-				exitPrice = stopLossPrice * (1 - slippage)
-				exitPrice -= exitPrice * commission
-				pnl = exitPrice - lastBuyPrice
-				stopTriggered = true
-			} else if trailingStopPercent > 0 {
-				// Update trailing stop
-				profit := price - lastBuyPrice
-				if profit > trailingStop {
-					trailingStop = profit
-				}
-
-				// Check if trailing stop triggered
-				trailingStopPrice := lastBuyPrice + trailingStop - (lastBuyPrice * trailingStopPercent / 100)
-				if price <= trailingStopPrice {
-					exitPrice = trailingStopPrice * (1 - slippage)
-					exitPrice -= exitPrice * commission
-					pnl = exitPrice - lastBuyPrice
-					trailingTriggered = true
-				}
-			}
-
-			// Process sell signal
-			if sig.Action == "sell" && !stopTriggered && !trailingTriggered {
-				pnl = exitPrice - lastBuyPrice
-			}
-
-			// Close position if sell signal or stop triggered
-			if sig.Action == "sell" || stopTriggered || trailingTriggered {
-				results.Equity += pnl
-				dailyPnL += pnl
-
-				// Update trade log
-				lastTrade := &results.TradeLog[len(results.TradeLog)-1]
-				lastTrade.Exit = exitPrice
-				lastTrade.ExitTime = c.Timestamp
-				lastTrade.PnL = pnl
-
-				// Update win/loss stats
-				if pnl > 0 {
-					results.Wins++
-					results.WinPnls = append(results.WinPnls, pnl)
-				} else {
-					results.Losses++
-					results.LossPnls = append(results.LossPnls, pnl)
-				}
-
-				active = false
-				trailingStop = 0
-			}
-		}
-
-		// Update equity curve and drawdown
-		if results.Equity > results.MaxEquity {
-			results.MaxEquity = results.Equity
-		}
-
-		dd := results.MaxEquity - results.Equity
-		if dd > results.MaxDrawdown {
-			results.MaxDrawdown = dd
-		}
-
-		results.EquityCurve = append(results.EquityCurve, results.Equity)
-	}
-
-	// Calculate performance metrics
-	calculatePerformanceMetrics(&results)
-
-	// Add strategy-specific metrics
-	stratMetrics := strat.PerformanceMetrics()
-	for k, v := range stratMetrics {
-		results.Metrics[k] = v
-	}
-
-	// Output candlesWithSignals as JSON for charting
-	chartDataFile := "backtest_chart_data.json"
-	f, err := os.Create(chartDataFile)
-	if err == nil {
-		json.NewEncoder(f).Encode(candlesWithSignals)
-		f.Close()
-		log.Printf("Saved chart data to %s", chartDataFile)
-	} else {
-		log.Printf("Failed to save chart data: %v", err)
-	}
-
-	return results
-}
-
-// calculatePerformanceMetrics calculates performance metrics for backtest results
-func calculatePerformanceMetrics(results *BacktestResults) {
-	// Calculate win rate
-	if results.Trades > 0 {
-		results.Metrics["win_rate"] = float64(results.Wins) / float64(results.Trades)
-	}
-
-	// Calculate average win and loss
-	avgWin, avgLoss := 0.0, 0.0
-
-	for _, w := range results.WinPnls {
-		avgWin += w
-	}
-
-	for _, l := range results.LossPnls {
-		avgLoss += l
-	}
-
-	if len(results.WinPnls) > 0 {
-		avgWin /= float64(len(results.WinPnls))
-		results.Metrics["avg_win"] = avgWin
-	}
-
-	if len(results.LossPnls) > 0 {
-		avgLoss /= float64(len(results.LossPnls))
-		results.Metrics["avg_loss"] = avgLoss
-	}
-
-	// Calculate profit factor
-	if avgLoss != 0 {
-		results.Metrics["profit_factor"] = -avgWin / avgLoss
-	}
-
-	// Calculate Sharpe ratio and expectancy
-	allPnls := append(results.WinPnls, results.LossPnls...)
-	meanPnl, stdPnl := 0.0, 0.0
-
-	for _, p := range allPnls {
-		meanPnl += p
-	}
-
-	if len(allPnls) > 0 {
-		meanPnl /= float64(len(allPnls))
-		results.Metrics["mean_pnl"] = meanPnl
-
-		for _, p := range allPnls {
-			stdPnl += (p - meanPnl) * (p - meanPnl)
-		}
-
-		stdPnl = math.Sqrt(stdPnl / float64(len(allPnls)))
-		results.Metrics["std_pnl"] = stdPnl
-
-		if stdPnl > 0 {
-			results.Metrics["sharpe"] = meanPnl / stdPnl
-		}
-	}
-
-	// Calculate expectancy
-	if results.Trades > 0 {
-		winRate := results.Metrics["win_rate"]
-		results.Metrics["expectancy"] = (winRate*avgWin + (1-winRate)*avgLoss)
-	}
-}
-
-// printBacktestResults prints the results of a backtest
-func printBacktestResults(strat strategy.Strategy, results BacktestResults) {
-	log.Printf("Backtest Results (%s):\n", strat.Name())
-	log.Printf("  Trades=%d, Wins=%d, Losses=%d, WinRate=%.2f%%\n",
-		results.Trades, results.Wins, results.Losses, results.Metrics["win_rate"]*100)
-	log.Printf("  PnL=%.2f, MaxDrawdown=%.2f\n",
-		results.Equity, results.MaxDrawdown)
-	log.Printf("  AvgWin=%.2f, AvgLoss=%.2f, ProfitFactor=%.2f\n",
-		results.Metrics["avg_win"], results.Metrics["avg_loss"], results.Metrics["profit_factor"])
-	log.Printf("  Sharpe=%.2f, Expectancy=%.2f\n",
-		results.Metrics["sharpe"], results.Metrics["expectancy"])
-
-	// Print strategy-specific metrics
-	if len(results.Metrics) > 0 {
-		fmt.Println("  Strategy Metrics:")
-		for k, v := range results.Metrics {
-			// Skip metrics we've already printed
-			if k != "win_rate" && k != "avg_win" && k != "avg_loss" &&
-				k != "profit_factor" && k != "sharpe" && k != "expectancy" {
-				fmt.Printf("    %s: %.4f\n", k, v)
-			}
-		}
-	}
-
-	// Print trade log summary
-	fmt.Println("Trade Log Summary:")
-	maxTrades := 10 // Limit the number of trades to print
-	for i, t := range results.TradeLog {
-		if i >= maxTrades {
-			fmt.Printf("  ... and %d more trades\n", len(results.TradeLog)-maxTrades)
-			break
-		}
-		fmt.Printf("  Trade %d: Entry=%.2f at %s, Exit=%.2f at %s, PnL=%.2f\n",
-			i+1, t.Entry, t.EntryTime.Format(time.RFC3339),
-			t.Exit, t.ExitTime.Format(time.RFC3339), t.PnL)
-	}
-}
-
-// saveBacktestResults saves backtest results to CSV files
-func saveBacktestResults(results BacktestResults) {
-	// Save trade log to CSV
-	tradeRows := [][]string{{"Trade#", "Entry", "EntryTime", "Exit", "ExitTime", "PnL"}}
-	for i, t := range results.TradeLog {
-		tradeRows = append(tradeRows, []string{
-			fmt.Sprintf("%d", i+1),
-			fmt.Sprintf("%.2f", t.Entry),
-			t.EntryTime.Format(time.RFC3339),
-			fmt.Sprintf("%.2f", t.Exit),
-			t.ExitTime.Format(time.RFC3339),
-			fmt.Sprintf("%.2f", t.PnL),
-		})
-	}
-
-	// Save equity curve to CSV
-	equityRows := [][]string{{"Step", "Equity"}}
-	for i, eq := range results.EquityCurve {
-		equityRows = append(equityRows, []string{
-			fmt.Sprintf("%d", i+1),
-			fmt.Sprintf("%.2f", eq),
-		})
-	}
-
-	// Write files
-	saveCSV("backtest_trades.csv", tradeRows)
-	saveCSV("backtest_equity.csv", equityRows)
-}
-
-// saveCSV saves data to a CSV file
-func saveCSV(filename string, rows [][]string) error {
-	f, err := os.Create(filename)
-	if err != nil {
-		log.Printf("Error creating CSV file %s: %v", filename, err)
-		return err
-	}
-	defer f.Close()
-
-	w := csv.NewWriter(f)
-	defer w.Flush()
-
-	for _, row := range rows {
-		if err := w.Write(row); err != nil {
-			log.Printf("Error writing to CSV file %s: %v", filename, err)
-			return err
-		}
-	}
-
-	log.Printf("Saved results to %s", filename)
-	return nil
-}
-
-// Helper to adapt WallexTrade to position.Tick interface
-func wallexTradeToTick(trade exchange.WallexTrade) position.Tick {
-	price, _ := strconv.ParseFloat(trade.Price, 64)
-	ts := trade.Timestamp
-	return &simpleTick{price: price, timestamp: ts}
-}
-
-type simpleTick struct {
-	price     float64
-	timestamp time.Time
-}
-
-func (t *simpleTick) Price() float64       { return t.price }
-func (t *simpleTick) Timestamp() time.Time { return t.timestamp }
 
 // dataLogger writes trade data, market depth, and market cap to files
 func dataLogger(ctx context.Context, symbols []string, tickChans map[string]<-chan exchange.WallexTrade, depthState exchange.MarketDepthStateManager, marketCapState exchange.MarketCapStateManager) {
