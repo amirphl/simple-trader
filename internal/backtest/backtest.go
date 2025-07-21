@@ -523,22 +523,22 @@ func processCandles(candles []candle.Candle, symbol, timeframe string, start, to
 
 // BacktestResults holds the results of a backtest
 type BacktestResults struct {
-	Equity          float64
-	MaxEquity       float64
-	MaxDrawdown     float64
-	Wins            int
-	Losses          int
-	Trades          int
-	LongTrades      int
-	ShortTrades     int
-	WinPnls         []float64
-	LossPnls        []float64
-	EquityCurve     []float64
-	TradeLog        []TradeLogEntry
-	Metrics         map[string]float64
-	MaxConsecLosses int
-	MaxConsecWins   int
-	StartingBalance float64
+	Equity          float64            `json:"equity"`
+	MaxEquity       float64            `json:"max_equity"`
+	MaxDrawdown     float64            `json:"max_drawdown"`
+	Wins            int                `json:"wins"`
+	Losses          int                `json:"losses"`
+	Trades          int                `json:"trades"`
+	LongTrades      int                `json:"long_trades"`
+	ShortTrades     int                `json:"short_trades"`
+	WinPnls         []float64          `json:"win_pnls"`
+	LossPnls        []float64          `json:"loss_pnls"`
+	EquityCurve     []float64          `json:"equity_curve"`
+	TradeLog        []TradeLogEntry    `json:"trade_log"`
+	Metrics         map[string]float64 `json:"metrics"`
+	MaxConsecLosses int                `json:"max_consec_losses"`
+	MaxConsecWins   int                `json:"max_consec_wins"`
+	StartingBalance float64            `json:"starting_balance"`
 }
 
 // TradeLogEntry represents a single trade in the backtest
