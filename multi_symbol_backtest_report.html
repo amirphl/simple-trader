@@ -68,8 +68,8 @@
         .positive { color: #28a745; }
         .negative { color: #dc3545; }
         .symbol-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(600px, 1fr));
+            display: flex;
+            flex-direction: column;
             gap: 30px;
             padding: 30px;
         }
@@ -78,6 +78,9 @@
             border-radius: 8px;
             box-shadow: 0 2px 10px rgba(0,0,0,0.1);
             overflow: hidden;
+            width: 100%;
+            max-width: 1200px;
+            margin: 0 auto;
         }
         .symbol-header {
             background: #343a40;
@@ -177,18 +180,20 @@
         
         /* Tooltip styles */
         .tooltip {
-            position: absolute;
+            position: fixed;
             background: #ffffff;
             border: 2px solid #333;
             border-radius: 8px;
-            padding: 10px;
-            font-size: 12px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-            z-index: 1000;
+            padding: 15px;
+            font-size: 13px;
+            box-shadow: 0 8px 20px rgba(0,0,0,0.25);
+            z-index: 10000;
             display: none;
-            max-width: 400px;
-            max-height: 80vh;
+            max-width: 500px;
+            max-height: 85vh;
             overflow-y: auto;
+            left: 20px !important;
+            top: 20px !important;
         }
         .tooltip table {
             width: 100%;
@@ -461,11 +466,11 @@
                     <div class="charts-container">
                         <div class="chart-container">
                             <h4>Regular Candles</h4>
-                            <div id="chart-${symbolIndex}" style="height: 350px;"></div>
+                            <div id="chart-${symbolIndex}" style="height: 400px;"></div>
                         </div>
                         <div class="chart-container heikin-ashi-container" id="heikin-ashi-container-${symbolIndex}">
                             <h4>Heikin Ashi Candles</h4>
-                            <div id="heikin-ashi-chart-${symbolIndex}" style="height: 250px;"></div>
+                            <div id="heikin-ashi-chart-${symbolIndex}" style="height: 300px;"></div>
                         </div>
                     </div>
                     <div class="controls">
@@ -497,7 +502,7 @@
             }
         }
 
-        // Create individual chart
+        // Create individual chart with separate Heikin Ashi chart
         function createChart(symbol, index, allChartData) {
             // Validate input parameters
             if (!allChartData || !Array.isArray(allChartData)) {
@@ -521,8 +526,10 @@
             }
 
             const chartContainer = document.getElementById(`chart-${index}`);
-            if (!chartContainer) {
-                console.warn(`Chart container not found for index: ${index}`);
+            const heikinAshiContainer = document.getElementById(`heikin-ashi-chart-${index}`);
+            
+            if (!chartContainer || !heikinAshiContainer) {
+                console.warn(`Chart containers not found for index: ${index}`);
                 return;
             }
 
@@ -537,9 +544,10 @@
                 return;
             }
             
-            const chart = LightweightCharts.createChart(chartContainer, {
+            // Create main chart
+            const mainChart = LightweightCharts.createChart(chartContainer, {
                 width: chartContainer.clientWidth,
-                height: 350,
+                height: 400,
                 layout: {
                     backgroundColor: '#ffffff',
                     textColor: '#333',
@@ -548,17 +556,61 @@
                     vertLines: { color: '#f0f0f0' },
                     horzLines: { color: '#f0f0f0' },
                 },
+                crosshair: {
+                    mode: LightweightCharts.CrosshairMode.Normal,
+                },
                 timeScale: {
                     borderColor: '#cccccc',
+                    timeVisible: true,
+                    secondsVisible: false,
                 },
                 rightPriceScale: {
                     borderColor: '#cccccc',
+                    scaleMargins: {
+                        top: 0.1,
+                        bottom: 0.3,
+                    },
+                    priceFormat: {
+                        type: 'price',
+                        precision: 8,
+                        minMove: 0.00000001,
+                    },
+                },
+            });
+            
+            // Create Heikin Ashi chart
+            const heikinAshiChart = LightweightCharts.createChart(heikinAshiContainer, {
+                width: heikinAshiContainer.clientWidth,
+                height: 300,
+                layout: {
+                    backgroundColor: '#ffffff',
+                    textColor: '#333',
+                },
+                grid: {
+                    vertLines: { color: '#f0f0f0' },
+                    horzLines: { color: '#f0f0f0' },
+                },
+                crosshair: {
+                    mode: LightweightCharts.CrosshairMode.Normal,
+                },
+                timeScale: {
+                    borderColor: '#cccccc',
+                    timeVisible: true,
+                    secondsVisible: false,
+                },
+                rightPriceScale: {
+                    borderColor: '#cccccc',
+                    priceFormat: {
+                        type: 'price',
+                        precision: 8,
+                        minMove: 0.00000001,
+                    },
                 },
             });
             
             // Validate chart creation
-            if (!chart || typeof chart.addCandlestickSeries !== 'function') {
-                console.error('Chart creation failed or addCandlestickSeries not available');
+            if (!mainChart || !heikinAshiChart || typeof mainChart.addCandlestickSeries !== 'function') {
+                console.error('Chart creation failed');
                 chartContainer.innerHTML = `
                     <div style="display: flex; align-items: center; justify-content: center; height: 100%; color: #dc3545; font-style: italic;">
                         Chart creation failed
@@ -572,11 +624,13 @@
             const heikinAshiCandleData = [];
             const volumeData = [];
             const markers = [];
+            const candleDetails = {}; // For tooltip data
 
             symbolData.data.forEach((item, itemIndex) => {
                 try {
                     const candle = item.candle;
                     const haCandle = item.heikin_ashi;
+                    const signal = item.signal;
 
                     if (!candle || !candle.timestamp) {
                         console.warn(`Invalid candle data at index ${itemIndex} for symbol ${symbol}`);
@@ -591,75 +645,86 @@
                         return;
                     }
 
-                regularCandleData.push({
-                    time: time,
-                    open: parseFloat(candle.open),
-                    high: parseFloat(candle.high),
-                    low: parseFloat(candle.low),
-                    close: parseFloat(candle.close),
-                });
+                    // Store candle details for tooltip
+                    candleDetails[time] = {
+                        date: new Date(candle.timestamp).toLocaleString(),
+                        candle: candle,
+                        heikinAshi: haCandle,
+                        signal: signal,
+                        balance: item.balance || 0,
+                        equity: item.equity || 0,
+                        activeTrade: item.active_trade || false,
+                        tradeInfo: item.trade_info || null
+                    };
 
-                if (haCandle && haCandle.open) {
-                    heikinAshiCandleData.push({
+                    regularCandleData.push({
                         time: time,
-                        open: parseFloat(haCandle.open),
-                        high: parseFloat(haCandle.high),
-                        low: parseFloat(haCandle.low),
-                        close: parseFloat(haCandle.close),
+                        open: parseFloat(candle.open),
+                        high: parseFloat(candle.high),
+                        low: parseFloat(candle.low),
+                        close: parseFloat(candle.close),
                     });
-                }
 
-                volumeData.push({
-                    time: time,
-                    value: parseFloat(candle.volume || 0),
-                    color: candle.close >= candle.open ? 'rgba(38, 166, 154, 0.5)' : 'rgba(239, 83, 80, 0.5)',
-                });
-
-                // Add signal markers
-                const signal = item.signal;
-                if (signal && signal.position !== undefined && signal.position !== 0) {
-                    let shape, color, text, position;
-
-                    if (signal.position === 1) { // Long bullish
-                        shape = 'arrowUp';
-                        color = '#26a69a';
-                        text = 'L';
-                        position = 'belowBar';
-                    } else if (signal.position === -1) { // Short bearish
-                        shape = 'arrowDown';
-                        color = '#ef5350';
-                        text = 'S';
-                        position = 'aboveBar';
-                    } else if (signal.position === -2) { // Short bullish
-                        shape = 'arrowDown';
-                        color = '#d7793b';
-                        text = 'S*';
-                        position = 'aboveBar';
-                    } else if (signal.position === 2) { // Long bearish
-                        shape = 'arrowUp';
-                        color = '#127aaf';
-                        text = 'L*';
-                        position = 'belowBar';
-                    }
-
-                    if (shape) {
-                        markers.push({
+                    if (haCandle && haCandle.open) {
+                        heikinAshiCandleData.push({
                             time: time,
-                            position: position,
-                            color: color,
-                            shape: shape,
-                            text: text,
-                            size: 1,
+                            open: parseFloat(haCandle.open),
+                            high: parseFloat(haCandle.high),
+                            low: parseFloat(haCandle.low),
+                            close: parseFloat(haCandle.close),
                         });
                     }
-                }
+
+                    volumeData.push({
+                        time: time,
+                        value: parseFloat(candle.volume || 0),
+                        color: candle.close >= candle.open ? 'rgba(38, 166, 154, 0.5)' : 'rgba(239, 83, 80, 0.5)',
+                    });
+
+                    // Add signal markers
+                    if (signal && signal.position !== undefined && signal.position !== 0) {
+                        let shape, color, text, position;
+
+                        if (signal.position === 1) { // Long bullish
+                            shape = 'arrowUp';
+                            color = '#26a69a';
+                            text = 'L';
+                            position = 'belowBar';
+                        } else if (signal.position === -1) { // Short bearish
+                            shape = 'arrowDown';
+                            color = '#ef5350';
+                            text = 'S';
+                            position = 'aboveBar';
+                        } else if (signal.position === -2) { // Short bullish
+                            shape = 'arrowDown';
+                            color = '#d7793b';
+                            text = 'S*';
+                            position = 'aboveBar';
+                        } else if (signal.position === 2) { // Long bearish
+                            shape = 'arrowUp';
+                            color = '#127aaf';
+                            text = 'L*';
+                            position = 'belowBar';
+                        }
+
+                        if (shape) {
+                            markers.push({
+                                time: time,
+                                position: position,
+                                color: color,
+                                shape: shape,
+                                text: text,
+                                size: 1,
+                            });
+                        }
+                    }
                 } catch (error) {
                     console.error(`Error processing candle data at index ${itemIndex} for symbol ${symbol}:`, error);
                 }
             });
 
-            // Add series to chart
-            const candlestickSeries = chart.addCandlestickSeries({
+            // Add series to main chart
+            const candlestickSeries = mainChart.addCandlestickSeries({
                 upColor: '#26a69a',
                 downColor: '#ef5350',
                 borderVisible: false,
@@ -667,18 +732,78 @@
                 wickDownColor: '#ef5350',
             });
 
+            // Add volume series to main chart
+            const volumeSeries = mainChart.addHistogramSeries({
+                color: '#26a69a',
+                priceFormat: {
+                    type: 'volume',
+                },
+                priceScaleId: '',
+                scaleMargins: {
+                    top: 0.8,
+                    bottom: 0,
+                },
+            });
+
+            // Add Heikin Ashi series to separate chart
+            const heikinAshiSeries = heikinAshiChart.addCandlestickSeries({
+                upColor: '#26a69a',
+                downColor: '#ef5350',
+                borderVisible: true,
+                borderUpColor: '#1e7e64',
+                borderDownColor: '#d32f2f',
+                wickUpColor: '#26a69a',
+                wickDownColor: '#ef5350',
+                wickVisible: true,
+            });
+
+            // Set data
             candlestickSeries.setData(regularCandleData);
             candlestickSeries.setMarkers(markers);
+            volumeSeries.setData(volumeData);
+            heikinAshiSeries.setData(heikinAshiCandleData);
 
-            // Store chart reference
+            // Synchronize time scales using compatible v4.1.3 API
+            function syncCharts(sourceChart, targetChart) {
+                sourceChart.timeScale().subscribeVisibleLogicalRangeChange((logicalRange) => {
+                    if (logicalRange) {
+                        targetChart.timeScale().setVisibleLogicalRange(logicalRange);
+                    }
+                });
+            }
+
+            // Set up bidirectional synchronization
+            syncCharts(mainChart, heikinAshiChart);
+            syncCharts(heikinAshiChart, mainChart);
+
+            // Add click event listeners for tooltip
+            const tooltip = document.getElementById('tooltip');
+            
+            function setupChartClickHandler(chart, chartElement) {
+                chart.subscribeClick((param) => {
+                    showTooltip(param, chartElement, candleDetails, symbol);
+                });
+            }
+
+            setupChartClickHandler(mainChart, chartContainer);
+            setupChartClickHandler(heikinAshiChart, heikinAshiContainer);
+
+            // Store chart references
             charts[symbol] = {
-                chart: chart,
+                mainChart: mainChart,
+                heikinAshiChart: heikinAshiChart,
                 candlestickSeries: candlestickSeries,
+                heikinAshiSeries: heikinAshiSeries,
+                volumeSeries: volumeSeries,
                 data: symbolData.data,
-                results: symbolData.results
+                results: symbolData.results,
+                candleDetails: candleDetails,
+                index: index  // Store the index for resize handling
             };
 
-            chart.timeScale().fitContent();
+            // Fit content
+            mainChart.timeScale().fitContent();
+            heikinAshiChart.timeScale().fitContent();
         }
 
         // Populate performance summary
@@ -715,13 +840,241 @@
             `).join('');
         }
 
+        // Show tooltip function
+        function showTooltip(param, chartElement, candleDetails, symbol) {
+            const tooltip = document.getElementById('tooltip');
+            
+            if (!param.time) {
+                tooltip.style.display = 'none';
+                return;
+            }
+            
+            const details = candleDetails[param.time];
+            
+            if (details) {
+                // Position tooltip at the top of the page (fixed positioning)
+                tooltip.style.display = 'block';
+                tooltip.style.left = '20px';
+                tooltip.style.top = '20px';
+                tooltip.style.position = 'fixed';
+                
+                let html = '<table>';
+                html += '<button class="close-btn" onclick="document.getElementById(\'tooltip\').style.display=\'none\'">×</button>';
+                html += '<tr><th colspan="2" style="text-align:center;background:#e3f2fd;">[SYMBOL] ' + symbol + '</th></tr>';
+                html += '<tr><th colspan="2" style="text-align:center;background:#e3f2fd;">[DATE] ' + details.date + '</th></tr>';
+                
+                // Regular candle data
+                html += '<tr><th colspan="2" style="text-align:center;background:#f0f0f0;">[CANDLE] Regular Candle</th></tr>';
+                html += '<tr><td>Open</td><td>' + details.candle.open.toFixed(8) + '</td></tr>';
+                html += '<tr><td>High</td><td>' + details.candle.high.toFixed(8) + '</td></tr>';
+                html += '<tr><td>Low</td><td>' + details.candle.low.toFixed(8) + '</td></tr>';
+                html += '<tr><td>Close</td><td>' + details.candle.close.toFixed(8) + '</td></tr>';
+                html += '<tr><td>Volume</td><td>' + details.candle.volume.toFixed(8) + '</td></tr>';
+                
+                // Additional candle statistics
+                const range = details.candle.high - details.candle.low;
+                const bodySize = Math.abs(details.candle.close - details.candle.open);
+                const upperWick = details.candle.high - Math.max(details.candle.open, details.candle.close);
+                const lowerWick = Math.min(details.candle.open, details.candle.close) - details.candle.low;
+                const changePercent = details.candle.open !== 0 ? ((details.candle.close - details.candle.open) / details.candle.open * 100) : 0;
+                
+                html += '<tr><td>Range (H-L)</td><td>' + range.toFixed(8) + '</td></tr>';
+                html += '<tr><td>Body Size</td><td>' + bodySize.toFixed(8) + '</td></tr>';
+                html += '<tr><td>Upper Wick</td><td>' + upperWick.toFixed(8) + '</td></tr>';
+                html += '<tr><td>Lower Wick</td><td>' + lowerWick.toFixed(8) + '</td></tr>';
+                html += '<tr><td>Change %</td><td class="' + (changePercent >= 0 ? 'positive' : 'negative') + '">' + changePercent.toFixed(4) + '%</td></tr>';
+                html += '<tr><td>Candle Type</td><td>' + (details.candle.close >= details.candle.open ? 'Bullish' : 'Bearish') + '</td></tr>';
+                
+                // Heikin Ashi candle data if available
+                if (details.heikinAshi) {
+                    html += '<tr><th colspan="2" style="text-align:center;background:#fff3e0;">[HA] Heikin Ashi Candle</th></tr>';
+                    html += '<tr><td>HA Open</td><td>' + details.heikinAshi.open.toFixed(8) + '</td></tr>';
+                    html += '<tr><td>HA High</td><td>' + details.heikinAshi.high.toFixed(8) + '</td></tr>';
+                    html += '<tr><td>HA Low</td><td>' + details.heikinAshi.low.toFixed(8) + '</td></tr>';
+                    html += '<tr><td>HA Close</td><td>' + details.heikinAshi.close.toFixed(8) + '</td></tr>';
+                    
+                    const haRange = details.heikinAshi.high - details.heikinAshi.low;
+                    const haBodySize = Math.abs(details.heikinAshi.close - details.heikinAshi.open);
+                    const haChangePercent = details.heikinAshi.open !== 0 ? ((details.heikinAshi.close - details.heikinAshi.open) / details.heikinAshi.open * 100) : 0;
+                    
+                    html += '<tr><td>HA Range</td><td>' + haRange.toFixed(8) + '</td></tr>';
+                    html += '<tr><td>HA Body Size</td><td>' + haBodySize.toFixed(8) + '</td></tr>';
+                    html += '<tr><td>HA Change %</td><td class="' + (haChangePercent >= 0 ? 'positive' : 'negative') + '">' + haChangePercent.toFixed(4) + '%</td></tr>';
+                    html += '<tr><td>HA Type</td><td>' + (details.heikinAshi.close >= details.heikinAshi.open ? 'Bullish' : 'Bearish') + '</td></tr>';
+                }
+                
+                // Account information
+                html += '<tr><th colspan="2" style="text-align:center;background:#e8f5e8;">[ACCOUNT] Account Information</th></tr>';
+                html += '<tr><td>Balance</td><td>$' + details.balance.toFixed(8) + '</td></tr>';
+                html += '<tr><td>Equity</td><td>$' + details.equity.toFixed(8) + '</td></tr>';
+                
+                const accountChange = details.equity - details.balance;
+                const accountChangePercent = details.balance !== 0 ? (accountChange / details.balance * 100) : 0;
+                
+                html += '<tr><td>P&L</td><td class="' + (accountChange >= 0 ? 'positive' : 'negative') + '">$' + accountChange.toFixed(8) + '</td></tr>';
+                html += '<tr><td>P&L %</td><td class="' + (accountChangePercent >= 0 ? 'positive' : 'negative') + '">' + accountChangePercent.toFixed(4) + '%</td></tr>';
+                
+                if (details.activeTrade) {
+                    html += '<tr><td>Active Trade</td><td style="color: #ff9800; font-weight: bold;">[YES] Yes</td></tr>';
+                } else {
+                    html += '<tr><td>Active Trade</td><td>[NO] No</td></tr>';
+                }
+                
+                // Calculate time information
+                const candleTime = new Date(details.date);
+                const dayOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][candleTime.getDay()];
+                html += '<tr><td>Day of Week</td><td>' + dayOfWeek + '</td></tr>';
+                html += '<tr><td>Hour</td><td>' + candleTime.getHours().toString().padStart(2, '0') + ':' + candleTime.getMinutes().toString().padStart(2, '0') + '</td></tr>';
+                
+                // Signal information (if present)
+                if (details.signal && details.signal.position !== 0) {
+                    html += '<tr class="signal-row"><th colspan="2" style="text-align:center;background:#fff3cd;">[SIGNAL] Signal Information</th></tr>';
+                    html += '<tr class="signal-row"><td>Position</td><td>';
+                    if (details.signal.position === 1) {
+                        html += '<span style="color: #26a69a; font-weight: bold;">[UP] LONG BULLISH</span>';
+                    } else if (details.signal.position === -1) {
+                        html += '<span style="color: #ef5350; font-weight: bold;">[DOWN] SHORT BEARISH</span>';
+                    } else if (details.signal.position === 2) {
+                        html += '<span style="color: #127aaf; font-weight: bold;">[UP] LONG BEARISH</span>';
+                    } else if (details.signal.position === -2) {
+                        html += '<span style="color: #d7793b; font-weight: bold;">[DOWN] SHORT BULLISH</span>';
+                    } else {
+                        html += '<span style="color: #666;">[HOLD] HOLD</span>';
+                    }
+                    html += '</td></tr>';
+                    html += '<tr class="signal-row"><td>Reason</td><td>' + (details.signal.reason || 'N/A') + '</td></tr>';
+                    html += '<tr class="signal-row"><td>Strategy</td><td>' + (details.signal.strategy_name || 'N/A') + '</td></tr>';
+                    html += '<tr class="signal-row"><td>Signal Time</td><td>' + new Date(details.signal.time || details.date).toLocaleString() + '</td></tr>';
+                    
+                    if (details.signal.trigger_price !== undefined && details.signal.trigger_price !== null) {
+                        html += '<tr class="signal-row"><td>Trigger Price</td><td>' + details.signal.trigger_price.toFixed(8) + '</td></tr>';
+                        
+                        // Calculate distance from current price
+                        const priceDiff = details.candle.close - details.signal.trigger_price;
+                        const priceDiffPercent = details.signal.trigger_price !== 0 ? (priceDiff / details.signal.trigger_price * 100) : 0;
+                        html += '<tr class="signal-row"><td>Price Distance</td><td class="' + (priceDiff >= 0 ? 'positive' : 'negative') + '">' + priceDiff.toFixed(8) + '</td></tr>';
+                        html += '<tr class="signal-row"><td>Price Distance %</td><td class="' + (priceDiffPercent >= 0 ? 'positive' : 'negative') + '">' + priceDiffPercent.toFixed(4) + '%</td></tr>';
+                    }
+                    
+                    // Add signal strength/confidence if available
+                    if (details.signal.confidence !== undefined) {
+                        html += '<tr class="signal-row"><td>Confidence</td><td>' + (details.signal.confidence * 100).toFixed(2) + '%</td></tr>';
+                    }
+                    
+                    // Signal position mapping
+                    const positionMap = {
+                        1: 'Long Bullish (1)',
+                        '-1': 'Short Bearish (-1)', 
+                        2: 'Long Bearish (2)',
+                        '-2': 'Short Bullish (-2)',
+                        0: 'Hold (0)'
+                    };
+                    html += '<tr class="signal-row"><td>Position Code</td><td>' + (positionMap[details.signal.position] || details.signal.position) + '</td></tr>';
+                }
+                
+                // Trade information (if present)
+                if (details.tradeInfo) {
+                    html += '<tr class="trade-row"><th colspan="2" style="text-align:center;background:#d1ecf1;">[TRADE] Trade Information</th></tr>';
+                    if (details.tradeInfo.entry && details.tradeInfo.entry > 0) {
+                        html += '<tr class="trade-row"><td>Entry Price</td><td>' + details.tradeInfo.entry.toFixed(8) + '</td></tr>';
+                        
+                        if (details.tradeInfo.entry_time) {
+                            html += '<tr class="trade-row"><td>Entry Time</td><td>' + new Date(details.tradeInfo.entry_time).toLocaleString() + '</td></tr>';
+                        }
+                        
+                        html += '<tr class="trade-row"><td>Side</td><td>' + (details.tradeInfo.side || 'N/A') + '</td></tr>';
+                        
+                        if (details.tradeInfo.quantity) {
+                            html += '<tr class="trade-row"><td>Quantity</td><td>' + details.tradeInfo.quantity.toFixed(8) + '</td></tr>';
+                        }
+                        
+                        if (details.tradeInfo.cost) {
+                            html += '<tr class="trade-row"><td>Cost</td><td>$' + details.tradeInfo.cost.toFixed(8) + '</td></tr>';
+                        }
+                        
+                        if (details.tradeInfo.exit && details.tradeInfo.exit > 0) {
+                            html += '<tr class="trade-row"><td>Exit Price</td><td>' + details.tradeInfo.exit.toFixed(8) + '</td></tr>';
+                            
+                            if (details.tradeInfo.exit_time) {
+                                html += '<tr class="trade-row"><td>Exit Time</td><td>' + new Date(details.tradeInfo.exit_time).toLocaleString() + '</td></tr>';
+                            }
+                            
+                            html += '<tr class="trade-row"><td>P&L</td><td class="' + (details.tradeInfo.pnl >= 0 ? 'positive' : 'negative') + '">$' + details.tradeInfo.pnl.toFixed(8) + '</td></tr>';
+                            
+                            // Calculate additional trade metrics
+                            const priceDiff = details.tradeInfo.exit - details.tradeInfo.entry;
+                            const returnPercent = details.tradeInfo.entry !== 0 ? (priceDiff / details.tradeInfo.entry * 100) : 0;
+                            
+                            if (details.tradeInfo.side === 'short') {
+                                const adjustedReturn = -returnPercent; // Invert for short trades
+                                html += '<tr class="trade-row"><td>Return %</td><td class="' + (adjustedReturn >= 0 ? 'positive' : 'negative') + '">' + adjustedReturn.toFixed(4) + '%</td></tr>';
+                            } else {
+                                html += '<tr class="trade-row"><td>Return %</td><td class="' + (returnPercent >= 0 ? 'positive' : 'negative') + '">' + returnPercent.toFixed(4) + '%</td></tr>';
+                            }
+                            
+                            html += '<tr class="trade-row"><td>Exit Reason</td><td>' + (details.tradeInfo.reason || 'N/A') + '</td></tr>';
+                            
+                            // Trade duration if both times are available
+                            if (details.tradeInfo.entry_time && details.tradeInfo.exit_time) {
+                                const duration = new Date(details.tradeInfo.exit_time) - new Date(details.tradeInfo.entry_time);
+                                const hours = Math.floor(duration / (1000 * 60 * 60));
+                                const minutes = Math.floor((duration % (1000 * 60 * 60)) / (1000 * 60));
+                                html += '<tr class="trade-row"><td>Duration</td><td>' + hours + 'h ' + minutes + 'm</td></tr>';
+                            }
+                        }
+                        
+                        // MAE and MFE if available
+                        if (details.tradeInfo.mae !== undefined) {
+                            html += '<tr class="trade-row"><td>MAE (Max Loss)</td><td class="negative">$' + details.tradeInfo.mae.toFixed(8) + '</td></tr>';
+                        }
+                        
+                        if (details.tradeInfo.mfe !== undefined) {
+                            html += '<tr class="trade-row"><td>MFE (Max Gain)</td><td class="positive">$' + details.tradeInfo.mfe.toFixed(8) + '</td></tr>';
+                        }
+                    }
+                }
+                
+                html += '</table>';
+                tooltip.innerHTML = html;
+            }
+        }
+
+        // Toggle Heikin Ashi chart visibility
+        function toggleHeikinAshi(index) {
+            const checkbox = document.getElementById(`showHeikinAshi-${index}`);
+            const container = document.getElementById(`heikin-ashi-container-${index}`);
+            
+            if (container) {
+                container.style.display = checkbox.checked ? 'block' : 'none';
+            }
+        }
+
+        // Hide tooltip when clicking elsewhere
+        document.addEventListener('click', (event) => {
+            const tooltip = document.getElementById('tooltip');
+            if (!tooltip.contains(event.target) && !event.target.closest('.chart-container')) {
+                tooltip.style.display = 'none';
+            }
+        });
+
         // Handle window resize
         window.addEventListener('resize', () => {
             Object.values(charts).forEach(chartData => {
-                if (chartData.chart) {
-                    chartData.chart.applyOptions({ 
-                        width: chartData.chart.options().width 
-                    });
+                if (chartData.mainChart && chartData.index !== undefined) {
+                    const mainContainer = document.getElementById(`chart-${chartData.index}`);
+                    if (mainContainer) {
+                        chartData.mainChart.applyOptions({ 
+                            width: mainContainer.clientWidth 
+                        });
+                    }
+                }
+                if (chartData.heikinAshiChart && chartData.index !== undefined) {
+                    const haContainer = document.getElementById(`heikin-ashi-chart-${chartData.index}`);
+                    if (haContainer) {
+                        chartData.heikinAshiChart.applyOptions({ 
+                            width: haContainer.clientWidth 
+                        });
+                    }
                 }
             });
         });
