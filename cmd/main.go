@@ -94,7 +94,7 @@ func main() {
 	log.Println("Graceful shutdown initiated...")
 
 	// Allow some time for cleanup
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer shutdownCancel()
 
 	// Wait for context to be done (either timeout or cancel)
