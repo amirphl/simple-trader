@@ -24,16 +24,22 @@ type EngulfingHeikinAshi struct {
 
 	Storage Storage
 
-	initialized bool
-	maxHistory  int // Maximum number of candles to keep in memory
+	initialized  bool
+	maxHistory   int // Maximum number of candles to keep in memory
+	minBodyRatio float64
+	maxBodyRatio float64
+	maxLowRatio  float64
 }
 
 func NewEngulfingHeikinAshi(symbol string, storage Storage) *EngulfingHeikinAshi {
 	return &EngulfingHeikinAshi{
-		symbol:      symbol,
-		Storage:     storage,
-		initialized: false,
-		maxHistory:  100, // Keep only the last 100 candles in memory
+		symbol:       symbol,
+		Storage:      storage,
+		initialized:  false,
+		maxHistory:   100, // Keep only the last 100 candles in memory
+		minBodyRatio: 1.8,
+		maxBodyRatio: 4,
+		maxLowRatio:  0.002,
 	}
 }
 
@@ -153,7 +159,7 @@ func (s *EngulfingHeikinAshi) OnCandles(ctx context.Context, oneHourCandles []ca
 	lastCandle = &s.candles[len(s.candles)-1]
 
 	// Check if we have enough data for Engulfing Heikin Ashi calculation
-	if len(s.heikenAshiCandles) < 2 {
+	if len(s.heikenAshiCandles) < s.WarmupPeriod() {
 		return Signal{
 			Time:         lastCandle.Timestamp,
 			Position:     Hold,
@@ -164,7 +170,7 @@ func (s *EngulfingHeikinAshi) OnCandles(ctx context.Context, oneHourCandles []ca
 		}, nil
 	}
 
-	prevCandle := s.candles[len(s.candles)-2]
+	secondCandle := s.candles[len(s.candles)-2]
 	currCandle := s.candles[len(s.candles)-1]
 	// prevHA := s.heikenAshiCandles[len(s.heikenAshiCandles)-2]
 	currHA := s.heikenAshiCandles[len(s.heikenAshiCandles)-1]
@@ -176,23 +182,45 @@ func (s *EngulfingHeikinAshi) OnCandles(ctx context.Context, oneHourCandles []ca
 	// 4. Current body size is significantly larger than previous body size
 
 	// Tolerance for open < previous.close
-	openCloseTolerance := 0.0002 * prevCandle.Close // 0.02%
-	openBelowPrevClose := currCandle.Open < prevCandle.Close || abs(currCandle.Open-prevCandle.Close) <= openCloseTolerance
-	closeAbovePrevOpen := currCandle.Close > prevCandle.Open
+	openCloseTolerance := 0.0002 * secondCandle.Close // 0.02%
+	openBelowPrevClose := currCandle.Open < secondCandle.Close || abs(currCandle.Open-secondCandle.Close) <= openCloseTolerance
+	closeAbovePrevOpen := currCandle.Close > secondCandle.Open
 	currBody := abs(currCandle.Close - currCandle.Open)
-	prevBody := abs(prevCandle.Close - prevCandle.Open) // Fixed: Use close-open for both candles
-	prevBearish := prevCandle.Close < prevCandle.Open
+	prevBody := abs(secondCandle.Close - secondCandle.Open) // Fixed: Use close-open for both candles
+	prevBearish := secondCandle.Close < secondCandle.Open
 	bodyRatio := 0.0
 	if prevBody > 0 {
 		bodyRatio = currBody / prevBody
 	}
 
+	// lowRatio := 0.0
+	// if currCandle.Low > 0 {
+	// 	lowRatio = abs(1 - (secondCandle.Low / currCandle.Low))
+	// }
+
+	fourthCandle := s.candles[len(s.candles)-4]
+	thirdCandle := s.candles[len(s.candles)-3]
+	maxOpenCloseFourth := max(fourthCandle.Open, fourthCandle.Close) * 0.9999
+	maxOpenCloseThird := max(thirdCandle.Open, thirdCandle.Close) * 0.9999
+	maxOpenCloseSecond := max(secondCandle.Open, secondCandle.Close) * 0.9999
+	minOpenCloseFourth := min(fourthCandle.Open, fourthCandle.Close) * 1.0001
+	minOpenCloseThird := min(thirdCandle.Open, thirdCandle.Close) * 1.0001
+	minOpenCloseSecond := min(secondCandle.Open, secondCandle.Close) * 1.0001
+
 	// Check for bullish engulfing pattern
 	if currCandle.Close > currCandle.Open && // Current candle is bullish
 		openBelowPrevClose &&
 		closeAbovePrevOpen &&
-		bodyRatio >= 1.8 &&
-		prevBearish {
+		bodyRatio >= s.minBodyRatio &&
+		bodyRatio <= s.maxBodyRatio &&
+		// lowRatio <= s.maxLowRatio &&
+		prevBearish &&
+		currCandle.Close > maxOpenCloseSecond &&
+		currCandle.Close > maxOpenCloseThird &&
+		currCandle.Close > maxOpenCloseFourth &&
+		currCandle.Open <= minOpenCloseSecond &&
+		currCandle.Open <= minOpenCloseThird &&
+		currCandle.Open <= minOpenCloseFourth {
 
 		return Signal{
 			Time:         currCandle.Timestamp,
@@ -227,8 +255,8 @@ func (s *EngulfingHeikinAshi) OnCandles(ctx context.Context, oneHourCandles []ca
 			Position:     LongBearish,
 			Reason:       "bearish heikin ashi - long bearish",
 			StrategyName: s.Name(),
-			TriggerPrice: currHA.Close,
-			Candle:       lastCandle, // Use the actual candle, not the HA candle
+			TriggerPrice: currCandle.Close, // TODO: Use HA close?
+			Candle:       lastCandle,       // Use the actual candle, not the HA candle
 		}, nil
 	}
 
@@ -253,5 +281,5 @@ func (s *EngulfingHeikinAshi) PerformanceMetrics() map[string]float64 {
 
 // WarmupPeriod returns the number of candles needed for warm-up
 func (s *EngulfingHeikinAshi) WarmupPeriod() int {
-	return 2
+	return 4
 }
