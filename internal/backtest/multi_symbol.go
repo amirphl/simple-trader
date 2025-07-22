@@ -163,6 +163,10 @@ func fetchTopBinanceSymbolsWithRetry(ctx context.Context, topN int, proxyURL str
 		// Filter USDT pairs and sort by quote volume
 		var usdtSymbols []BinanceSymbolInfo
 		for _, symbol := range symbols {
+			if strings.HasPrefix(symbol.Symbol, "BTC") || strings.HasPrefix(symbol.Symbol, "ETH") {
+				continue
+			}
+
 			if strings.HasSuffix(symbol.Symbol, "USDT") && symbol.Symbol != "USDT" {
 				// Parse quote volume for sorting
 				if _, err := strconv.ParseFloat(symbol.QuoteVolume, 64); err == nil {
