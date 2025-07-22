@@ -6,3 +6,4 @@ simple-trader
 .cursor
 .vscode
 backtest_chart_data.json
+multi_symbol_backtest_data.json
