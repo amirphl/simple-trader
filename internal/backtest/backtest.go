@@ -645,9 +645,9 @@ func runStrategyBacktest(strat strategy.Strategy, candles []candle.Candle, cfg c
 
 		// Create candle with signal data for charting
 		cwsEntry := CandleWithSignal{
-			Candle:      c,
-			HeikinAshi:  haCandle,
-			Signal:      sig,
+			Candle:     c,
+			HeikinAshi: haCandle,
+			// Signal:      sig,
 			Balance:     currentBalance,
 			Equity:      results.Equity,
 			ActiveTrade: active,
@@ -745,6 +745,7 @@ func runStrategyBacktest(strat strategy.Strategy, candles []candle.Candle, cfg c
 			}
 
 			// Update candle with signal info
+			cwsEntry.Signal = sig
 			cwsEntry.TradeInfo = currentTrade
 			cwsEntry.TradeDetails = fmt.Sprintf("Entry: %s at %.2f, Qty: %.4f, Cost: %.2f",
 				currentTrade.Side, currentTrade.Entry, currentTrade.Quantity, currentTrade.Cost)
@@ -870,6 +871,7 @@ func runStrategyBacktest(strat strategy.Strategy, candles []candle.Candle, cfg c
 				results.TradeLog = append(results.TradeLog, *currentTrade)
 
 				// Update candle with trade exit info
+				cwsEntry.Signal = sig
 				cwsEntry.TradeInfo = currentTrade
 				cwsEntry.TradeDetails = fmt.Sprintf("Exit: %s at %.2f, PnL: %.2f, Reason: %s",
 					currentTrade.Side, exitPrice, pnl, exitReason)
@@ -949,7 +951,7 @@ func runStrategyBacktest(strat strategy.Strategy, candles []candle.Candle, cfg c
 		results.TradeLog = append(results.TradeLog, *currentTrade)
 
 		// Update candle with trade exit info
-
+		// cwsEntry.Signal = sig
 		cwsEntry.TradeInfo = currentTrade
 		cwsEntry.TradeDetails = fmt.Sprintf("Exit: %s at %.2f, PnL: %.2f, Reason: %s",
 			currentTrade.Side, exitPrice, pnl, "end-of-backtest")
