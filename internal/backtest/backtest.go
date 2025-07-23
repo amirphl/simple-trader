@@ -22,6 +22,7 @@ import (
 	"github.com/amirphl/simple-trader/internal/candle"
 	"github.com/amirphl/simple-trader/internal/config"
 	"github.com/amirphl/simple-trader/internal/db"
+	"github.com/amirphl/simple-trader/internal/indicator"
 	"github.com/amirphl/simple-trader/internal/strategy"
 )
 
@@ -557,9 +558,29 @@ type TradeLogEntry struct {
 	Cost      float64   `json:"cost"`     // Total cost of the trade (entry price * quantity)
 }
 
+type Float64 float64
+
+func (f Float64) MarshalJSON() ([]byte, error) {
+	if math.IsNaN(float64(f)) {
+		return []byte(`0`), nil
+	}
+	return json.Marshal(float64(f))
+}
+
+// Usage:
+type Data struct {
+	Value Float64 `json:"value"`
+}
+
+type Stochastic struct {
+	K Float64 `json:"k"`
+	D Float64 `json:"d"`
+}
+
 type CandleWithSignal struct {
 	Candle       candle.Candle   `json:"candle"`
 	HeikinAshi   candle.Candle   `json:"heikin_ashi,omitempty"`
+	Stochastic   Stochastic      `json:"stochastic,omitempty"`
 	Signal       strategy.Signal `json:"signal,omitempty"`
 	TradeInfo    *TradeLogEntry  `json:"trade_info,omitempty"`
 	Balance      float64         `json:"balance"`
@@ -592,6 +613,26 @@ func runStrategyBacktest(strat strategy.Strategy, candles []candle.Candle, cfg c
 
 	// Generate Heikin Ashi candles for the entire dataset
 	heikinAshiCandles := candle.GenerateHeikenAshiCandles(candles)
+
+	var stochastics *indicator.StochasticResult
+	// Generate Stochastic candles for the entire dataset
+	if stochasticHeikinAshiStrat, ok := strat.(*strategy.StochasticHeikinAshi); ok {
+		var err error
+		stochastics, err = indicator.CalculateStochastic(candles,
+			stochasticHeikinAshiStrat.PeriodK(),
+			stochasticHeikinAshiStrat.SmoothK(),
+			stochasticHeikinAshiStrat.PeriodD(),
+		)
+		if err != nil {
+			log.Printf("runStrategyBacktest | Error generating Stochastic candles: %v", err)
+		}
+	} else {
+		var err error
+		stochastics, err = indicator.CalculateStochastic(candles, 14, 10, 3)
+		if err != nil {
+			log.Printf("runStrategyBacktest | Error generating Stochastic candles: %v", err)
+		}
+	}
 
 	// Risk parameters
 	stopLossPercent := cfg.StopLossPercent
@@ -643,18 +684,23 @@ func runStrategyBacktest(strat strategy.Strategy, candles []candle.Candle, cfg c
 		// Get corresponding Heikin Ashi candle
 		haCandle := heikinAshiCandles[i]
 
+		// Get corresponding Stochastic candle
+		stochasticK := stochastics.K[i]
+		stochasticD := stochastics.D[i]
+
 		// Create candle with signal data for charting
 		cwsEntry := CandleWithSignal{
 			Candle:     c,
 			HeikinAshi: haCandle,
+			Stochastic: Stochastic{
+				K: Float64(stochasticK),
+				D: Float64(stochasticD),
+			},
 			// Signal:      sig,
 			Balance:     currentBalance,
 			Equity:      results.Equity,
 			ActiveTrade: active,
 		}
-
-		// Add Heikin Ashi data if available
-		cwsEntry.HeikinAshi = haCandle
 
 		// TODO: Recheck
 		// Update MAE/MFE for active trade
@@ -1001,7 +1047,10 @@ func runStrategyBacktest(strat strategy.Strategy, candles []candle.Candle, cfg c
 	chartDataFile := "backtest_chart_data.json"
 	f, err := os.Create(chartDataFile)
 	if err == nil {
-		json.NewEncoder(f).Encode(candlesWithSignals)
+		err = json.NewEncoder(f).Encode(candlesWithSignals)
+		if err != nil {
+			log.Printf("Error encoding chart data for %s: %v", chartDataFile, err)
+		}
 		f.Close()
 		log.Printf("Saved chart data to %s", chartDataFile)
 	} else {
