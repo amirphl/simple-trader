@@ -127,6 +127,10 @@
             border-top: 2px solid #dee2e6;
             padding-top: 20px;
         }
+        .stochastic-container {
+            border-top: 2px solid #dee2e6;
+            padding-top: 20px;
+        }
         .controls {
             padding: 20px;
             background: #f8f9fa;
@@ -472,6 +476,10 @@
                             <h4>Heikin Ashi Candles</h4>
                             <div id="heikin-ashi-chart-${symbolIndex}" style="height: 300px;"></div>
                         </div>
+                        <div class="chart-container stochastic-container" id="stochastic-container-${symbolIndex}">
+                            <h4>Stochastic Oscillator</h4>
+                            <div id="stochastic-chart-${symbolIndex}" style="height: 250px;"></div>
+                        </div>
                     </div>
                     <div class="controls">
                         <div class="control-group">
@@ -527,8 +535,9 @@
 
             const chartContainer = document.getElementById(`chart-${index}`);
             const heikinAshiContainer = document.getElementById(`heikin-ashi-chart-${index}`);
+            const stochasticContainer = document.getElementById(`stochastic-chart-${index}`);
             
-            if (!chartContainer || !heikinAshiContainer) {
+            if (!chartContainer || !heikinAshiContainer || !stochasticContainer) {
                 console.warn(`Chart containers not found for index: ${index}`);
                 return;
             }
@@ -608,8 +617,38 @@
                 },
             });
             
+            // Create Stochastic chart
+            const stochasticChart = LightweightCharts.createChart(stochasticContainer, {
+                width: stochasticContainer.clientWidth,
+                height: 250,
+                layout: {
+                    backgroundColor: '#ffffff',
+                    textColor: '#333',
+                },
+                grid: {
+                    vertLines: { color: '#f0f0f0' },
+                    horzLines: { color: '#f0f0f0' },
+                },
+                crosshair: {
+                    mode: LightweightCharts.CrosshairMode.Normal,
+                },
+                timeScale: {
+                    borderColor: '#cccccc',
+                    timeVisible: true,
+                    secondsVisible: false,
+                },
+                rightPriceScale: {
+                    borderColor: '#cccccc',
+                    priceFormat: {
+                        type: 'price',
+                        precision: 2,
+                        minMove: 0.01,
+                    },
+                },
+            });
+            
             // Validate chart creation
-            if (!mainChart || !heikinAshiChart || typeof mainChart.addCandlestickSeries !== 'function') {
+            if (!mainChart || !heikinAshiChart || !stochasticChart || typeof mainChart.addCandlestickSeries !== 'function') {
                 console.error('Chart creation failed');
                 chartContainer.innerHTML = `
                     <div style="display: flex; align-items: center; justify-content: center; height: 100%; color: #dc3545; font-style: italic;">
@@ -622,6 +661,7 @@
             // Process chart data
             const regularCandleData = [];
             const heikinAshiCandleData = [];
+            const stochasticData = [];
             const volumeData = [];
             const markers = [];
             const candleDetails = {}; // For tooltip data
@@ -631,6 +671,7 @@
                     const candle = item.candle;
                     const haCandle = item.heikin_ashi;
                     const signal = item.signal;
+                    const stochastic = item.stochastic;
 
                     if (!candle || !candle.timestamp) {
                         console.warn(`Invalid candle data at index ${itemIndex} for symbol ${symbol}`);
@@ -650,6 +691,7 @@
                         date: new Date(candle.timestamp).toLocaleString(),
                         candle: candle,
                         heikinAshi: haCandle,
+                        stochastic: stochastic || null,
                         signal: signal,
                         balance: item.balance || 0,
                         equity: item.equity || 0,
@@ -672,6 +714,22 @@
                             high: parseFloat(haCandle.high),
                             low: parseFloat(haCandle.low),
                             close: parseFloat(haCandle.close),
+                        });
+                    }
+                    
+                    // Add Stochastic data
+                    if (stochastic && typeof stochastic.k === 'number' && typeof stochastic.d === 'number') {
+                        // Store K and D values separately for line series
+                        if (!stochasticData.k) stochasticData.k = [];
+                        if (!stochasticData.d) stochasticData.d = [];
+                        
+                        stochasticData.k.push({
+                            time: time,
+                            value: parseFloat(stochastic.k),
+                        });
+                        stochasticData.d.push({
+                            time: time,
+                            value: parseFloat(stochastic.d),
                         });
                     }
 
@@ -756,12 +814,57 @@
                 wickDownColor: '#ef5350',
                 wickVisible: true,
             });
+            
+            // Add Stochastic series to Stochastic chart
+            const stochasticKSeries = stochasticChart.addLineSeries({
+                color: '#2962FF',
+                lineWidth: 2,
+                title: '%K',
+            });
+            
+            const stochasticDSeries = stochasticChart.addLineSeries({
+                color: '#FF6D00',
+                lineWidth: 2,
+                title: '%D',
+            });
+            
+            // Add overbought/oversold lines to Stochastic chart
+            const overboughtLine = stochasticChart.addLineSeries({
+                color: '#787B86',
+                lineWidth: 1,
+                lineStyle: LightweightCharts.LineStyle.Dashed,
+                title: 'Overbought (80)',
+            });
+            
+            const oversoldLine = stochasticChart.addLineSeries({
+                color: '#787B86',
+                lineWidth: 1,
+                lineStyle: LightweightCharts.LineStyle.Dashed,
+                title: 'Oversold (20)',
+            });
 
             // Set data
             candlestickSeries.setData(regularCandleData);
             candlestickSeries.setMarkers(markers);
             volumeSeries.setData(volumeData);
             heikinAshiSeries.setData(heikinAshiCandleData);
+            
+            // Set Stochastic data
+            if (stochasticData.k && stochasticData.k.length > 0) {
+                stochasticKSeries.setData(stochasticData.k);
+                stochasticDSeries.setData(stochasticData.d);
+                
+                // Add overbought/oversold lines
+                const timeRange = { from: stochasticData.k[0].time, to: stochasticData.k[stochasticData.k.length - 1].time };
+                overboughtLine.setData([
+                    { time: timeRange.from, value: 80 },
+                    { time: timeRange.to, value: 80 }
+                ]);
+                oversoldLine.setData([
+                    { time: timeRange.from, value: 20 },
+                    { time: timeRange.to, value: 20 }
+                ]);
+            }
 
             // Synchronize time scales using compatible v4.1.3 API
             function syncCharts(sourceChart, targetChart) {
@@ -775,6 +878,10 @@
             // Set up bidirectional synchronization
             syncCharts(mainChart, heikinAshiChart);
             syncCharts(heikinAshiChart, mainChart);
+            syncCharts(mainChart, stochasticChart);
+            syncCharts(stochasticChart, mainChart);
+            syncCharts(heikinAshiChart, stochasticChart);
+            syncCharts(stochasticChart, heikinAshiChart);
 
             // Add click event listeners for tooltip
             const tooltip = document.getElementById('tooltip');
@@ -787,13 +894,17 @@
 
             setupChartClickHandler(mainChart, chartContainer);
             setupChartClickHandler(heikinAshiChart, heikinAshiContainer);
+            setupChartClickHandler(stochasticChart, stochasticContainer);
 
             // Store chart references
             charts[symbol] = {
                 mainChart: mainChart,
                 heikinAshiChart: heikinAshiChart,
+                stochasticChart: stochasticChart,
                 candlestickSeries: candlestickSeries,
                 heikinAshiSeries: heikinAshiSeries,
+                stochasticKSeries: stochasticKSeries,
+                stochasticDSeries: stochasticDSeries,
                 volumeSeries: volumeSeries,
                 data: symbolData.data,
                 results: symbolData.results,
@@ -901,6 +1012,33 @@
                     html += '<tr><td>HA Body Size</td><td>' + haBodySize.toFixed(8) + '</td></tr>';
                     html += '<tr><td>HA Change %</td><td class="' + (haChangePercent >= 0 ? 'positive' : 'negative') + '">' + haChangePercent.toFixed(4) + '%</td></tr>';
                     html += '<tr><td>HA Type</td><td>' + (details.heikinAshi.close >= details.heikinAshi.open ? 'Bullish' : 'Bearish') + '</td></tr>';
+                }
+                
+                // Stochastic data if available
+                if (details.stochastic) {
+                    html += '<tr><th colspan="2" style="text-align:center;background:#e3f2fd;">[STOCH] Stochastic Oscillator</th></tr>';
+                    html += '<tr><td>%K Value</td><td>' + details.stochastic.k.toFixed(2) + '</td></tr>';
+                    html += '<tr><td>%D Value</td><td>' + details.stochastic.d.toFixed(2) + '</td></tr>';
+                    
+                    // Stochastic conditions
+                    const kValue = details.stochastic.k;
+                    const dValue = details.stochastic.d;
+                    
+                    if (kValue > 80 && dValue > 80) {
+                        html += '<tr><td>Condition</td><td style="color: #ef5350; font-weight: bold;">[OVERBOUGHT] Overbought</td></tr>';
+                    } else if (kValue < 20 && dValue < 20) {
+                        html += '<tr><td>Condition</td><td style="color: #26a69a; font-weight: bold;">[OVERSOLD] Oversold</td></tr>';
+                    } else {
+                        html += '<tr><td>Condition</td><td style="color: #666;">[NEUTRAL] Neutral</td></tr>';
+                    }
+                    
+                    if (kValue > dValue) {
+                        html += '<tr><td>Signal</td><td style="color: #26a69a; font-weight: bold;">[BULLISH] %K > %D</td></tr>';
+                    } else if (kValue < dValue) {
+                        html += '<tr><td>Signal</td><td style="color: #ef5350; font-weight: bold;">[BEARISH] %K < %D</td></tr>';
+                    } else {
+                        html += '<tr><td>Signal</td><td style="color: #666;">[NEUTRAL] %K = %D</td></tr>';
+                    }
                 }
                 
                 // Account information
@@ -1073,6 +1211,14 @@
                     if (haContainer) {
                         chartData.heikinAshiChart.applyOptions({ 
                             width: haContainer.clientWidth 
+                        });
+                    }
+                }
+                if (chartData.stochasticChart && chartData.index !== undefined) {
+                    const stochasticContainer = document.getElementById(`stochastic-chart-${chartData.index}`);
+                    if (stochasticContainer) {
+                        chartData.stochasticChart.applyOptions({ 
+                            width: stochasticContainer.clientWidth 
                         });
                     }
                 }
