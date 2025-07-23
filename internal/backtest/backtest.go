@@ -577,16 +577,25 @@ type Stochastic struct {
 	D Float64 `json:"d"`
 }
 
+type MultiStochastic struct {
+	Stoch14  Stochastic `json:"stoch14"`  // 14-period stochastic
+	Stoch20  Stochastic `json:"stoch20"`  // 20-period stochastic
+	Stoch40  Stochastic `json:"stoch40"`  // 40-period stochastic
+	Stoch60  Stochastic `json:"stoch60"`  // 60-period stochastic
+	Stoch80  Stochastic `json:"stoch80"`  // 80-period stochastic
+	Stoch100 Stochastic `json:"stoch100"` // 100-period stochastic
+}
+
 type CandleWithSignal struct {
-	Candle       candle.Candle   `json:"candle"`
-	HeikinAshi   candle.Candle   `json:"heikin_ashi,omitempty"`
-	Stochastic   Stochastic      `json:"stochastic,omitempty"`
-	Signal       strategy.Signal `json:"signal,omitempty"`
-	TradeInfo    *TradeLogEntry  `json:"trade_info,omitempty"`
-	Balance      float64         `json:"balance"`
-	Equity       float64         `json:"equity"`
-	ActiveTrade  bool            `json:"active_trade"`
-	TradeDetails string          `json:"trade_details,omitempty"`
+	Candle          candle.Candle   `json:"candle"`
+	HeikinAshi      candle.Candle   `json:"heikin_ashi,omitempty"`
+	MultiStochastic MultiStochastic `json:"multi_stochastic,omitempty"`
+	Signal          strategy.Signal `json:"signal,omitempty"`
+	TradeInfo       *TradeLogEntry  `json:"trade_info,omitempty"`
+	Balance         float64         `json:"balance"`
+	Equity          float64         `json:"equity"`
+	ActiveTrade     bool            `json:"active_trade"`
+	TradeDetails    string          `json:"trade_details,omitempty"`
 }
 
 // runStrategyBacktest runs a backtest for a specific strategy
@@ -614,24 +623,39 @@ func runStrategyBacktest(strat strategy.Strategy, candles []candle.Candle, cfg c
 	// Generate Heikin Ashi candles for the entire dataset
 	heikinAshiCandles := candle.GenerateHeikenAshiCandles(candles)
 
-	var stochastics *indicator.StochasticResult
-	// Generate Stochastic candles for the entire dataset
-	if stochasticHeikinAshiStrat, ok := strat.(*strategy.StochasticHeikinAshi); ok {
-		var err error
-		stochastics, err = indicator.CalculateStochastic(candles,
-			stochasticHeikinAshiStrat.PeriodK(),
-			stochasticHeikinAshiStrat.SmoothK(),
-			stochasticHeikinAshiStrat.PeriodD(),
-		)
-		if err != nil {
-			log.Printf("runStrategyBacktest | Error generating Stochastic candles: %v", err)
-		}
-	} else {
-		var err error
-		stochastics, err = indicator.CalculateStochastic(candles, 14, 10, 3)
-		if err != nil {
-			log.Printf("runStrategyBacktest | Error generating Stochastic candles: %v", err)
-		}
+	// Calculate all 6 stochastic indicators for charting
+	var stoch14, stoch20, stoch40, stoch60, stoch80, stoch100 *indicator.StochasticResult
+	var err error
+
+	// Calculate all 5 stochastics for charting
+	stoch14, err = indicator.CalculateStochastic(candles, 14, 3, 3)
+	if err != nil {
+		log.Printf("runStrategyBacktest | Error generating Stochastic 14: %v", err)
+	}
+
+	stoch20, err = indicator.CalculateStochastic(candles, 20, 3, 3)
+	if err != nil {
+		log.Printf("runStrategyBacktest | Error generating Stochastic 20: %v", err)
+	}
+
+	stoch40, err = indicator.CalculateStochastic(candles, 40, 3, 3)
+	if err != nil {
+		log.Printf("runStrategyBacktest | Error generating Stochastic 40: %v", err)
+	}
+
+	stoch60, err = indicator.CalculateStochastic(candles, 60, 3, 3)
+	if err != nil {
+		log.Printf("runStrategyBacktest | Error generating Stochastic 60: %v", err)
+	}
+
+	stoch80, err = indicator.CalculateStochastic(candles, 80, 3, 3)
+	if err != nil {
+		log.Printf("runStrategyBacktest | Error generating Stochastic 80: %v", err)
+	}
+
+	stoch100, err = indicator.CalculateStochastic(candles, 100, 3, 3)
+	if err != nil {
+		log.Printf("runStrategyBacktest | Error generating Stochastic 100: %v", err)
 	}
 
 	// Risk parameters
@@ -684,22 +708,59 @@ func runStrategyBacktest(strat strategy.Strategy, candles []candle.Candle, cfg c
 		// Get corresponding Heikin Ashi candle
 		haCandle := heikinAshiCandles[i]
 
-		// Get corresponding Stochastic candle
-		stochasticK := stochastics.K[i]
-		stochasticD := stochastics.D[i]
+		// Create multi-stochastic data
+		var multiStoch MultiStochastic
+		if stoch14 != nil && i < len(stoch14.K) {
+			multiStoch.Stoch14 = Stochastic{
+				K: Float64(stoch14.K[i]),
+				D: Float64(stoch14.D[i]),
+			}
+		}
+		if stoch20 != nil && i < len(stoch20.K) {
+			multiStoch.Stoch20 = Stochastic{
+				K: Float64(stoch20.K[i]),
+				D: Float64(stoch20.D[i]),
+			}
+		}
+		if stoch40 != nil && i < len(stoch40.K) {
+			multiStoch.Stoch40 = Stochastic{
+				K: Float64(stoch40.K[i]),
+				D: Float64(stoch40.D[i]),
+			}
+		}
+		if stoch60 != nil && i < len(stoch60.K) {
+			multiStoch.Stoch60 = Stochastic{
+				K: Float64(stoch60.K[i]),
+				D: Float64(stoch60.D[i]),
+			}
+		}
+		if stoch80 != nil && i < len(stoch80.K) {
+			multiStoch.Stoch80 = Stochastic{
+				K: Float64(stoch80.K[i]),
+				D: Float64(stoch80.D[i]),
+			}
+		}
+
+		if stoch100 != nil && i < len(stoch100.K) {
+			multiStoch.Stoch100 = Stochastic{
+				K: Float64(stoch100.K[i]),
+				D: Float64(stoch100.D[i]),
+			}
+		}
 
 		// Create candle with signal data for charting
 		cwsEntry := CandleWithSignal{
-			Candle:     c,
-			HeikinAshi: haCandle,
-			Stochastic: Stochastic{
-				K: Float64(stochasticK),
-				D: Float64(stochasticD),
-			},
+			Candle:          c,
+			HeikinAshi:      haCandle,
+			MultiStochastic: multiStoch,
 			// Signal:      sig,
 			Balance:     currentBalance,
 			Equity:      results.Equity,
 			ActiveTrade: active,
+		}
+
+		if sig.Position == strategy.LongBullish || sig.Position == strategy.ShortBearish || sig.Position == strategy.LongBearish || sig.Position == strategy.ShortBullish {
+			cwsEntry.Signal = sig
 		}
 
 		// TODO: Recheck
@@ -917,7 +978,7 @@ func runStrategyBacktest(strat strategy.Strategy, candles []candle.Candle, cfg c
 				results.TradeLog = append(results.TradeLog, *currentTrade)
 
 				// Update candle with trade exit info
-				cwsEntry.Signal = sig
+				// cwsEntry.Signal = sig
 				cwsEntry.TradeInfo = currentTrade
 				cwsEntry.TradeDetails = fmt.Sprintf("Exit: %s at %.2f, PnL: %.2f, Reason: %s",
 					currentTrade.Side, exitPrice, pnl, exitReason)
