@@ -216,16 +216,11 @@ func RunMultiSymbolBacktest(
 	cfg config.Config,
 	storage db.DB,
 ) {
-	// Get the strategy (currently focused on EngulfingHeikinAshi)
 	if len(cfg.Strategies) == 0 {
 		log.Fatal("No strategies specified in config")
 	}
 
 	strategyName := cfg.Strategies[0] // Use first strategy
-	if strategyName != "Engulfing Heikin Ashi" {
-		log.Printf("Warning: Multi-symbol backtest is optimized for EngulfingHeikinAshi strategy, but using: %s", strategyName)
-	}
-
 	// Fetch top N symbols from Binance
 	log.Printf("Fetching top %d symbols from Binance...", cfg.TopSymbolsCount)
 	symbols, err := fetchTopBinanceSymbols(ctx, cfg.TopSymbolsCount, cfg.ProxyURL)
@@ -255,11 +250,13 @@ func RunMultiSymbolBacktest(
 		switch strategyName {
 		case "Engulfing Heikin Ashi":
 			strat = strategy.NewEngulfingHeikinAshi(symbol, storage)
+		case "Stochastic Heikin Ashi":
+			strat = strategy.NewStochasticHeikinAshi(symbol, storage, 24, 10, 3)
 		case "rsi":
 			strat = strategy.NewRSIStrategy(symbol, 14, 70, 30, storage)
 		default:
-			log.Printf("Unknown strategy: %s, using EngulfingHeikinAshi", strategyName)
-			strat = strategy.NewEngulfingHeikinAshi(symbol, storage)
+			log.Printf("Unknown strategy: %s, using StochasticHeikinAshi", strategyName)
+			strat = strategy.NewStochasticHeikinAshi(symbol, storage, 24, 10, 3)
 		}
 
 		// Load candles for this symbol
@@ -300,6 +297,8 @@ func RunMultiSymbolBacktest(
 					"data":    symbolChartData,
 					"results": backtestResults,
 				})
+			} else {
+				log.Printf("Error unmarshalling chart data for %s: %v", symbol, err)
 			}
 		}
 
