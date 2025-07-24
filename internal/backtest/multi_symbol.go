@@ -163,7 +163,7 @@ func fetchTopBinanceSymbolsWithRetry(ctx context.Context, topN int, proxyURL str
 		// Filter USDT pairs and sort by quote volume
 		var usdtSymbols []BinanceSymbolInfo
 		for _, symbol := range symbols {
-			exclusionSymbols := []string{"BTC", "ETH", "FDUSD", "USDC"}
+			exclusionSymbols := []string{"BTC", "USDC"}
 			include := true
 			for _, exclusion := range exclusionSymbols {
 				if strings.HasPrefix(symbol.Symbol, exclusion) {
@@ -252,6 +252,8 @@ func RunMultiSymbolBacktest(
 			strat = strategy.NewEngulfingHeikinAshi(symbol, storage)
 		case "Stochastic Heikin Ashi":
 			strat = strategy.NewStochasticHeikinAshi(symbol, storage, 24, 10, 3)
+		case "Four Stochastic Heikin Ashi":
+			strat = strategy.NewFourStochasticHeikinAshi(symbol, storage)
 		case "rsi":
 			strat = strategy.NewRSIStrategy(symbol, 14, 70, 30, storage)
 		default:
@@ -315,6 +317,9 @@ func RunMultiSymbolBacktest(
 
 	// Save multi-symbol backtest data as JSON for external HTML report
 	saveMultiSymbolBacktestData(multiResults, allChartData)
+
+	// Save comprehensive metrics for all symbols
+	saveComprehensiveMetrics(multiResults)
 
 	// Print summary
 	printMultiSymbolSummary(multiResults)
@@ -413,6 +418,7 @@ func printMultiSymbolSummary(results MultiSymbolBacktestResults) {
 	for i := start; i < len(performances); i++ {
 		log.Printf("%d. %s: $%.2f\n", len(performances)-i, performances[i].Symbol, performances[i].PnL)
 	}
+
 }
 
 // saveMultiSymbolBacktestData saves multi-symbol backtest data as JSON for external HTML report
@@ -442,6 +448,317 @@ func saveMultiSymbolBacktestData(results MultiSymbolBacktestResults, allChartDat
 
 	log.Printf("Multi-symbol backtest data saved to: %s", filename)
 	log.Printf("Open multi_symbol_backtest_report.html in your browser to view the interactive report")
+}
+
+// saveComprehensiveMetrics saves detailed metrics for all symbols in multiple formats
+func saveComprehensiveMetrics(results MultiSymbolBacktestResults) {
+	// Create comprehensive metrics structure
+	comprehensiveMetrics := map[string]interface{}{
+		"summary": map[string]interface{}{
+			"strategy":        results.Strategy,
+			"start_time":      results.StartTime,
+			"end_time":        results.EndTime,
+			"duration":        results.EndTime.Sub(results.StartTime).String(),
+			"total_symbols":   results.TotalSymbols,
+			"successful_runs": results.SuccessfulRuns,
+			"failed_runs":     results.FailedRuns,
+			"overall_metrics": results.OverallMetrics,
+		},
+		"symbol_details": make(map[string]interface{}),
+		"performance_rankings": map[string]interface{}{
+			"top_performers":       []map[string]interface{}{},
+			"bottom_performers":    []map[string]interface{}{},
+			"profitable_symbols":   []string{},
+			"unprofitable_symbols": []string{},
+		},
+		"statistical_analysis": map[string]interface{}{
+			"pnl_distribution":      map[string]float64{},
+			"win_rate_distribution": map[string]float64{},
+			"drawdown_distribution": map[string]float64{},
+		},
+	}
+
+	// Collect all PnL values for statistical analysis
+	var allPnLs []float64
+	var allWinRates []float64
+	var allDrawdowns []float64
+	var profitableSymbols []string
+	var unprofitableSymbols []string
+
+	// Process each symbol's results
+	for symbol, result := range results.Results {
+		pnl := result.Equity - result.StartingBalance
+		winRate := 0.0
+		if result.Trades > 0 {
+			winRate = float64(result.Wins) / float64(result.Trades)
+		}
+
+		// Symbol details
+		symbolDetail := map[string]interface{}{
+			"symbol":                  symbol,
+			"starting_balance":        result.StartingBalance,
+			"ending_balance":          result.Equity,
+			"pnl":                     pnl,
+			"pnl_percentage":          (pnl / result.StartingBalance) * 100,
+			"trades":                  result.Trades,
+			"wins":                    result.Wins,
+			"losses":                  result.Losses,
+			"win_rate":                winRate,
+			"max_drawdown":            result.MaxDrawdown,
+			"max_drawdown_percentage": (result.MaxDrawdown / result.StartingBalance) * 100,
+			"max_consecutive_wins":    result.MaxConsecWins,
+			"max_consecutive_losses":  result.MaxConsecLosses,
+			"max_equity":              result.MaxEquity,
+			"equity_curve_length":     len(result.EquityCurve),
+			"trade_log_length":        len(result.TradeLog),
+			"long_trades":             result.LongTrades,
+			"short_trades":            result.ShortTrades,
+		}
+
+		comprehensiveMetrics["symbol_details"].(map[string]interface{})[symbol] = symbolDetail
+
+		// Collect data for statistical analysis
+		allPnLs = append(allPnLs, pnl)
+		allWinRates = append(allWinRates, winRate)
+		allDrawdowns = append(allDrawdowns, result.MaxDrawdown)
+
+		if pnl > 0 {
+			profitableSymbols = append(profitableSymbols, symbol)
+		} else {
+			unprofitableSymbols = append(unprofitableSymbols, symbol)
+		}
+	}
+
+	// Sort symbols by performance
+	type symbolPerf struct {
+		Symbol   string
+		PnL      float64
+		WinRate  float64
+		Drawdown float64
+	}
+
+	var performances []symbolPerf
+	for symbol, result := range results.Results {
+		pnl := result.Equity - result.StartingBalance
+		winRate := 0.0
+		if result.Trades > 0 {
+			winRate = float64(result.Wins) / float64(result.Trades)
+		}
+		performances = append(performances, symbolPerf{
+			Symbol:   symbol,
+			PnL:      pnl,
+			WinRate:  winRate,
+			Drawdown: result.MaxDrawdown,
+		})
+	}
+
+	// Sort by PnL (descending)
+	sort.Slice(performances, func(i, j int) bool {
+		return performances[i].PnL > performances[j].PnL
+	})
+
+	// Top 10 performers
+	topCount := min(10, len(performances))
+	for i := 0; i < topCount; i++ {
+		perf := performances[i]
+		comprehensiveMetrics["performance_rankings"].(map[string]interface{})["top_performers"] = append(
+			comprehensiveMetrics["performance_rankings"].(map[string]interface{})["top_performers"].([]map[string]interface{}),
+			map[string]interface{}{
+				"rank":     i + 1,
+				"symbol":   perf.Symbol,
+				"pnl":      perf.PnL,
+				"win_rate": perf.WinRate,
+				"drawdown": perf.Drawdown,
+			},
+		)
+	}
+
+	// Bottom 5 performers
+	bottomCount := min(5, len(performances))
+	start := max(0, len(performances)-bottomCount)
+	for i := start; i < len(performances); i++ {
+		perf := performances[i]
+		comprehensiveMetrics["performance_rankings"].(map[string]interface{})["bottom_performers"] = append(
+			comprehensiveMetrics["performance_rankings"].(map[string]interface{})["bottom_performers"].([]map[string]interface{}),
+			map[string]interface{}{
+				"rank":     len(performances) - i,
+				"symbol":   perf.Symbol,
+				"pnl":      perf.PnL,
+				"win_rate": perf.WinRate,
+				"drawdown": perf.Drawdown,
+			},
+		)
+	}
+
+	// Statistical analysis
+	if len(allPnLs) > 0 {
+		sort.Float64s(allPnLs)
+		sort.Float64s(allWinRates)
+		sort.Float64s(allDrawdowns)
+
+		comprehensiveMetrics["statistical_analysis"].(map[string]interface{})["pnl_distribution"] = map[string]float64{
+			"min":    allPnLs[0],
+			"max":    allPnLs[len(allPnLs)-1],
+			"median": allPnLs[len(allPnLs)/2],
+			"mean":   calculateMean(allPnLs),
+		}
+
+		comprehensiveMetrics["statistical_analysis"].(map[string]interface{})["win_rate_distribution"] = map[string]float64{
+			"min":    allWinRates[0],
+			"max":    allWinRates[len(allWinRates)-1],
+			"median": allWinRates[len(allWinRates)/2],
+			"mean":   calculateMean(allWinRates),
+		}
+
+		comprehensiveMetrics["statistical_analysis"].(map[string]interface{})["drawdown_distribution"] = map[string]float64{
+			"min":    allDrawdowns[0],
+			"max":    allDrawdowns[len(allDrawdowns)-1],
+			"median": allDrawdowns[len(allDrawdowns)/2],
+			"mean":   calculateMean(allDrawdowns),
+		}
+	}
+
+	comprehensiveMetrics["performance_rankings"].(map[string]interface{})["profitable_symbols"] = profitableSymbols
+	comprehensiveMetrics["performance_rankings"].(map[string]interface{})["unprofitable_symbols"] = unprofitableSymbols
+
+	// Save comprehensive metrics in multiple formats
+	saveMetricsAsJSON(comprehensiveMetrics, "comprehensive_metrics.json")
+	saveMetricsAsCSV(results, "comprehensive_metrics.csv")
+	saveMetricsAsHTML(comprehensiveMetrics, "comprehensive_metrics.html")
+
+	log.Printf("Comprehensive metrics saved in multiple formats")
+}
+
+// calculateMean calculates the mean of a slice of float64 values
+func calculateMean(values []float64) float64 {
+	if len(values) == 0 {
+		return 0
+	}
+	sum := 0.0
+	for _, v := range values {
+		sum += v
+	}
+	return sum / float64(len(values))
+}
+
+// saveMetricsAsJSON saves metrics as JSON file
+func saveMetricsAsJSON(metrics map[string]interface{}, filename string) {
+	file, err := os.Create(filename)
+	if err != nil {
+		log.Printf("Failed to create JSON metrics file: %v", err)
+		return
+	}
+	defer file.Close()
+
+	encoder := json.NewEncoder(file)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(metrics); err != nil {
+		log.Printf("Failed to encode JSON metrics: %v", err)
+		return
+	}
+
+	log.Printf("Comprehensive metrics saved to: %s", filename)
+}
+
+// saveMetricsAsCSV saves metrics as CSV file
+func saveMetricsAsCSV(results MultiSymbolBacktestResults, filename string) {
+	file, err := os.Create(filename)
+	if err != nil {
+		log.Printf("Failed to create CSV metrics file: %v", err)
+		return
+	}
+	defer file.Close()
+
+	// Write CSV header
+	file.WriteString("Symbol,StartingBalance,EndingBalance,PnL,PnLPercentage,Trades,Wins,Losses,WinRate,MaxDrawdown,MaxDrawdownPercentage,MaxConsecutiveWins,MaxConsecutiveLosses,MaxEquity,EquityCurveLength,TradeLogLength,LongTrades,ShortTrades\n")
+
+	// Write data for each symbol
+	for symbol, result := range results.Results {
+		pnl := result.Equity - result.StartingBalance
+		winRate := 0.0
+		if result.Trades > 0 {
+			winRate = float64(result.Wins) / float64(result.Trades)
+		}
+
+		line := fmt.Sprintf("%s,%.2f,%.2f,%.2f,%.2f,%d,%d,%d,%.4f,%.2f,%.2f,%d,%d,%.2f,%d,%d,%d,%d\n",
+			symbol,
+			result.StartingBalance,
+			result.Equity,
+			pnl,
+			(pnl/result.StartingBalance)*100,
+			result.Trades,
+			result.Wins,
+			result.Losses,
+			winRate,
+			result.MaxDrawdown,
+			(result.MaxDrawdown/result.StartingBalance)*100,
+			result.MaxConsecWins,
+			result.MaxConsecLosses,
+			result.MaxEquity,
+			len(result.EquityCurve),
+			len(result.TradeLog),
+			result.LongTrades,
+			result.ShortTrades,
+		)
+		file.WriteString(line)
+	}
+
+	log.Printf("CSV metrics saved to: %s", filename)
+}
+
+// saveMetricsAsHTML saves metrics as HTML report
+func saveMetricsAsHTML(metrics map[string]interface{}, filename string) {
+	// For now, save a simple HTML version
+	htmlContent := fmt.Sprintf(`<!DOCTYPE html>
+<html>
+<head>
+    <title>Comprehensive Trading Metrics Report</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .section { margin: 20px 0; padding: 15px; border: 1px solid #ddd; border-radius: 5px; }
+        .metric { display: inline-block; margin: 10px; padding: 10px; background: #f8f9fa; border-radius: 3px; }
+        .positive { color: green; }
+        .negative { color: red; }
+    </style>
+</head>
+<body>
+    <h1>Comprehensive Trading Metrics Report</h1>
+    <div class="section">
+        <h2>Summary</h2>
+        <div class="metric">Strategy: %s</div>
+        <div class="metric">Total Symbols: %d</div>
+        <div class="metric">Successful Runs: %d</div>
+        <div class="metric">Failed Runs: %d</div>
+    </div>
+    <div class="section">
+        <h2>Overall Performance</h2>
+        <div class="metric">Total PnL: $%.2f</div>
+        <div class="metric">Average PnL per Symbol: $%.2f</div>
+        <div class="metric">Overall Win Rate: %.2f%%</div>
+    </div>
+    <div class="section">
+        <h2>Note</h2>
+        <p>Detailed metrics are available in the JSON and CSV files.</p>
+        <p>Open comprehensive_metrics.json for full data or comprehensive_metrics.csv for spreadsheet analysis.</p>
+    </div>
+</body>
+</html>`,
+		metrics["summary"].(map[string]interface{})["strategy"],
+		metrics["summary"].(map[string]interface{})["total_symbols"],
+		metrics["summary"].(map[string]interface{})["successful_runs"],
+		metrics["summary"].(map[string]interface{})["failed_runs"],
+		metrics["summary"].(map[string]interface{})["overall_metrics"].(map[string]float64)["total_pnl"],
+		metrics["summary"].(map[string]interface{})["overall_metrics"].(map[string]float64)["avg_pnl_per_symbol"],
+		metrics["summary"].(map[string]interface{})["overall_metrics"].(map[string]float64)["overall_win_rate"]*100,
+	)
+
+	err := os.WriteFile(filename, []byte(htmlContent), 0644)
+	if err != nil {
+		log.Printf("Failed to create HTML metrics file: %v", err)
+		return
+	}
+
+	log.Printf("HTML metrics saved to: %s", filename)
 }
 
 // Helper functions
