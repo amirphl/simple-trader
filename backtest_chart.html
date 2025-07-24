@@ -88,9 +88,40 @@
             display: flex;
             align-items: center;
             gap: 5px;
+            flex-wrap: wrap;
         }
         .checkbox {
             margin-right: 5px;
+        }
+        .stochastic-controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin: 10px 0;
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 5px;
+            border: 1px solid #dee2e6;
+        }
+        .stoch-button {
+            padding: 5px 10px;
+            border: 1px solid #ccc;
+            border-radius: 3px;
+            background: #fff;
+            cursor: pointer;
+            font-size: 12px;
+            transition: all 0.2s;
+        }
+        .stoch-button.active {
+            background: #007bff;
+            color: white;
+            border-color: #007bff;
+        }
+        .stoch-button:hover {
+            background: #e9ecef;
+        }
+        .stoch-button.active:hover {
+            background: #0056b3;
         }
         .error {
             color: red;
@@ -124,10 +155,19 @@
             <input type="checkbox" id="showAllCandleSignals" class="checkbox" checked>
             <label for="showAllCandleSignals">Show L/S/H on All Candles</label>
         </div>
+        <div class="stochastic-controls">
+            <button class="stoch-button active" onclick="toggleStochastic('stoch14')" data-stoch="stoch14">Stoch14</button>
+            <button class="stoch-button active" onclick="toggleStochastic('stoch20')" data-stoch="stoch20">Stoch20</button>
+            <button class="stoch-button active" onclick="toggleStochastic('stoch40')" data-stoch="stoch40">Stoch40</button>
+            <button class="stoch-button active" onclick="toggleStochastic('stoch60')" data-stoch="stoch60">Stoch60</button>
+            <button class="stoch-button active" onclick="toggleStochastic('stoch80')" data-stoch="stoch80">Stoch80</button>
+            <button class="stoch-button active" onclick="toggleStochastic('stoch100')" data-stoch="stoch100">Stoch100</button>
+        </div>
     </div>
     
     <div class="chart-container">
         <div id="main-chart" class="chart"></div>
+        <div id="stochastic-chart" class="chart" style="height: 250px;"></div>
         <div id="heikin-ashi-chart" class="chart" style="height: 300px;"></div>
         <div id="equity-chart" class="chart"></div>
     </div>
@@ -231,6 +271,36 @@
                         },
                     });
                     
+                    // Create Stochastic chart
+                    const stochasticChart = LightweightCharts.createChart(document.getElementById('stochastic-chart'), {
+                        width: 1200,
+                        height: 250,
+                        layout: {
+                            backgroundColor: '#ffffff',
+                            textColor: '#333',
+                            fontFamily: 'Arial, sans-serif',
+                        },
+                        grid: {
+                            vertLines: { color: '#f0f0f0' },
+                            horzLines: { color: '#f0f0f0' },
+                        },
+                        crosshair: {
+                            mode: LightweightCharts.CrosshairMode.Normal,
+                        },
+                        rightPriceScale: {
+                            borderColor: '#cccccc',
+                            scaleMargins: {
+                                top: 0.1,
+                                bottom: 0.2,
+                            },
+                        },
+                        timeScale: {
+                            borderColor: '#cccccc',
+                            timeVisible: true,
+                            secondsVisible: false,
+                        },
+                    });
+
                     // Create Heikin Ashi chart
                     const heikinAshiChart = LightweightCharts.createChart(document.getElementById('heikin-ashi-chart'), {
                         width: 1200,
@@ -305,6 +375,94 @@
                         wickVisible: true,
                     });
 
+                    // Multi-Stochastic series - 5 different stochastics
+                    const stochastic14KSeries = stochasticChart.addLineSeries({
+                        color: '#FF0000', // Red
+                        lineWidth: 2,
+                        title: 'Stoch14 %K',
+                    });
+                    
+                    const stochastic14DSeries = stochasticChart.addLineSeries({
+                        color: '#FF6666', // Light Red
+                        lineWidth: 1,
+                        title: 'Stoch14 %D',
+                    });
+                    
+                    const stochastic20KSeries = stochasticChart.addLineSeries({
+                        color: '#0000FF', // Blue
+                        lineWidth: 2,
+                        title: 'Stoch20 %K',
+                    });
+                    
+                    const stochastic20DSeries = stochasticChart.addLineSeries({
+                        color: '#6666FF', // Light Blue
+                        lineWidth: 1,
+                        title: 'Stoch20 %D',
+                    });
+                    
+                    const stochastic40KSeries = stochasticChart.addLineSeries({
+                        color: '#FF8000', // Orange
+                        lineWidth: 2,
+                        title: 'Stoch40 %K',
+                    });
+                    
+                    const stochastic40DSeries = stochasticChart.addLineSeries({
+                        color: '#FFB366', // Light Orange
+                        lineWidth: 1,
+                        title: 'Stoch40 %D',
+                    });
+                    
+                    const stochastic60KSeries = stochasticChart.addLineSeries({
+                        color: '#8000FF', // Purple
+                        lineWidth: 2,
+                        title: 'Stoch60 %K',
+                    });
+                    
+                    const stochastic60DSeries = stochasticChart.addLineSeries({
+                        color: '#B366FF', // Light Purple
+                        lineWidth: 1,
+                        title: 'Stoch60 %D',
+                    });
+                    
+                    					const stochastic80KSeries = stochasticChart.addLineSeries({
+						color: '#FFD700', // Gold
+						lineWidth: 2,
+						title: 'Stoch80 %K',
+					});
+					
+					const stochastic80DSeries = stochasticChart.addLineSeries({
+						color: '#FFE55C', // Light Gold
+						lineWidth: 1,
+						title: 'Stoch80 %D',
+					});
+					
+					const stochastic100KSeries = stochasticChart.addLineSeries({
+						color: '#00FF00', // Green
+						lineWidth: 2,
+						title: 'Stoch100 %K',
+					});
+					
+					const stochastic100DSeries = stochasticChart.addLineSeries({
+						color: '#66FF66', // Light Green
+						lineWidth: 1,
+						title: 'Stoch100 %D',
+                    });
+
+                    // Overbought and oversold lines for Stochastic
+                    const overboughtLine = stochasticChart.addLineSeries({
+                        color: '#787B86',
+                        lineWidth: 1,
+                        lineStyle: 1, // Dashed
+                        title: 'Overbought (80)',
+                    });
+
+                    const oversoldLine = stochasticChart.addLineSeries({
+                        color: '#787B86',
+                        lineWidth: 1,
+                        lineStyle: 1, // Dashed
+                        title: 'Oversold (20)',
+                    });
+
                     // Volume series
                     const volumeSeries = mainChart.addHistogramSeries({
                         color: '#26a69a',
@@ -333,6 +491,15 @@
                     // Convert data to chart format
                     let regularCandleData = [];
                     let heikinAshiCandleData = [];
+                    let stochasticData = { 
+                        k: [], d: [],
+                        stoch14: { k: [], d: [] },
+                        stoch20: { k: [], d: [] },
+                        stoch40: { k: [], d: [] },
+                        stoch60: { k: [], d: [] },
+                        stoch80: { k: [], d: [] },
+                        stoch100: { k: [], d: [] }
+                    };
                     let volumeData = [];
                     let mainMarkers = [];
                     let heikinAshiMarkers = [];
@@ -406,6 +573,37 @@
                                 });
                             }
 
+                            // Add Stochastic data if available
+                            const multiStochastic = item.multi_stochastic;
+                            
+                            // Debug logging
+                            if (regularCandleData.length < 3) {
+                                console.log('Multi-stochastic data:', multiStochastic);
+                                console.log('Item structure:', item);
+                            }
+                            
+                            // Use multi-stochastic if available
+                            if (multiStochastic) {
+                                // Add all 6 stochastics
+                                const stochTypes = ['stoch14', 'stoch20', 'stoch40', 'stoch60', 'stoch80', 'stoch100'];
+                                
+                                stochTypes.forEach(stochType => {
+                                    if (multiStochastic[stochType] && 
+                                        typeof multiStochastic[stochType].k === 'number' && 
+                                        typeof multiStochastic[stochType].d === 'number') {
+                                        
+                                        stochasticData[stochType].k.push({
+                                    time: time,
+                                            value: parseFloat(multiStochastic[stochType].k),
+                                });
+                                        stochasticData[stochType].d.push({
+                                    time: time,
+                                            value: parseFloat(multiStochastic[stochType].d),
+                                        });
+                                    }
+                                });
+                            }
+
                             // Add volume data
                             volumeData.push({
                                 time: time,
@@ -434,6 +632,32 @@
                                     high: parseFloat(haCandle.high),
                                     low: parseFloat(haCandle.low),
                                     close: parseFloat(haCandle.close),
+                                } : null,
+                                multiStochastic: multiStochastic && multiStochastic.stoch14 ? {
+                                    stoch14: multiStochastic.stoch14 && typeof multiStochastic.stoch14.k === 'number' ? {
+                                        k: parseFloat(multiStochastic.stoch14.k),
+                                        d: parseFloat(multiStochastic.stoch14.d),
+                                    } : null,
+                                    stoch20: multiStochastic.stoch20 && typeof multiStochastic.stoch20.k === 'number' ? {
+                                        k: parseFloat(multiStochastic.stoch20.k),
+                                        d: parseFloat(multiStochastic.stoch20.d),
+                                    } : null,
+                                    stoch40: multiStochastic.stoch40 && typeof multiStochastic.stoch40.k === 'number' ? {
+                                        k: parseFloat(multiStochastic.stoch40.k),
+                                        d: parseFloat(multiStochastic.stoch40.d),
+                                    } : null,
+                                    stoch60: multiStochastic.stoch60 && typeof multiStochastic.stoch60.k === 'number' ? {
+                                        k: parseFloat(multiStochastic.stoch60.k),
+                                        d: parseFloat(multiStochastic.stoch60.d),
+                                    } : null,
+                                    stoch80: multiStochastic.stoch80 && typeof multiStochastic.stoch80.k === 'number' ? {
+                                        k: parseFloat(multiStochastic.stoch80.k),
+                                        d: parseFloat(multiStochastic.stoch80.d),
+                                    } : null,
+                                    stoch100: multiStochastic.stoch100 && typeof multiStochastic.stoch100.k === 'number' ? {
+                                        k: parseFloat(multiStochastic.stoch100.k),
+                                        d: parseFloat(multiStochastic.stoch100.d),
+                                    } : null,
                                 } : null,
                                 balance: parseFloat(item.balance || 0),
                                 equity: parseFloat(item.equity || 0),
@@ -627,6 +851,74 @@
                     if (heikinAshiCandleData.length > 0) {
                         heikinAshiCandlestickSeries.setData(heikinAshiCandleData);
                     }
+                    
+                    // Set Multi-Stochastic data
+                    console.log('Stochastic data structure:', stochasticData);
+                    console.log('Stoch14 data length:', stochasticData.stoch14 ? stochasticData.stoch14.k.length : 0);
+                    
+                                        // Check if we have any stochastic data
+                    const hasStochData = stochasticData.stoch14 && stochasticData.stoch14.k.length > 0;
+                    console.log('Has stochastic data:', hasStochData);
+                    console.log('Stoch14 data:', stochasticData.stoch14);
+                    
+                    if (hasStochData) {
+                        // Set all 6 stochastics
+                        const seriesMap = {
+                            stoch14: { k: stochastic14KSeries, d: stochastic14DSeries },
+                            stoch20: { k: stochastic20KSeries, d: stochastic20DSeries },
+                            stoch40: { k: stochastic40KSeries, d: stochastic40DSeries },
+                            stoch60: { k: stochastic60KSeries, d: stochastic60DSeries },
+                            stoch80: { k: stochastic80KSeries, d: stochastic80DSeries },
+                            stoch100: { k: stochastic100KSeries, d: stochastic100DSeries }
+                        };
+                        
+                        // Store series references for toggle functionality
+                        stochasticSeries = seriesMap;
+                        
+                        Object.keys(seriesMap).forEach(stochType => {
+                            if (stochasticData[stochType] && stochasticData[stochType].k.length > 0) {
+                                seriesMap[stochType].k.setData(stochasticData[stochType].k);
+                                seriesMap[stochType].d.setData(stochasticData[stochType].d);
+                            }
+                        });
+                        
+                        // Set overbought and oversold lines
+                        const timeRange = { from: stochasticData.stoch14.k[0].time, to: stochasticData.stoch14.k[stochasticData.stoch14.k.length - 1].time };
+                        overboughtLine.setData([
+                            { time: timeRange.from, value: 80 },
+                            { time: timeRange.to, value: 80 }
+                        ]);
+                        oversoldLine.setData([
+                            { time: timeRange.from, value: 20 },
+                            { time: timeRange.to, value: 20 }
+                        ]);
+                    } else {
+                        console.log('No stochastic data available, creating dummy data for testing');
+                        // Create dummy data to test if chart is working
+                        const dummyData = [];
+                        for (let i = 0; i < regularCandleData.length; i++) {
+                            dummyData.push({
+                                time: regularCandleData[i].time,
+                                value: 50 + Math.sin(i * 0.1) * 30 // Oscillating around 50
+                            });
+                        }
+                        stochastic14KSeries.setData(dummyData);
+                        stochastic14DSeries.setData(dummyData);
+                        
+                        // Set overbought and oversold lines
+                        if (regularCandleData.length > 0) {
+                            const timeRange = { from: regularCandleData[0].time, to: regularCandleData[regularCandleData.length - 1].time };
+                            overboughtLine.setData([
+                                { time: timeRange.from, value: 80 },
+                                { time: timeRange.to, value: 80 }
+                            ]);
+                            oversoldLine.setData([
+                                { time: timeRange.from, value: 20 },
+                                { time: timeRange.to, value: 20 }
+                            ]);
+                        }
+                    }
+                    
                     volumeSeries.setData(volumeData);
                     regularCandlestickSeries.setMarkers(allMarkersForMain);
                     if (heikinAshiCandleData.length > 0) {
@@ -640,22 +932,32 @@
 
                     // Fit content
                     mainChart.timeScale().fitContent();
+                    stochasticChart.timeScale().fitContent();
                     heikinAshiChart.timeScale().fitContent();
                     equityChart.timeScale().fitContent();
                     
                     // Sync all charts' timescales
                     mainChart.timeScale().subscribeVisibleLogicalRangeChange(range => {
+                        stochasticChart.timeScale().setVisibleLogicalRange(range);
+                        heikinAshiChart.timeScale().setVisibleLogicalRange(range);
+                        equityChart.timeScale().setVisibleLogicalRange(range);
+                    });
+                    
+                    stochasticChart.timeScale().subscribeVisibleLogicalRangeChange(range => {
+                        mainChart.timeScale().setVisibleLogicalRange(range);
                         heikinAshiChart.timeScale().setVisibleLogicalRange(range);
                         equityChart.timeScale().setVisibleLogicalRange(range);
                     });
                     
                     heikinAshiChart.timeScale().subscribeVisibleLogicalRangeChange(range => {
                         mainChart.timeScale().setVisibleLogicalRange(range);
+                        stochasticChart.timeScale().setVisibleLogicalRange(range);
                         equityChart.timeScale().setVisibleLogicalRange(range);
                     });
                     
                     equityChart.timeScale().subscribeVisibleLogicalRangeChange(range => {
                         mainChart.timeScale().setVisibleLogicalRange(range);
+                        stochasticChart.timeScale().setVisibleLogicalRange(range);
                         heikinAshiChart.timeScale().setVisibleLogicalRange(range);
                     });
                     
@@ -709,6 +1011,47 @@
                                 html += '<tr><td>High</td><td>' + details.heikinAshi.high.toFixed(4) + '</td></tr>';
                                 html += '<tr><td>Low</td><td>' + details.heikinAshi.low.toFixed(4) + '</td></tr>';
                                 html += '<tr><td>Close</td><td>' + details.heikinAshi.close.toFixed(4) + '</td></tr>';
+                            }
+
+                            // Multi-Stochastic data if available
+                            if (details.multiStochastic) {
+                                html += '<tr><th colspan="2" style="text-align:center;background:#e3f2fd;">[MULTI-STOCH] Multi-Stochastic Oscillators</th></tr>';
+                                
+                                // Stoch14 (Red)
+                                if (details.multiStochastic.stoch14) {
+                                    html += '<tr><td style="color:#FF0000;font-weight:bold;">Stoch14 %K</td><td>' + details.multiStochastic.stoch14.k.toFixed(2) + '</td></tr>';
+                                    html += '<tr><td style="color:#FF6666;">Stoch14 %D</td><td>' + details.multiStochastic.stoch14.d.toFixed(2) + '</td></tr>';
+                                }
+                                
+                                // Stoch20 (Blue)
+                                if (details.multiStochastic.stoch20) {
+                                    html += '<tr><td style="color:#0000FF;font-weight:bold;">Stoch20 %K</td><td>' + details.multiStochastic.stoch20.k.toFixed(2) + '</td></tr>';
+                                    html += '<tr><td style="color:#6666FF;">Stoch20 %D</td><td>' + details.multiStochastic.stoch20.d.toFixed(2) + '</td></tr>';
+                                }
+                                
+                                // Stoch40 (Orange)
+                                if (details.multiStochastic.stoch40) {
+                                    html += '<tr><td style="color:#FF8000;font-weight:bold;">Stoch40 %K</td><td>' + details.multiStochastic.stoch40.k.toFixed(2) + '</td></tr>';
+                                    html += '<tr><td style="color:#FFB366;">Stoch40 %D</td><td>' + details.multiStochastic.stoch40.d.toFixed(2) + '</td></tr>';
+                                }
+                                
+                                // Stoch60 (Purple)
+                                if (details.multiStochastic.stoch60) {
+                                    html += '<tr><td style="color:#8000FF;font-weight:bold;">Stoch60 %K</td><td>' + details.multiStochastic.stoch60.k.toFixed(2) + '</td></tr>';
+                                    html += '<tr><td style="color:#B366FF;">Stoch60 %D</td><td>' + details.multiStochastic.stoch60.d.toFixed(2) + '</td></tr>';
+                                }
+                                
+                                								// Stoch80 (Gold)
+								if (details.multiStochastic.stoch80) {
+									html += '<tr><td style="color:#FFD700;font-weight:bold;">Stoch80 %K</td><td>' + details.multiStochastic.stoch80.k.toFixed(2) + '</td></tr>';
+									html += '<tr><td style="color:#FFE55C;">Stoch80 %D</td><td>' + details.multiStochastic.stoch80.d.toFixed(2) + '</td></tr>';
+								}
+								
+								// Stoch100 (Green)
+								if (details.multiStochastic.stoch100) {
+									html += '<tr><td style="color:#00FF00;font-weight:bold;">Stoch100 %K</td><td>' + details.multiStochastic.stoch100.k.toFixed(2) + '</td></tr>';
+									html += '<tr><td style="color:#66FF66;">Stoch100 %D</td><td>' + details.multiStochastic.stoch100.d.toFixed(2) + '</td></tr>';
+								}
                             }
                             
                             // Account information
@@ -816,6 +1159,39 @@
                     heikinAshiChart.subscribeClick(param => {
                         showTooltip(param, document.getElementById('heikin-ashi-chart'));
                     });
+                    
+                    // Global variables to store stochastic series references
+                    let stochasticSeries = {};
+                    
+                    // Function to toggle stochastic visibility
+                    function toggleStochastic(stochType) {
+                        const button = document.querySelector(`[data-stoch="${stochType}"]`);
+                        const isActive = button.classList.contains('active');
+                        
+                        if (stochasticSeries[stochType] && stochasticSeries[stochType].k && stochasticSeries[stochType].d) {
+                            const kSeries = stochasticSeries[stochType].k;
+                            const dSeries = stochasticSeries[stochType].d;
+                            
+                            // Check if setVisible method exists
+                            if (typeof kSeries.setVisible === 'function' && typeof dSeries.setVisible === 'function') {
+                                if (isActive) {
+                                    // Hide the stochastic
+                                    kSeries.setVisible(false);
+                                    dSeries.setVisible(false);
+                                    button.classList.remove('active');
+                                } else {
+                                    // Show the stochastic
+                                    kSeries.setVisible(true);
+                                    dSeries.setVisible(true);
+                                    button.classList.add('active');
+                                }
+                            } else {
+                                console.error('setVisible method not available on series for', stochType);
+                            }
+                        } else {
+                            console.error('Series not found for', stochType);
+                        }
+                    }
                     
                     // Control visibility of charts and series
                     document.getElementById('showHeikinAshi').addEventListener('change', function() {
