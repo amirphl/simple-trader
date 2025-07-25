@@ -7,3 +7,6 @@ simple-trader
 .vscode
 backtest_chart_data.json
 multi_symbol_backtest_data.json
+comprehensive_metrics.html
+comprehensive_metrics.json
+spec.json
