@@ -141,33 +141,185 @@
             align-items: center;
             gap: 10px;
             margin-bottom: 10px;
+            flex-wrap: wrap;
+        }
+        .stochastic-controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin: 10px 0;
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 5px;
+            border: 1px solid #dee2e6;
+        }
+        .stoch-button {
+            padding: 5px 10px;
+            border: 1px solid #ccc;
+            border-radius: 3px;
+            background: #fff;
+            cursor: pointer;
+            font-size: 12px;
+            transition: all 0.2s;
+        }
+        .stoch-button.active {
+            background: #007bff;
+            color: white;
+            border-color: #007bff;
+        }
+        .stoch-button:hover {
+            background: #e9ecef;
+        }
+        .stoch-button.active:hover {
+            background: #0056b3;
         }
         .control-group label {
             font-weight: 500;
         }
-        .top-performers {
+        .all-symbols-performance {
             padding: 30px;
             background: white;
         }
-        .performers-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 30px;
-            margin-top: 20px;
-        }
-        .performer-list {
+        .performance-table-container {
             background: #f8f9fa;
             padding: 20px;
             border-radius: 8px;
+            overflow-x: auto;
+            margin-top: 20px;
         }
-        .performer-item {
+        .performance-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 14px;
+        }
+        .performance-table th,
+        .performance-table td {
+            padding: 12px 8px;
+            text-align: right;
+            border-bottom: 1px solid #eee;
+        }
+        .performance-table th {
+            background-color: #f8f9fa;
+            font-weight: bold;
+            text-align: center;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+        .performance-table th:first-child,
+        .performance-table td:first-child {
+            text-align: center;
+            font-weight: bold;
+        }
+        .performance-table th:nth-child(2),
+        .performance-table td:nth-child(2) {
+            text-align: left;
+            font-weight: bold;
+        }
+        .performance-table tr:hover {
+            background-color: #f8f9fa;
+        }
+        .performance-table tr:nth-child(even) {
+            background-color: #fafafa;
+        }
+        .performance-table tr:nth-child(even):hover {
+            background-color: #f0f0f0;
+        }
+        .performance-summary {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+        }
+        .summary-stat {
+            background: white;
+            padding: 15px;
+            border-radius: 5px;
+            text-align: center;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        .summary-stat-value {
+            font-size: 1.5em;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+        .summary-stat-label {
+            font-size: 0.9em;
+            color: #666;
+        }
+        .symbol-selector-section {
+            padding: 30px;
+            background: white;
+            border-bottom: 1px solid #eee;
+        }
+        .symbol-selector-container {
             display: flex;
-            justify-content: space-between;
-            padding: 10px 0;
-            border-bottom: 1px solid #dee2e6;
+            align-items: center;
+            gap: 15px;
+            margin-bottom: 20px;
         }
-        .performer-item:last-child {
-            border-bottom: none;
+        .symbol-selector {
+            padding: 10px 15px;
+            border: 2px solid #ddd;
+            border-radius: 5px;
+            font-size: 16px;
+            min-width: 200px;
+            background: white;
+        }
+        .symbol-selector:focus {
+            outline: none;
+            border-color: #007bff;
+        }
+        .load-chart-btn {
+            padding: 10px 20px;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        .load-chart-btn:hover:not(:disabled) {
+            background: #0056b3;
+        }
+        .load-chart-btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .selected-symbol-info {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+            margin-top: 20px;
+        }
+        .selected-symbol-info h3 {
+            margin-top: 0;
+            color: #333;
+        }
+        .selected-symbol-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }
+        .selected-symbol-stat {
+            background: white;
+            padding: 15px;
+            border-radius: 5px;
+            text-align: center;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        .selected-symbol-stat-value {
+            font-size: 1.2em;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+        .selected-symbol-stat-label {
+            font-size: 0.8em;
+            color: #666;
         }
         .refresh-btn {
             background: #007bff;
@@ -249,25 +401,54 @@
                 <!-- Stats will be populated here -->
             </div>
             
+            <div class="symbol-selector-section">
+                <h2>Symbol Chart Analysis</h2>
+                <div class="symbol-selector-container">
+                    <label for="symbol-selector">Select Symbol:</label>
+                    <select id="symbol-selector" class="symbol-selector">
+                        <option value="">Choose a symbol...</option>
+                    </select>
+                    <button id="load-chart-btn" class="load-chart-btn" onclick="loadSelectedSymbolChart()" disabled>
+                        Load Chart
+                    </button>
+                </div>
+                <div id="selected-symbol-info" class="selected-symbol-info" style="display: none;">
+                    <!-- Selected symbol info will be populated here -->
+                </div>
+            </div>
+            
             <div id="symbol-grid" class="symbol-grid">
                 <!-- Symbol charts will be populated here -->
             </div>
             
-            <div class="top-performers">
-                <h2>Performance Summary</h2>
-                <div class="performers-grid">
-                    <div>
-                        <h3>Top 10 Performers</h3>
-                        <div id="top-performers" class="performer-list">
-                            <!-- Top performers will be populated here -->
-                        </div>
-                    </div>
-                    <div>
-                        <h3>Bottom 5 Performers</h3>
-                        <div id="bottom-performers" class="performer-list">
-                            <!-- Bottom performers will be populated here -->
-                        </div>
-                    </div>
+            <div class="all-symbols-performance">
+                <h2>All Symbols Performance</h2>
+                <div id="performance-summary" class="performance-summary">
+                    <!-- Performance summary will be populated here -->
+                </div>
+                <div class="performance-table-container">
+                    <table id="all-symbols-table" class="performance-table">
+                        <thead>
+                            <tr>
+                                <th>Rank</th>
+                                <th>Symbol</th>
+                                <th>Starting Balance</th>
+                                <th>Ending Balance</th>
+                                <th>PnL</th>
+                                <th>PnL %</th>
+                                <th>Trades</th>
+                                <th>Wins</th>
+                                <th>Losses</th>
+                                <th>Win Rate</th>
+                                <th>Max Drawdown</th>
+                                <th>Max Drawdown %</th>
+                                <th>Max Equity</th>
+                            </tr>
+                        </thead>
+                        <tbody id="all-symbols-tbody">
+                            <!-- All symbols will be populated here -->
+                        </tbody>
+                    </table>
                 </div>
             </div>
         </div>
@@ -279,6 +460,7 @@
     <script>
         let backtestData = null;
         let charts = {};
+        let stochasticSeries = {};
 
         // Helper function to get CSS class based on value comparison
         function getClass(value, threshold) {
@@ -426,11 +608,11 @@
             `).join('');
         }
 
-        // Populate symbol charts
+        // Populate symbol selector
         function populateSymbolCharts() {
             const results = backtestData.results.results;
-            const chartData = backtestData.chartData;
-            const symbolGrid = document.getElementById('symbol-grid');
+            const symbolSelector = document.getElementById('symbol-selector');
+            const loadChartBtn = document.getElementById('load-chart-btn');
             
             // Check if we have valid data
             if (!results || typeof results !== 'object') {
@@ -438,75 +620,212 @@
                 return;
             }
             
-            if (!chartData || !Array.isArray(chartData)) {
-                console.warn('No chart data available, charts will not be displayed');
+            // Clear existing options
+            symbolSelector.innerHTML = '<option value="">Choose a symbol...</option>';
+            
+            // Sort symbols by PnL for better UX
+            const sortedSymbols = Object.entries(results).sort((a, b) => {
+                const pnlA = a[1].equity - a[1].starting_balance;
+                const pnlB = b[1].equity - b[1].starting_balance;
+                return pnlB - pnlA; // Sort by PnL descending
+            });
+            
+            // Add options to selector
+            sortedSymbols.forEach(([symbol, result]) => {
+                const pnl = result.equity - result.starting_balance;
+                const pnlClass = getClass(pnl, 0);
+                const option = document.createElement('option');
+                option.value = symbol;
+                option.innerHTML = `${symbol} (${formatCurrency(pnl)})`;
+                option.className = pnlClass;
+                symbolSelector.appendChild(option);
+            });
+            
+            // Enable the load chart button
+            loadChartBtn.disabled = false;
+            
+            // Add event listener to symbol selector
+            symbolSelector.addEventListener('change', function() {
+                const selectedSymbol = this.value;
+                if (selectedSymbol) {
+                    showSelectedSymbolInfo(selectedSymbol);
+                    loadChartBtn.disabled = false;
+                } else {
+                    hideSelectedSymbolInfo();
+                    loadChartBtn.disabled = true;
+                }
+            });
+        }
+        
+        // Show selected symbol information
+        function showSelectedSymbolInfo(symbol) {
+            const results = backtestData.results.results;
+            const result = results[symbol];
+            const infoContainer = document.getElementById('selected-symbol-info');
+            
+            if (!result) {
+                console.error(`No data found for symbol: ${symbol}`);
+                return;
             }
             
-            let symbolIndex = 0;
+            const pnl = result.equity - result.starting_balance;
+            const pnlPercentage = ((result.equity - result.starting_balance) / result.starting_balance) * 100;
+            const winRate = result.trades > 0 ? (result.wins / result.trades) * 100 : 0;
+            const maxDrawdownPercentage = (result.max_drawdown / result.starting_balance) * 100;
+            
+            infoContainer.innerHTML = `
+                <h3>${symbol} - Performance Summary</h3>
+                <div class="selected-symbol-stats">
+                    <div class="selected-symbol-stat">
+                        <div class="selected-symbol-stat-value ${getClass(pnl, 0)}">${formatCurrency(pnl)}</div>
+                        <div class="selected-symbol-stat-label">Total PnL</div>
+                    </div>
+                    <div class="selected-symbol-stat">
+                        <div class="selected-symbol-stat-value ${getClass(pnlPercentage, 0)}">${pnlPercentage.toFixed(2)}%</div>
+                        <div class="selected-symbol-stat-label">PnL %</div>
+                    </div>
+                    <div class="selected-symbol-stat">
+                        <div class="selected-symbol-stat-value">${result.trades}</div>
+                        <div class="selected-symbol-stat-label">Total Trades</div>
+                    </div>
+                    <div class="selected-symbol-stat">
+                        <div class="selected-symbol-stat-value">${result.wins}</div>
+                        <div class="selected-symbol-stat-label">Wins</div>
+                    </div>
+                    <div class="selected-symbol-stat">
+                        <div class="selected-symbol-stat-value">${result.losses}</div>
+                        <div class="selected-symbol-stat-label">Losses</div>
+                    </div>
+                    <div class="selected-symbol-stat">
+                        <div class="selected-symbol-stat-value ${getClass(winRate, 50)}">${winRate.toFixed(1)}%</div>
+                        <div class="selected-symbol-stat-label">Win Rate</div>
+                    </div>
+                    <div class="selected-symbol-stat">
+                        <div class="selected-symbol-stat-value">${formatCurrency(result.max_drawdown)}</div>
+                        <div class="selected-symbol-stat-label">Max Drawdown</div>
+                    </div>
+                    <div class="selected-symbol-stat">
+                        <div class="selected-symbol-stat-value">${maxDrawdownPercentage.toFixed(2)}%</div>
+                        <div class="selected-symbol-stat-label">Max Drawdown %</div>
+                    </div>
+                    <div class="selected-symbol-stat">
+                        <div class="selected-symbol-stat-value">${formatCurrency(result.max_equity)}</div>
+                        <div class="selected-symbol-stat-label">Max Equity</div>
+                    </div>
+                </div>
+            `;
+            
+            infoContainer.style.display = 'block';
+        }
+        
+        // Hide selected symbol information
+        function hideSelectedSymbolInfo() {
+            const infoContainer = document.getElementById('selected-symbol-info');
+            infoContainer.style.display = 'none';
+        }
+        
+        // Load chart for selected symbol
+        function loadSelectedSymbolChart() {
+            const selectedSymbol = document.getElementById('symbol-selector').value;
+            if (!selectedSymbol) {
+                alert('Please select a symbol first.');
+                return;
+            }
+            
+            const chartData = backtestData.chartData;
+            if (!chartData || !Array.isArray(chartData)) {
+                alert('No chart data available for the selected symbol.');
+                return;
+            }
+            
+            // Clear existing charts
+            const symbolGrid = document.getElementById('symbol-grid');
             symbolGrid.innerHTML = '';
             
-            for (const [symbol, result] of Object.entries(results)) {
-                const pnl = result.equity - result.starting_balance;
-                const winRate = result.trades > 0 ? (result.wins / result.trades) * 100 : 0;
-                
-                const symbolCard = document.createElement('div');
-                symbolCard.className = 'symbol-card';
-                symbolCard.innerHTML = `
-                    <div class="symbol-header">${symbol}</div>
-                    <div class="symbol-stats">
-                        <div class="symbol-stat">
-                            <div class="symbol-stat-value ${getClass(pnl, 0)}">${formatCurrency(pnl)}</div>
-                            <div class="symbol-stat-label">P&L</div>
-                        </div>
-                        <div class="symbol-stat">
-                            <div class="symbol-stat-value">${result.trades}</div>
-                            <div class="symbol-stat-label">Trades</div>
-                        </div>
-                        <div class="symbol-stat">
-                            <div class="symbol-stat-value ${getClass(winRate, 50)}">${winRate.toFixed(1)}%</div>
-                            <div class="symbol-stat-label">Win Rate</div>
-                        </div>
+            // Create chart for selected symbol
+            createSelectedSymbolChart(selectedSymbol, chartData);
+        }
+        
+        // Create chart for selected symbol
+        function createSelectedSymbolChart(symbol, allChartData) {
+            const symbolGrid = document.getElementById('symbol-grid');
+            const results = backtestData.results.results;
+            const result = results[symbol];
+            
+            if (!result) {
+                console.error(`No data found for symbol: ${symbol}`);
+                return;
+            }
+            
+            const pnl = result.equity - result.starting_balance;
+            const winRate = result.trades > 0 ? (result.wins / result.trades) * 100 : 0;
+            
+            // Create symbol card
+            const symbolCard = document.createElement('div');
+            symbolCard.className = 'symbol-card';
+            symbolCard.innerHTML = `
+                <div class="symbol-header">${symbol}</div>
+                <div class="symbol-stats">
+                    <div class="symbol-stat">
+                        <div class="symbol-stat-value ${getClass(pnl, 0)}">${formatCurrency(pnl)}</div>
+                        <div class="symbol-stat-label">P&L</div>
                     </div>
-                    <div class="charts-container">
-                        <div class="chart-container">
-                            <h4>Regular Candles</h4>
-                            <div id="chart-${symbolIndex}" style="height: 400px;"></div>
-                        </div>
-                        <div class="chart-container heikin-ashi-container" id="heikin-ashi-container-${symbolIndex}">
-                            <h4>Heikin Ashi Candles</h4>
-                            <div id="heikin-ashi-chart-${symbolIndex}" style="height: 300px;"></div>
-                        </div>
-                        <div class="chart-container stochastic-container" id="stochastic-container-${symbolIndex}">
-                            <h4>Stochastic Oscillator</h4>
-                            <div id="stochastic-chart-${symbolIndex}" style="height: 250px;"></div>
-                        </div>
+                    <div class="symbol-stat">
+                        <div class="symbol-stat-value">${result.trades}</div>
+                        <div class="symbol-stat-label">Trades</div>
                     </div>
-                    <div class="controls">
-                        <div class="control-group">
-                            <label><input type="checkbox" id="showHeikinAshi-${symbolIndex}" checked onchange="toggleHeikinAshi(${symbolIndex})"> Show Heikin Ashi</label>
-                            <label><input type="checkbox" id="showVolume-${symbolIndex}" checked> Show Volume</label>
-                            <label><input type="checkbox" id="showSignals-${symbolIndex}" checked> Show Signals</label>
-                        </div>
+                    <div class="symbol-stat">
+                        <div class="symbol-stat-value ${getClass(winRate, 50)}">${winRate.toFixed(1)}%</div>
+                        <div class="symbol-stat-label">Win Rate</div>
                     </div>
-                `;
-                
-                symbolGrid.appendChild(symbolCard);
-                
-                // Create chart for this symbol only if chart data is available
-                if (chartData && Array.isArray(chartData)) {
-                    createChart(symbol, symbolIndex, chartData);
-                } else {
-                    // Show message in chart container if no data
-                    const chartContainer = document.getElementById(`chart-${symbolIndex}`);
-                    if (chartContainer) {
-                        chartContainer.innerHTML = `
-                            <div style="display: flex; align-items: center; justify-content: center; height: 100%; color: #666; font-style: italic;">
-                                Chart data not available for ${symbol}
-                            </div>
-                        `;
-                    }
+                </div>
+                <div class="charts-container">
+                    <div class="chart-container">
+                        <h4>Regular Candles</h4>
+                        <div id="chart-selected" style="height: 400px;"></div>
+                    </div>
+                    <div class="chart-container stochastic-container" id="stochastic-container-selected">
+                        <h4>Stochastic Oscillator</h4>
+                        <div id="stochastic-chart-selected" style="height: 250px;"></div>
+                    </div>
+                    <div class="chart-container heikin-ashi-container" id="heikin-ashi-container-selected">
+                        <h4>Heikin Ashi Candles</h4>
+                        <div id="heikin-ashi-chart-selected" style="height: 300px;"></div>
+                    </div>
+                </div>
+                <div class="controls">
+                    <div class="control-group">
+                        <label><input type="checkbox" id="showHeikinAshi-selected" checked onchange="toggleHeikinAshi('selected')"> Show Heikin Ashi</label>
+                        <label><input type="checkbox" id="showVolume-selected" checked> Show Volume</label>
+                        <label><input type="checkbox" id="showSignals-selected" checked> Show Signals</label>
+                    </div>
+                    <div class="stochastic-controls">
+                        <button class="stoch-button active" onclick="toggleStochastic('selected', 'stoch14')" data-stoch="stoch14" data-symbol="selected">Stoch14</button>
+                        <button class="stoch-button active" onclick="toggleStochastic('selected', 'stoch20')" data-stoch="stoch20" data-symbol="selected">Stoch20</button>
+                        <button class="stoch-button active" onclick="toggleStochastic('selected', 'stoch40')" data-stoch="stoch40" data-symbol="selected">Stoch40</button>
+                        <button class="stoch-button active" onclick="toggleStochastic('selected', 'stoch60')" data-stoch="stoch60" data-symbol="selected">Stoch60</button>
+                        <button class="stoch-button active" onclick="toggleStochastic('selected', 'stoch80')" data-stoch="stoch80" data-symbol="selected">Stoch80</button>
+                        <button class="stoch-button active" onclick="toggleStochastic('selected', 'stoch100')" data-stoch="stoch100" data-symbol="selected">Stoch100</button>
+                    </div>
+                </div>
+            `;
+            
+            symbolGrid.appendChild(symbolCard);
+            
+            // Find chart data for this symbol
+            const symbolChartData = allChartData.find(data => data.symbol === symbol);
+            if (symbolChartData && symbolChartData.data) {
+                createChart(symbol, 'selected', [symbolChartData]);
+            } else {
+                // Show message in chart container if no data
+                const chartContainer = document.getElementById('chart-selected');
+                if (chartContainer) {
+                    chartContainer.innerHTML = `
+                        <div style="display: flex; align-items: center; justify-content: center; height: 100%; color: #666; font-style: italic;">
+                            Chart data not available for ${symbol}
+                        </div>
+                    `;
                 }
-                symbolIndex++;
             }
         }
 
@@ -661,7 +980,16 @@
             // Process chart data
             const regularCandleData = [];
             const heikinAshiCandleData = [];
-            const stochasticData = [];
+            const stochasticData = {
+                k: [],
+                d: [],
+                stoch14: { k: [], d: [] },
+                stoch20: { k: [], d: [] },
+                stoch40: { k: [], d: [] },
+                stoch60: { k: [], d: [] },
+                stoch80: { k: [], d: [] },
+                stoch100: { k: [], d: [] }
+            };
             const volumeData = [];
             const markers = [];
             const candleDetails = {}; // For tooltip data
@@ -718,8 +1046,37 @@
                     }
                     
                     // Add Stochastic data
-                    if (stochastic && typeof stochastic.k === 'number' && typeof stochastic.d === 'number') {
-                        // Store K and D values separately for line series
+                    const multiStochastic = item.multi_stochastic;
+                    
+                    if (multiStochastic) {
+                        // Initialize stochastic data structure if not exists
+                        if (!stochasticData.stoch14) stochasticData.stoch14 = { k: [], d: [] };
+                        if (!stochasticData.stoch20) stochasticData.stoch20 = { k: [], d: [] };
+                        if (!stochasticData.stoch40) stochasticData.stoch40 = { k: [], d: [] };
+                        if (!stochasticData.stoch60) stochasticData.stoch60 = { k: [], d: [] };
+                        if (!stochasticData.stoch80) stochasticData.stoch80 = { k: [], d: [] };
+                        if (!stochasticData.stoch100) stochasticData.stoch100 = { k: [], d: [] };
+                        
+                        // Process all 6 stochastics
+                        const stochTypes = ['stoch14', 'stoch20', 'stoch40', 'stoch60', 'stoch80', 'stoch100'];
+                        
+                        stochTypes.forEach(stochType => {
+                            if (multiStochastic[stochType] && 
+                                typeof multiStochastic[stochType].k === 'number' && 
+                                typeof multiStochastic[stochType].d === 'number') {
+                                
+                                stochasticData[stochType].k.push({
+                                    time: time,
+                                    value: parseFloat(multiStochastic[stochType].k),
+                                });
+                                stochasticData[stochType].d.push({
+                                    time: time,
+                                    value: parseFloat(multiStochastic[stochType].d),
+                                });
+                            }
+                        });
+                    } else if (stochastic && typeof stochastic.k === 'number' && typeof stochastic.d === 'number') {
+                        // Fallback to single stochastic
                         if (!stochasticData.k) stochasticData.k = [];
                         if (!stochasticData.d) stochasticData.d = [];
                         
@@ -815,17 +1172,77 @@
                 wickVisible: true,
             });
             
-            // Add Stochastic series to Stochastic chart
-            const stochasticKSeries = stochasticChart.addLineSeries({
-                color: '#2962FF',
+            // Add Multi-Stochastic series to Stochastic chart
+            const stochastic14KSeries = stochasticChart.addLineSeries({
+                color: '#FF0000', // Red
                 lineWidth: 2,
-                title: '%K',
+                title: 'Stoch14 %K',
             });
             
-            const stochasticDSeries = stochasticChart.addLineSeries({
-                color: '#FF6D00',
+            const stochastic14DSeries = stochasticChart.addLineSeries({
+                color: '#FF6666', // Light Red
+                lineWidth: 1,
+                title: 'Stoch14 %D',
+            });
+            
+            const stochastic20KSeries = stochasticChart.addLineSeries({
+                color: '#0000FF', // Blue
                 lineWidth: 2,
-                title: '%D',
+                title: 'Stoch20 %K',
+            });
+            
+            const stochastic20DSeries = stochasticChart.addLineSeries({
+                color: '#6666FF', // Light Blue
+                lineWidth: 1,
+                title: 'Stoch20 %D',
+            });
+            
+            const stochastic40KSeries = stochasticChart.addLineSeries({
+                color: '#FF8000', // Orange
+                lineWidth: 2,
+                title: 'Stoch40 %K',
+            });
+            
+            const stochastic40DSeries = stochasticChart.addLineSeries({
+                color: '#FFB366', // Light Orange
+                lineWidth: 1,
+                title: 'Stoch40 %D',
+            });
+            
+            const stochastic60KSeries = stochasticChart.addLineSeries({
+                color: '#8000FF', // Purple
+                lineWidth: 2,
+                title: 'Stoch60 %K',
+            });
+            
+            const stochastic60DSeries = stochasticChart.addLineSeries({
+                color: '#B366FF', // Light Purple
+                lineWidth: 1,
+                title: 'Stoch60 %D',
+            });
+            
+            const stochastic80KSeries = stochasticChart.addLineSeries({
+                color: '#FFD700', // Gold
+                lineWidth: 2,
+                title: 'Stoch80 %K',
+            });
+            
+            const stochastic80DSeries = stochasticChart.addLineSeries({
+                color: '#FFE55C', // Light Gold
+                lineWidth: 1,
+                title: 'Stoch80 %D',
+            });
+            
+            const stochastic100KSeries = stochasticChart.addLineSeries({
+                color: '#00FF00', // Green
+                lineWidth: 2,
+                title: 'Stoch100 %K',
+            });
+            
+            const stochastic100DSeries = stochasticChart.addLineSeries({
+                color: '#66FF66', // Light Green
+                lineWidth: 1,
+                title: 'Stoch100 %D',
             });
             
             // Add overbought/oversold lines to Stochastic chart
@@ -849,10 +1266,42 @@
             volumeSeries.setData(volumeData);
             heikinAshiSeries.setData(heikinAshiCandleData);
             
-            // Set Stochastic data
-            if (stochasticData.k && stochasticData.k.length > 0) {
-                stochasticKSeries.setData(stochasticData.k);
-                stochasticDSeries.setData(stochasticData.d);
+            // Set Multi-Stochastic data
+            if (stochasticData.stoch14 && stochasticData.stoch14.k.length > 0) {
+                // Set all 6 stochastics
+                const seriesMap = {
+                    stoch14: { k: stochastic14KSeries, d: stochastic14DSeries },
+                    stoch20: { k: stochastic20KSeries, d: stochastic20DSeries },
+                    stoch40: { k: stochastic40KSeries, d: stochastic40DSeries },
+                    stoch60: { k: stochastic60KSeries, d: stochastic60DSeries },
+                    stoch80: { k: stochastic80KSeries, d: stochastic80DSeries },
+                    stoch100: { k: stochastic100KSeries, d: stochastic100DSeries }
+                };
+                
+                // Store series references for toggle functionality
+                stochasticSeries[symbol] = seriesMap;
+                
+                Object.keys(seriesMap).forEach(stochType => {
+                    if (stochasticData[stochType] && stochasticData[stochType].k.length > 0) {
+                        seriesMap[stochType].k.setData(stochasticData[stochType].k);
+                        seriesMap[stochType].d.setData(stochasticData[stochType].d);
+                    }
+                });
+                
+                // Add overbought/oversold lines
+                const timeRange = { from: stochasticData.stoch14.k[0].time, to: stochasticData.stoch14.k[stochasticData.stoch14.k.length - 1].time };
+                overboughtLine.setData([
+                    { time: timeRange.from, value: 80 },
+                    { time: timeRange.to, value: 80 }
+                ]);
+                oversoldLine.setData([
+                    { time: timeRange.from, value: 20 },
+                    { time: timeRange.to, value: 20 }
+                ]);
+            } else if (stochasticData.k && stochasticData.k.length > 0) {
+                // Fallback to single stochastic
+                stochastic14KSeries.setData(stochasticData.k);
+                stochastic14DSeries.setData(stochasticData.d);
                 
                 // Add overbought/oversold lines
                 const timeRange = { from: stochasticData.k[0].time, to: stochasticData.k[stochasticData.k.length - 1].time };
@@ -903,8 +1352,18 @@
                 stochasticChart: stochasticChart,
                 candlestickSeries: candlestickSeries,
                 heikinAshiSeries: heikinAshiSeries,
-                stochasticKSeries: stochasticKSeries,
-                stochasticDSeries: stochasticDSeries,
+                stochastic14KSeries: stochastic14KSeries,
+                stochastic14DSeries: stochastic14DSeries,
+                stochastic20KSeries: stochastic20KSeries,
+                stochastic20DSeries: stochastic20DSeries,
+                stochastic40KSeries: stochastic40KSeries,
+                stochastic40DSeries: stochastic40DSeries,
+                stochastic60KSeries: stochastic60KSeries,
+                stochastic60DSeries: stochastic60DSeries,
+                stochastic80KSeries: stochastic80KSeries,
+                stochastic80DSeries: stochastic80DSeries,
+                stochastic100KSeries: stochastic100KSeries,
+                stochastic100DSeries: stochastic100DSeries,
                 volumeSeries: volumeSeries,
                 data: symbolData.data,
                 results: symbolData.results,
@@ -917,37 +1376,105 @@
             heikinAshiChart.timeScale().fitContent();
         }
 
-        // Populate performance summary
+        // Populate all symbols performance table
         function populatePerformanceSummary() {
             const results = backtestData.results.results;
             
-            // Calculate performances
+            // Calculate performances with full details
             const performances = Object.entries(results).map(([symbol, result]) => ({
                 symbol: symbol,
-                pnl: result.equity - result.starting_balance
+                startingBalance: result.starting_balance,
+                endingBalance: result.equity,
+                pnl: result.equity - result.starting_balance,
+                pnlPercentage: ((result.equity - result.starting_balance) / result.starting_balance) * 100,
+                trades: result.trades,
+                wins: result.wins,
+                losses: result.losses,
+                winRate: result.trades > 0 ? (result.wins / result.trades) * 100 : 0,
+                maxDrawdown: result.max_drawdown,
+                maxDrawdownPercentage: (result.max_drawdown / result.starting_balance) * 100,
+                maxEquity: result.max_equity
             }));
 
-            // Sort by PnL
+            // Sort by PnL (descending)
             performances.sort((a, b) => b.pnl - a.pnl);
 
-            // Top 10 performers
-            const topPerformers = document.getElementById('top-performers');
-            const top10 = performances.slice(0, 10);
-            topPerformers.innerHTML = top10.map((perf, index) => `
-                <div class="performer-item">
-                    <span>${index + 1}. ${perf.symbol}</span>
-                    <span class="${getClass(perf.pnl, 0)}">${formatCurrency(perf.pnl)}</span>
-                </div>
-            `).join('');
+            // Calculate summary statistics
+            const totalSymbols = performances.length;
+            const profitableSymbols = performances.filter(p => p.pnl > 0).length;
+            const totalPnL = performances.reduce((sum, p) => sum + p.pnl, 0);
+            const avgPnL = totalPnL / totalSymbols;
+            const totalTrades = performances.reduce((sum, p) => sum + p.trades, 0);
+            const totalWins = performances.reduce((sum, p) => sum + p.wins, 0);
+            const totalLosses = performances.reduce((sum, p) => sum + p.losses, 0);
+            const overallWinRate = totalTrades > 0 ? (totalWins / totalTrades) * 100 : 0;
+            const avgMaxDrawdown = performances.reduce((sum, p) => sum + p.maxDrawdown, 0) / totalSymbols;
+            const bestPerformer = performances[0];
+            const worstPerformer = performances[performances.length - 1];
 
-            // Bottom 5 performers
-            const bottomPerformers = document.getElementById('bottom-performers');
-            const bottom5 = performances.slice(-5);
-            bottomPerformers.innerHTML = bottom5.map((perf, index) => `
-                <div class="performer-item">
-                    <span>${performances.length - bottom5.length + index + 1}. ${perf.symbol}</span>
-                    <span class="${getClass(perf.pnl, 0)}">${formatCurrency(perf.pnl)}</span>
+            // Populate summary
+            const summaryEl = document.getElementById('performance-summary');
+            summaryEl.innerHTML = `
+                <div class="summary-stat">
+                    <div class="summary-stat-value">${totalSymbols}</div>
+                    <div class="summary-stat-label">Total Symbols</div>
                 </div>
+                <div class="summary-stat">
+                    <div class="summary-stat-value">${profitableSymbols}</div>
+                    <div class="summary-stat-label">Profitable Symbols</div>
+                </div>
+                <div class="summary-stat">
+                    <div class="summary-stat-value">${((profitableSymbols / totalSymbols) * 100).toFixed(1)}%</div>
+                    <div class="summary-stat-label">Success Rate</div>
+                </div>
+                <div class="summary-stat">
+                    <div class="summary-stat-value ${getClass(totalPnL, 0)}">${formatCurrency(totalPnL)}</div>
+                    <div class="summary-stat-label">Total PnL</div>
+                </div>
+                <div class="summary-stat">
+                    <div class="summary-stat-value ${getClass(avgPnL, 0)}">${formatCurrency(avgPnL)}</div>
+                    <div class="summary-stat-label">Average PnL</div>
+                </div>
+                <div class="summary-stat">
+                    <div class="summary-stat-value">${overallWinRate.toFixed(1)}%</div>
+                    <div class="summary-stat-label">Overall Win Rate</div>
+                </div>
+                <div class="summary-stat">
+                    <div class="summary-stat-value">${totalTrades}</div>
+                    <div class="summary-stat-label">Total Trades</div>
+                </div>
+                <div class="summary-stat">
+                    <div class="summary-stat-value">${formatCurrency(avgMaxDrawdown)}</div>
+                    <div class="summary-stat-label">Avg Max Drawdown</div>
+                </div>
+                <div class="summary-stat">
+                    <div class="summary-stat-value">${bestPerformer.symbol}</div>
+                    <div class="summary-stat-label">Best Performer</div>
+                </div>
+                <div class="summary-stat">
+                    <div class="summary-stat-value">${worstPerformer.symbol}</div>
+                    <div class="summary-stat-label">Worst Performer</div>
+                </div>
+            `;
+
+            // Populate the table
+            const tbody = document.getElementById('all-symbols-tbody');
+            tbody.innerHTML = performances.map((perf, index) => `
+                <tr>
+                    <td>${index + 1}</td>
+                    <td>${perf.symbol}</td>
+                    <td>${formatCurrency(perf.startingBalance)}</td>
+                    <td>${formatCurrency(perf.endingBalance)}</td>
+                    <td class="${getClass(perf.pnl, 0)}">${formatCurrency(perf.pnl)}</td>
+                    <td class="${getClass(perf.pnlPercentage, 0)}">${perf.pnlPercentage.toFixed(2)}%</td>
+                    <td>${perf.trades}</td>
+                    <td>${perf.wins}</td>
+                    <td>${perf.losses}</td>
+                    <td>${perf.winRate.toFixed(2)}%</td>
+                    <td class="negative">${formatCurrency(perf.maxDrawdown)}</td>
+                    <td class="negative">${perf.maxDrawdownPercentage.toFixed(2)}%</td>
+                    <td>${formatCurrency(perf.maxEquity)}</td>
+                </tr>
             `).join('');
         }
 
@@ -1014,8 +1541,47 @@
                     html += '<tr><td>HA Type</td><td>' + (details.heikinAshi.close >= details.heikinAshi.open ? 'Bullish' : 'Bearish') + '</td></tr>';
                 }
                 
-                // Stochastic data if available
-                if (details.stochastic) {
+                // Multi-Stochastic data if available
+                if (details.multiStochastic) {
+                    html += '<tr><th colspan="2" style="text-align:center;background:#e3f2fd;">[MULTI-STOCH] Multi-Stochastic Oscillators</th></tr>';
+                    
+                    // Stoch14 (Red)
+                    if (details.multiStochastic.stoch14) {
+                        html += '<tr><td style="color:#FF0000;font-weight:bold;">Stoch14 %K</td><td>' + details.multiStochastic.stoch14.k.toFixed(2) + '</td></tr>';
+                        html += '<tr><td style="color:#FF6666;">Stoch14 %D</td><td>' + details.multiStochastic.stoch14.d.toFixed(2) + '</td></tr>';
+                    }
+                    
+                    // Stoch20 (Blue)
+                    if (details.multiStochastic.stoch20) {
+                        html += '<tr><td style="color:#0000FF;font-weight:bold;">Stoch20 %K</td><td>' + details.multiStochastic.stoch20.k.toFixed(2) + '</td></tr>';
+                        html += '<tr><td style="color:#6666FF;">Stoch20 %D</td><td>' + details.multiStochastic.stoch20.d.toFixed(2) + '</td></tr>';
+                    }
+                    
+                    // Stoch40 (Orange)
+                    if (details.multiStochastic.stoch40) {
+                        html += '<tr><td style="color:#FF8000;font-weight:bold;">Stoch40 %K</td><td>' + details.multiStochastic.stoch40.k.toFixed(2) + '</td></tr>';
+                        html += '<tr><td style="color:#FFB366;">Stoch40 %D</td><td>' + details.multiStochastic.stoch40.d.toFixed(2) + '</td></tr>';
+                    }
+                    
+                    // Stoch60 (Purple)
+                    if (details.multiStochastic.stoch60) {
+                        html += '<tr><td style="color:#8000FF;font-weight:bold;">Stoch60 %K</td><td>' + details.multiStochastic.stoch60.k.toFixed(2) + '</td></tr>';
+                        html += '<tr><td style="color:#B366FF;">Stoch60 %D</td><td>' + details.multiStochastic.stoch60.d.toFixed(2) + '</td></tr>';
+                    }
+                    
+                    // Stoch80 (Gold)
+                    if (details.multiStochastic.stoch80) {
+                        html += '<tr><td style="color:#FFD700;font-weight:bold;">Stoch80 %K</td><td>' + details.multiStochastic.stoch80.k.toFixed(2) + '</td></tr>';
+                        html += '<tr><td style="color:#FFE55C;">Stoch80 %D</td><td>' + details.multiStochastic.stoch80.d.toFixed(2) + '</td></tr>';
+                    }
+                    
+                    // Stoch100 (Green)
+                    if (details.multiStochastic.stoch100) {
+                        html += '<tr><td style="color:#00FF00;font-weight:bold;">Stoch100 %K</td><td>' + details.multiStochastic.stoch100.k.toFixed(2) + '</td></tr>';
+                        html += '<tr><td style="color:#66FF66;">Stoch100 %D</td><td>' + details.multiStochastic.stoch100.d.toFixed(2) + '</td></tr>';
+                    }
+                } else if (details.stochastic) {
+                    // Fallback to single stochastic
                     html += '<tr><th colspan="2" style="text-align:center;background:#e3f2fd;">[STOCH] Stochastic Oscillator</th></tr>';
                     html += '<tr><td>%K Value</td><td>' + details.stochastic.k.toFixed(2) + '</td></tr>';
                     html += '<tr><td>%D Value</td><td>' + details.stochastic.d.toFixed(2) + '</td></tr>';
@@ -1184,6 +1750,44 @@
             
             if (container) {
                 container.style.display = checkbox.checked ? 'block' : 'none';
+            }
+        }
+
+        // Toggle stochastic visibility
+        function toggleStochastic(symbolIndex, stochType) {
+            const button = document.querySelector(`[data-symbol="${symbolIndex}"][data-stoch="${stochType}"]`);
+            const isActive = button.classList.contains('active');
+            
+            // Get the chart data for this symbol
+            const symbol = Object.keys(charts).find(key => charts[key].index === symbolIndex);
+            if (symbol && stochasticSeries[symbol]) {
+                const seriesMap = stochasticSeries[symbol];
+                
+                if (seriesMap[stochType] && seriesMap[stochType].k && seriesMap[stochType].d) {
+                    const kSeries = seriesMap[stochType].k;
+                    const dSeries = seriesMap[stochType].d;
+                    
+                    // Check if setVisible method exists
+                    if (typeof kSeries.setVisible === 'function' && typeof dSeries.setVisible === 'function') {
+                        if (isActive) {
+                            // Hide the stochastic
+                            kSeries.setVisible(false);
+                            dSeries.setVisible(false);
+                            button.classList.remove('active');
+                        } else {
+                            // Show the stochastic
+                            kSeries.setVisible(true);
+                            dSeries.setVisible(true);
+                            button.classList.add('active');
+                        }
+                    } else {
+                        console.error('setVisible method not available on series for', stochType, 'in symbol', symbol);
+                    }
+                } else {
+                    console.error('Series not found for', stochType, 'in symbol', symbol);
+                }
+            } else {
+                console.error('Chart data not found for symbol index', symbolIndex);
             }
         }
 
