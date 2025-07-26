@@ -335,6 +335,47 @@ func (w *WallexExchange) GetOrderStatus(ctx context.Context, orderID string) (or
 	}
 }
 
+// FetchBalances retrieves the current balance of all assets from the Wallex exchange
+func (w *WallexExchange) FetchBalances(ctx context.Context) (map[string]market.Balance, error) {
+	select {
+	case <-ctx.Done():
+		log.Printf("Exchange | %s FetchBalances timeout", w.Name())
+		return nil, ctx.Err()
+
+	default:
+		var wallexBalances map[string]*wallex.Balance
+		err := retry(3, 2*time.Second, func() error {
+			var err error
+			wallexBalances, err = w.client.Balances()
+			if err != nil {
+				return fmt.Errorf("fetching balances: %w", err)
+			}
+			return nil
+		})
+		if err != nil {
+			return nil, fmt.Errorf("FetchBalances failed: %w", err)
+		}
+
+		balances := make(map[string]market.Balance)
+		for asset, wb := range wallexBalances {
+			// Parse the balance values from wallex.Number to float64
+			available, _ := strconv.ParseFloat(string(wb.Value), 64)
+			locked, _ := strconv.ParseFloat(string(wb.Locked), 64)
+			total := available + locked
+
+			balances[asset] = market.Balance{
+				Asset:     asset,
+				Available: available,
+				Locked:    locked,
+				Total:     total,
+				Fiat:      wb.Fiat,
+			}
+		}
+
+		return balances, nil
+	}
+}
+
 // Helper to safely dereference *wallex.Number
 func float64Ptr(n *wallex.Number) float64 {
 	if n == nil {
