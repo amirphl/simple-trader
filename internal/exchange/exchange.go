@@ -22,4 +22,5 @@ type Exchange interface {
 	FetchTick(ctx context.Context, symbol string) (market.Tick, error)
 	FetchTicks(ctx context.Context, symbol string, from, to time.Time) ([]market.Tick, error)
 	GetOrderStatus(ctx context.Context, orderID string) (order.OrderResponse, error)
+	FetchBalances(ctx context.Context) (map[string]market.Balance, error)
 }
