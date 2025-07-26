@@ -23,6 +23,15 @@ type Tick struct {
 	Timestamp time.Time
 }
 
+// Balance represents an asset balance from an exchange
+type Balance struct {
+	Asset     string  `json:"asset"`     // Asset symbol (e.g., "BTC", "USDT")
+	Available float64 `json:"available"` // Available balance for trading
+	Locked    float64 `json:"locked"`    // Balance locked in orders
+	Total     float64 `json:"total"`     // Total balance (available + locked)
+	Fiat      bool    `json:"fiat"`      // Whether this is a fiat currency
+}
+
 // MarketManager interface for managing orderbook and tick storage.
 type MarketManager interface {
 	SaveOrderBook(ctx context.Context, ob OrderBook) error
