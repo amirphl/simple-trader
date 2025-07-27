@@ -37,7 +37,7 @@ type OrderResponse struct {
 
 // OrderManager interface for managing order lifecycle.
 type OrderManager interface {
-	GetOrder(ctx context.Context, orderID string) (OrderResponse, error)
+	GetOrder(ctx context.Context, orderID string) (*OrderResponse, error)
 	GetOpenOrders(ctx context.Context) ([]OrderResponse, error)
 	SaveOrder(ctx context.Context, order OrderResponse) error
 	CloseOrder(ctx context.Context, orderID string) error

@@ -63,19 +63,6 @@ func (p *Default) executeWithTransaction(ctx context.Context, fn func(*sql.Tx) e
 	return nil
 }
 
-// executeWithReadTransaction executes a read function with transaction from context if available
-// For read operations, we don't create a new transaction if one doesn't exist in context
-func (p *Default) executeWithReadTransaction(ctx context.Context, fn func(*sql.Tx) error) error {
-	// Check if transaction exists in context
-	if tx := GetTransaction(ctx); tx != nil {
-		// Use existing transaction
-		return fn(tx)
-	}
-
-	// For read operations, execute directly without transaction
-	return fn(nil)
-}
-
 // queryWithTransaction executes a query using transaction from context if available
 func (p *Default) queryWithTransaction(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
 	if tx := GetTransaction(ctx); tx != nil {
@@ -206,7 +193,7 @@ func (p *Default) SaveRaw1mCandles(ctx context.Context, candles []candle.Candle)
 
 // Get1mCandlesForAggregation efficiently retrieves 1m candles for aggregation
 func (p *Default) Get1mCandlesForAggregation(ctx context.Context, symbol string, start, end time.Time) ([]candle.Candle, error) {
-	rows, err := p.db.Query(`
+	rows, err := p.queryWithTransaction(ctx, `
 		SELECT timestamp, open, high, low, close, volume, symbol, timeframe, source 
 		FROM candles 
 		WHERE symbol=$1 AND timeframe='1m' AND timestamp >= $2 AND timestamp < $3 
@@ -214,6 +201,9 @@ func (p *Default) Get1mCandlesForAggregation(ctx context.Context, symbol string,
 		symbol, start, end)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query 1m candles: %w", err)
+	}
+	if rows == nil {
+		return nil, nil
 	}
 	defer rows.Close()
 
@@ -232,12 +222,16 @@ func (p *Default) Get1mCandlesForAggregation(ctx context.Context, symbol string,
 
 // GetCandle retrieves a single candle by symbol, timeframe, timestamp, and source
 func (p *Default) GetCandle(ctx context.Context, symbol, timeframe string, timestamp time.Time, source string) (*candle.Candle, error) {
-	row := p.db.QueryRow(`
+	row := p.queryRowWithTransaction(ctx, `
 		SELECT timestamp, open, high, low, close, volume, symbol, timeframe, source 
 		FROM candles 
 		WHERE symbol=$1 AND timeframe=$2 AND timestamp=$3 AND source=$4 
 		LIMIT 1`,
 		symbol, timeframe, timestamp, source)
+
+	if row == nil {
+		return nil, nil
+	}
 
 	var c candle.Candle
 	if err := row.Scan(&c.Timestamp, &c.Open, &c.High, &c.Low, &c.Close, &c.Volume, &c.Symbol, &c.Timeframe, &c.Source); err != nil {
@@ -260,9 +254,12 @@ func (p *Default) GetCandlesV2(ctx context.Context, timeframe string, start, end
 		WHERE timeframe=$1 AND timestamp >= $2 AND timestamp < $3 
 		ORDER BY symbol, timestamp ASC`
 
-	rows, err := p.db.Query(query, timeframe, start, end)
+	rows, err := p.queryWithTransaction(ctx, query, timeframe, start, end)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query candles: %w", err)
+	}
+	if rows == nil {
+		return nil, nil
 	}
 	defer rows.Close()
 
@@ -301,9 +298,12 @@ func (p *Default) GetCandles(ctx context.Context, symbol, timeframe, source stri
 
 	query += " ORDER BY timestamp ASC"
 
-	rows, err := p.db.Query(query, args...)
+	rows, err := p.queryWithTransaction(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query candles in range: %w", err)
+	}
+	if rows == nil {
+		return nil, nil
 	}
 	defer rows.Close()
 
@@ -326,7 +326,7 @@ func (p *Default) GetCandles(ctx context.Context, symbol, timeframe, source stri
 
 // GetRawCandles retrieves only raw candles (not constructed)
 func (p *Default) GetRawCandles(ctx context.Context, symbol, timeframe string, start, end time.Time) ([]candle.Candle, error) {
-	rows, err := p.db.Query(`
+	rows, err := p.queryWithTransaction(ctx, `
 		SELECT timestamp, open, high, low, close, volume, symbol, timeframe, source 
 		FROM candles 
 		WHERE symbol=$1 AND timeframe=$2 AND source != 'constructed' AND timestamp >= $3 AND timestamp < $4 
@@ -334,6 +334,9 @@ func (p *Default) GetRawCandles(ctx context.Context, symbol, timeframe string, s
 		symbol, timeframe, start, end)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query raw candles: %w", err)
+	}
+	if rows == nil {
+		return nil, nil
 	}
 	defer rows.Close()
 
@@ -352,12 +355,16 @@ func (p *Default) GetRawCandles(ctx context.Context, symbol, timeframe string, s
 
 // GetLatestCandle retrieves the latest candle with optimized querying
 func (p *Default) GetLatestCandle(ctx context.Context, symbol, timeframe string) (*candle.Candle, error) {
-	row := p.db.QueryRow(`
+	row := p.queryRowWithTransaction(ctx, `
 		SELECT timestamp, open, high, low, close, volume, symbol, timeframe, source 
 		FROM candles 
 		WHERE symbol=$1 AND timeframe=$2 
 		ORDER BY timestamp DESC LIMIT 1`,
 		symbol, timeframe)
+
+	if row == nil {
+		return nil, nil
+	}
 
 	var c candle.Candle
 	if err := row.Scan(&c.Timestamp, &c.Open, &c.High, &c.Low, &c.Close, &c.Volume, &c.Symbol, &c.Timeframe, &c.Source); err != nil {
@@ -373,12 +380,16 @@ func (p *Default) GetLatestCandle(ctx context.Context, symbol, timeframe string)
 // GetLatestCandleInRange retrieves the latest candle within a specific time range
 // This is useful when you need the most recent candle before a certain time
 func (p *Default) GetLatestCandleInRange(ctx context.Context, symbol, timeframe string, start, end time.Time) (*candle.Candle, error) {
-	row := p.db.QueryRow(`
+	row := p.queryRowWithTransaction(ctx, `
 		SELECT timestamp, open, high, low, close, volume, symbol, timeframe, source 
 		FROM candles 
 		WHERE symbol=$1 AND timeframe=$2 AND timestamp >= $3 AND timestamp < $4
 		ORDER BY timestamp DESC LIMIT 1`,
 		symbol, timeframe, start, end)
+
+	if row == nil {
+		return nil, nil
+	}
 
 	var c candle.Candle
 	if err := row.Scan(&c.Timestamp, &c.Open, &c.High, &c.Low, &c.Close, &c.Volume, &c.Symbol, &c.Timeframe, &c.Source); err != nil {
@@ -393,12 +404,16 @@ func (p *Default) GetLatestCandleInRange(ctx context.Context, symbol, timeframe 
 
 // GetLatestConstructedCandle retrieves the latest constructed candle
 func (p *Default) GetLatestConstructedCandle(ctx context.Context, symbol, timeframe string) (*candle.Candle, error) {
-	row := p.db.QueryRow(`
+	row := p.queryRowWithTransaction(ctx, `
 		SELECT timestamp, open, high, low, close, volume, symbol, timeframe, source 
 		FROM candles 
 		WHERE symbol=$1 AND timeframe=$2 AND source='constructed' 
 		ORDER BY timestamp DESC LIMIT 1`,
 		symbol, timeframe)
+
+	if row == nil {
+		return nil, nil
+	}
 
 	var c candle.Candle
 	if err := row.Scan(&c.Timestamp, &c.Open, &c.High, &c.Low, &c.Close, &c.Volume, &c.Symbol, &c.Timeframe, &c.Source); err != nil {
@@ -475,10 +490,14 @@ func (p *Default) DeleteConstructedCandles(ctx context.Context, symbol, timefram
 // GetCandleCount returns the count of candles in a time range
 func (p *Default) GetCandleCount(ctx context.Context, symbol, timeframe string, start, end time.Time) (int, error) {
 	var count int
-	err := p.db.QueryRow(`
+	row := p.queryRowWithTransaction(ctx, `
 		SELECT COUNT(*) FROM candles 
 		WHERE symbol=$1 AND timeframe=$2 AND timestamp >= $3 AND timestamp < $4`,
-		symbol, timeframe, start, end).Scan(&count)
+		symbol, timeframe, start, end)
+	if row == nil {
+		return 0, nil
+	}
+	err := row.Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get candle count: %w", err)
 	}
@@ -488,10 +507,14 @@ func (p *Default) GetCandleCount(ctx context.Context, symbol, timeframe string, 
 // GetConstructedCandleCount returns the count of constructed candles
 func (p *Default) GetConstructedCandleCount(ctx context.Context, symbol, timeframe string, start, end time.Time) (int, error) {
 	var count int
-	err := p.db.QueryRow(`
+	row := p.queryRowWithTransaction(ctx, `
 		SELECT COUNT(*) FROM candles 
 		WHERE symbol=$1 AND timeframe=$2 AND source='constructed' AND timestamp >= $3 AND timestamp < $4`,
-		symbol, timeframe, start, end).Scan(&count)
+		symbol, timeframe, start, end)
+	if row == nil {
+		return 0, nil
+	}
+	err := row.Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get constructed candle count: %w", err)
 	}
@@ -646,7 +669,7 @@ func (p *Default) GetAggregationStats(ctx context.Context, symbol string) (map[s
 func (p *Default) GetMissingCandleRanges(ctx context.Context, symbol string, start, end time.Time) ([]struct{ Start, End time.Time }, error) {
 	// TODO: Logic
 	// Query for gaps in 1m candles
-	rows, err := p.db.Query(`
+	rows, err := p.queryWithTransaction(ctx, `
 		WITH time_series AS (
 			SELECT generate_series($1::timestamp, $2::timestamp, '1 minute'::timeframe) as expected_time
 		),
@@ -664,6 +687,9 @@ func (p *Default) GetMissingCandleRanges(ctx context.Context, symbol string, sta
 		start, end, symbol)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query missing ranges: %w", err)
+	}
+	if rows == nil {
+		return nil, nil
 	}
 	defer rows.Close()
 
@@ -684,7 +710,7 @@ func (p *Default) GetCandleSourceStats(ctx context.Context, symbol string, start
 	stats := make(map[string]any)
 
 	// Get source distribution
-	rows, err := p.db.Query(`
+	rows, err := p.queryWithTransaction(ctx, `
 		SELECT source, timeframe, COUNT(*) as count
 		FROM candles 
 		WHERE symbol=$1 AND timestamp >= $2 AND timestamp < $3
@@ -693,6 +719,9 @@ func (p *Default) GetCandleSourceStats(ctx context.Context, symbol string, start
 		symbol, start, end)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query source stats: %w", err)
+	}
+	if rows == nil {
+		return nil, nil
 	}
 	defer rows.Close()
 
@@ -715,20 +744,30 @@ func (p *Default) GetCandleSourceStats(ctx context.Context, symbol string, start
 	// Get constructed vs raw candle counts
 	var constructedCount, rawCount int
 
-	err = p.db.QueryRow(`
+	row := p.queryRowWithTransaction(ctx, `
 		SELECT COUNT(*) FROM candles 
 		WHERE symbol=$1 AND source='constructed' AND timestamp >= $2 AND timestamp < $3`,
-		symbol, start, end).Scan(&constructedCount)
-	if err != nil {
+		symbol, start, end)
+	if row == nil {
 		constructedCount = 0
+	} else {
+		err = row.Scan(&constructedCount)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan constructed count: %w", err)
+		}
 	}
 
-	err = p.db.QueryRow(`
+	row = p.queryRowWithTransaction(ctx, `
 		SELECT COUNT(*) FROM candles 
 		WHERE symbol=$1 AND source != 'constructed' AND timestamp >= $2 AND timestamp < $3`,
-		symbol, start, end).Scan(&rawCount)
-	if err != nil {
+		symbol, start, end)
+	if row == nil {
 		rawCount = 0
+	} else {
+		err = row.Scan(&rawCount)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan raw count: %w", err)
+		}
 	}
 
 	stats["constructed_count"] = constructedCount
@@ -752,9 +791,12 @@ func (p *Default) SaveOrderBook(ctx context.Context, ob market.OrderBook) error 
 }
 
 func (p *Default) GetOrderBooks(ctx context.Context, symbol string, start, end time.Time) ([]market.OrderBook, error) {
-	rows, err := p.db.Query(`SELECT symbol, timestamp, bids, asks FROM orderbooks WHERE symbol=$1 AND timestamp >= $2 AND timestamp < $3 ORDER BY timestamp ASC`, symbol, start, end)
+	rows, err := p.queryWithTransaction(ctx, `SELECT symbol, timestamp, bids, asks FROM orderbooks WHERE symbol=$1 AND timestamp >= $2 AND timestamp < $3 ORDER BY timestamp ASC`, symbol, start, end)
 	if err != nil {
 		return nil, err
+	}
+	if rows == nil {
+		return nil, nil
 	}
 	defer rows.Close()
 	var obs []market.OrderBook
@@ -816,9 +858,12 @@ func (p *Default) SaveTicks(ctx context.Context, ticks []market.Tick) error {
 }
 
 func (p *Default) GetTicks(ctx context.Context, symbol string, start, end time.Time) ([]market.Tick, error) {
-	rows, err := p.db.Query(`SELECT symbol, price, quantity, side, timestamp FROM ticks WHERE symbol=$1 AND timestamp >= $2 AND timestamp < $3 ORDER BY timestamp ASC`, symbol, start, end)
+	rows, err := p.queryWithTransaction(ctx, `SELECT symbol, price, quantity, side, timestamp FROM ticks WHERE symbol=$1 AND timestamp >= $2 AND timestamp < $3 ORDER BY timestamp ASC`, symbol, start, end)
 	if err != nil {
 		return nil, err
+	}
+	if rows == nil {
+		return nil, nil
 	}
 	defer rows.Close()
 	var ticks []market.Tick
@@ -856,21 +901,27 @@ func (p *Default) SaveOrder(ctx context.Context, o order.OrderResponse) error {
 	})
 }
 
-func (p *Default) GetOrder(ctx context.Context, orderID string) (order.OrderResponse, error) {
-	row := p.db.QueryRow(`SELECT order_id, symbol, side, type, price, quantity, status, filled_qty, avg_price, created_at, updated_at FROM orders WHERE order_id=$1`, orderID)
+func (p *Default) GetOrder(ctx context.Context, orderID string) (*order.OrderResponse, error) {
+	row := p.queryRowWithTransaction(ctx, `SELECT order_id, symbol, side, type, price, quantity, status, filled_qty, avg_price, created_at, updated_at FROM orders WHERE order_id=$1`, orderID)
+	if row == nil {
+		return nil, nil
+	}
 	var o order.OrderResponse
 	if err := row.Scan(&o.OrderID, &o.Symbol, &o.Side, &o.Type, &o.Price, &o.Quantity, &o.Status, &o.FilledQty, &o.AvgPrice, &o.Timestamp, &o.UpdatedAt); err != nil {
-		return o, err
+		return nil, err
 	}
 	o.Timestamp = o.Timestamp.UTC() // TODO:
 	o.UpdatedAt = o.UpdatedAt.UTC() // TODO:
-	return o, nil
+	return &o, nil
 }
 
 func (p *Default) GetOpenOrders(ctx context.Context) ([]order.OrderResponse, error) {
-	rows, err := p.db.Query(`SELECT order_id, symbol, side, type, price, quantity, status, filled_qty, avg_price, created_at, updated_at FROM orders WHERE status NOT IN ('FILLED', 'CANCELED', 'EXPIRED')`)
+	rows, err := p.queryWithTransaction(ctx, `SELECT order_id, symbol, side, type, price, quantity, status, filled_qty, avg_price, created_at, updated_at FROM orders WHERE status NOT IN ('FILLED', 'CANCELED', 'EXPIRED')`)
 	if err != nil {
 		return nil, err
+	}
+	if rows == nil {
+		return nil, nil
 	}
 	defer rows.Close()
 	var orders []order.OrderResponse
@@ -930,9 +981,12 @@ func (p *Default) LogEvent(ctx context.Context, event journal.Event) error {
 }
 
 func (p *Default) GetEvents(ctx context.Context, eventType string, start, end time.Time) ([]journal.Event, error) {
-	rows, err := p.db.Query(`SELECT time, type, description, data FROM events WHERE type=$1 AND time >= $2 AND time <= $3 ORDER BY time ASC`, eventType, start, end)
+	rows, err := p.queryWithTransaction(ctx, `SELECT time, type, description, data FROM events WHERE type=$1 AND time >= $2 AND time <= $3 ORDER BY time ASC`, eventType, start, end)
 	if err != nil {
 		return nil, err
+	}
+	if rows == nil {
+		return nil, nil
 	}
 	defer rows.Close()
 	var events []journal.Event
@@ -973,9 +1027,12 @@ func (p *Default) SaveState(ctx context.Context, state map[string]any) error {
 }
 
 func (p *Default) LoadState(ctx context.Context) (map[string]any, error) {
-	rows, err := p.db.Query(`SELECT key, value FROM state`)
+	rows, err := p.queryWithTransaction(ctx, `SELECT key, value FROM state`)
 	if err != nil {
 		return nil, err
+	}
+	if rows == nil {
+		return nil, nil
 	}
 	defer rows.Close()
 	state := make(map[string]any)

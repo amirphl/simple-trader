@@ -26,7 +26,6 @@ type Storage interface {
 }
 
 type Position interface {
-	OnSignal(ctx context.Context, signal strategy.Signal)
 	OnSignalV2(ctx context.Context, signal strategy.Signal)
 	OnTick(ctx context.Context, tick Tick, depthState map[string]exchange.OrderBook, marketCapState *exchange.MarketCapData)
 	Stats() (wins, losses, trades int64, winRate, pnl, maxDD float64)
