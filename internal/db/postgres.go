@@ -71,14 +71,6 @@ func (p *Default) queryWithTransaction(ctx context.Context, query string, args .
 	return p.db.QueryContext(ctx, query, args...)
 }
 
-// queryRowWithTransaction executes a query row using transaction from context if available
-func (p *Default) queryRowWithTransaction(ctx context.Context, query string, args ...any) *sql.Row {
-	if tx := GetTransaction(ctx); tx != nil {
-		return tx.QueryRowContext(ctx, query, args...)
-	}
-	return p.db.QueryRowContext(ctx, query, args...)
-}
-
 type Default struct {
 	db *sql.DB
 }
@@ -124,39 +116,43 @@ func (p *Default) SaveCandles(ctx context.Context, candles []candle.Candle) erro
 	}
 
 	return p.executeWithTransaction(ctx, func(tx *sql.Tx) error {
-		// Build the batch insert query
-		query := `INSERT INTO candles (symbol, timeframe, timestamp, open, high, low, close, volume, source)
-		VALUES `
+		// Prepare the insert statement
+		stmt, err := tx.PrepareContext(ctx, `
+			INSERT INTO candles (symbol, timeframe, timestamp, open, high, low, close, volume, source)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+			ON CONFLICT (symbol, timeframe, timestamp, source) DO UPDATE SET 
+				open=EXCLUDED.open, high=EXCLUDED.high, low=EXCLUDED.low, 
+				close=EXCLUDED.close, volume=EXCLUDED.volume
+		`)
+		if err != nil {
+			return fmt.Errorf("failed to prepare insert statement: %w", err)
+		}
+		defer stmt.Close()
 
-		args := []any{}
-		paramCount := 0
-
+		// Insert each candle individually
+		savedCount := 0
 		for i, c := range candles {
-			// Add comma if not the first value
-			if i > 0 {
-				query += ","
+			result, err := stmt.ExecContext(ctx,
+				c.Symbol, c.Timeframe, c.Timestamp, c.Open, c.High, c.Low, c.Close, c.Volume, c.Source)
+			if err != nil {
+				return fmt.Errorf("failed to save candle at index %d (%s %s at %s): %w",
+					i, c.Symbol, c.Timeframe, c.Timestamp, err)
 			}
 
-			// Add parameter placeholders for this candle - $1,$2,$3...
-			query += fmt.Sprintf("($%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d)",
-				paramCount+1, paramCount+2, paramCount+3, paramCount+4,
-				paramCount+5, paramCount+6, paramCount+7, paramCount+8, paramCount+9)
+			rowsAffected, err := result.RowsAffected()
+			if err != nil {
+				return fmt.Errorf("failed to get rows affected for candle at index %d (%s %s at %s): %w",
+					i, c.Symbol, c.Timeframe, c.Timestamp, err)
+			}
 
-			// Add the actual parameters
-			args = append(args, c.Symbol, c.Timeframe, c.Timestamp, c.Open, c.High, c.Low, c.Close, c.Volume, c.Source)
-			paramCount += 9
+			if rowsAffected > 0 {
+				savedCount++
+			}
 		}
 
-		// Add ON CONFLICT clause
-		query += ` ON CONFLICT (symbol, timeframe, timestamp, source) DO UPDATE SET 
-		open=EXCLUDED.open, high=EXCLUDED.high, low=EXCLUDED.low, 
-		close=EXCLUDED.close, volume=EXCLUDED.volume`
-
-		// Execute the single batch statement
-		_, err := tx.ExecContext(ctx, query, args...)
-		if err != nil {
-			return fmt.Errorf("failed to batch save candles: %w", err)
-		}
+		// if savedCount == 0 {
+		// 	return fmt.Errorf("no candles were saved out of %d attempted", len(candles))
+		// }
 
 		return nil
 	})
@@ -222,27 +218,30 @@ func (p *Default) Get1mCandlesForAggregation(ctx context.Context, symbol string,
 
 // GetCandle retrieves a single candle by symbol, timeframe, timestamp, and source
 func (p *Default) GetCandle(ctx context.Context, symbol, timeframe string, timestamp time.Time, source string) (*candle.Candle, error) {
-	row := p.queryRowWithTransaction(ctx, `
+	rows, err := p.queryWithTransaction(ctx, `
 		SELECT timestamp, open, high, low, close, volume, symbol, timeframe, source 
 		FROM candles 
 		WHERE symbol=$1 AND timeframe=$2 AND timestamp=$3 AND source=$4 
 		LIMIT 1`,
 		symbol, timeframe, timestamp, source)
-
-	if row == nil {
+	if err != nil {
+		return nil, fmt.Errorf("failed to query candle: %w", err)
+	}
+	if rows == nil {
 		return nil, nil
 	}
+	defer rows.Close()
 
 	var c candle.Candle
-	if err := row.Scan(&c.Timestamp, &c.Open, &c.High, &c.Low, &c.Close, &c.Volume, &c.Symbol, &c.Timeframe, &c.Source); err != nil {
-		if err == sql.ErrNoRows {
-			return nil, nil
+	if rows.Next() {
+		if err := rows.Scan(&c.Timestamp, &c.Open, &c.High, &c.Low, &c.Close, &c.Volume, &c.Symbol, &c.Timeframe, &c.Source); err != nil {
+			return nil, fmt.Errorf("failed to scan candle: %w", err)
 		}
-		return nil, fmt.Errorf("failed to scan candle: %w", err)
+		c.Timestamp = c.Timestamp.UTC() // TODO:
+		return &c, nil
 	}
-	c.Timestamp = c.Timestamp.UTC() // TODO:
 
-	return &c, nil
+	return nil, nil
 }
 
 // GetCandlesV2 retrieves candles with a specific timeframe in a time range without filtering by symbol
@@ -355,75 +354,87 @@ func (p *Default) GetRawCandles(ctx context.Context, symbol, timeframe string, s
 
 // GetLatestCandle retrieves the latest candle with optimized querying
 func (p *Default) GetLatestCandle(ctx context.Context, symbol, timeframe string) (*candle.Candle, error) {
-	row := p.queryRowWithTransaction(ctx, `
+	rows, err := p.queryWithTransaction(ctx, `
 		SELECT timestamp, open, high, low, close, volume, symbol, timeframe, source 
 		FROM candles 
 		WHERE symbol=$1 AND timeframe=$2 
 		ORDER BY timestamp DESC LIMIT 1`,
 		symbol, timeframe)
-
-	if row == nil {
+	if err != nil {
+		return nil, fmt.Errorf("failed to query latest candle: %w", err)
+	}
+	if rows == nil {
 		return nil, nil
 	}
+	defer rows.Close()
 
 	var c candle.Candle
-	if err := row.Scan(&c.Timestamp, &c.Open, &c.High, &c.Low, &c.Close, &c.Volume, &c.Symbol, &c.Timeframe, &c.Source); err != nil {
-		if err == sql.ErrNoRows {
-			return nil, nil
+	if rows.Next() {
+		if err := rows.Scan(&c.Timestamp, &c.Open, &c.High, &c.Low, &c.Close, &c.Volume, &c.Symbol, &c.Timeframe, &c.Source); err != nil {
+			return nil, fmt.Errorf("failed to scan latest candle: %w", err)
 		}
-		return nil, fmt.Errorf("failed to scan latest candle: %w", err)
+		c.Timestamp = c.Timestamp.UTC() // TODO:
+		return &c, nil
 	}
-	c.Timestamp = c.Timestamp.UTC() // TODO:
-	return &c, nil
+
+	return nil, nil
 }
 
 // GetLatestCandleInRange retrieves the latest candle within a specific time range
 // This is useful when you need the most recent candle before a certain time
 func (p *Default) GetLatestCandleInRange(ctx context.Context, symbol, timeframe string, start, end time.Time) (*candle.Candle, error) {
-	row := p.queryRowWithTransaction(ctx, `
+	rows, err := p.queryWithTransaction(ctx, `
 		SELECT timestamp, open, high, low, close, volume, symbol, timeframe, source 
 		FROM candles 
 		WHERE symbol=$1 AND timeframe=$2 AND timestamp >= $3 AND timestamp < $4
 		ORDER BY timestamp DESC LIMIT 1`,
 		symbol, timeframe, start, end)
-
-	if row == nil {
+	if err != nil {
+		return nil, fmt.Errorf("failed to query latest candle in range: %w", err)
+	}
+	if rows == nil {
 		return nil, nil
 	}
+	defer rows.Close()
 
 	var c candle.Candle
-	if err := row.Scan(&c.Timestamp, &c.Open, &c.High, &c.Low, &c.Close, &c.Volume, &c.Symbol, &c.Timeframe, &c.Source); err != nil {
-		if err == sql.ErrNoRows {
-			return nil, nil
+	if rows.Next() {
+		if err := rows.Scan(&c.Timestamp, &c.Open, &c.High, &c.Low, &c.Close, &c.Volume, &c.Symbol, &c.Timeframe, &c.Source); err != nil {
+			return nil, fmt.Errorf("failed to scan latest candle in range: %w", err)
 		}
-		return nil, fmt.Errorf("failed to scan latest candle in range: %w", err)
+		c.Timestamp = c.Timestamp.UTC() // TODO:
+		return &c, nil
 	}
-	c.Timestamp = c.Timestamp.UTC() // TODO:
-	return &c, nil
+
+	return nil, nil
 }
 
 // GetLatestConstructedCandle retrieves the latest constructed candle
 func (p *Default) GetLatestConstructedCandle(ctx context.Context, symbol, timeframe string) (*candle.Candle, error) {
-	row := p.queryRowWithTransaction(ctx, `
+	rows, err := p.queryWithTransaction(ctx, `
 		SELECT timestamp, open, high, low, close, volume, symbol, timeframe, source 
 		FROM candles 
 		WHERE symbol=$1 AND timeframe=$2 AND source='constructed' 
 		ORDER BY timestamp DESC LIMIT 1`,
 		symbol, timeframe)
-
-	if row == nil {
+	if err != nil {
+		return nil, fmt.Errorf("failed to query latest constructed candle: %w", err)
+	}
+	if rows == nil {
 		return nil, nil
 	}
+	defer rows.Close()
 
 	var c candle.Candle
-	if err := row.Scan(&c.Timestamp, &c.Open, &c.High, &c.Low, &c.Close, &c.Volume, &c.Symbol, &c.Timeframe, &c.Source); err != nil {
-		if err == sql.ErrNoRows {
-			return nil, nil
+	if rows.Next() {
+		if err := rows.Scan(&c.Timestamp, &c.Open, &c.High, &c.Low, &c.Close, &c.Volume, &c.Symbol, &c.Timeframe, &c.Source); err != nil {
+			return nil, fmt.Errorf("failed to scan latest constructed candle: %w", err)
 		}
-		return nil, fmt.Errorf("failed to scan latest constructed candle: %w", err)
+		c.Timestamp = c.Timestamp.UTC() // TODO:
+		return &c, nil
 	}
-	c.Timestamp = c.Timestamp.UTC() // TODO:
-	return &c, nil
+
+	return nil, nil
 }
 
 // DeleteCandle removes a specific candle
@@ -490,35 +501,53 @@ func (p *Default) DeleteConstructedCandles(ctx context.Context, symbol, timefram
 // GetCandleCount returns the count of candles in a time range
 func (p *Default) GetCandleCount(ctx context.Context, symbol, timeframe string, start, end time.Time) (int, error) {
 	var count int
-	row := p.queryRowWithTransaction(ctx, `
+	rows, err := p.queryWithTransaction(ctx, `
 		SELECT COUNT(*) FROM candles 
 		WHERE symbol=$1 AND timeframe=$2 AND timestamp >= $3 AND timestamp < $4`,
 		symbol, timeframe, start, end)
-	if row == nil {
-		return 0, nil
-	}
-	err := row.Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get candle count: %w", err)
 	}
-	return count, nil
+	if rows == nil {
+		return 0, nil
+	}
+	defer rows.Close()
+
+	if rows.Next() {
+		err := rows.Scan(&count)
+		if err != nil {
+			return 0, fmt.Errorf("failed to scan candle count: %w", err)
+		}
+		return count, nil
+	}
+
+	return 0, nil
 }
 
 // GetConstructedCandleCount returns the count of constructed candles
 func (p *Default) GetConstructedCandleCount(ctx context.Context, symbol, timeframe string, start, end time.Time) (int, error) {
 	var count int
-	row := p.queryRowWithTransaction(ctx, `
+	rows, err := p.queryWithTransaction(ctx, `
 		SELECT COUNT(*) FROM candles 
 		WHERE symbol=$1 AND timeframe=$2 AND source='constructed' AND timestamp >= $3 AND timestamp < $4`,
 		symbol, timeframe, start, end)
-	if row == nil {
-		return 0, nil
-	}
-	err := row.Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get constructed candle count: %w", err)
 	}
-	return count, nil
+	if rows == nil {
+		return 0, nil
+	}
+	defer rows.Close()
+
+	if rows.Next() {
+		err := rows.Scan(&count)
+		if err != nil {
+			return 0, fmt.Errorf("failed to scan constructed candle count: %w", err)
+		}
+		return count, nil
+	}
+
+	return 0, nil
 }
 
 // UpdateCandle updates an existing candle
@@ -553,35 +582,19 @@ func (p *Default) UpdateCandles(ctx context.Context, candles []candle.Candle) er
 	}
 
 	return p.executeWithTransaction(ctx, func(tx *sql.Tx) error {
-		// Create a temporary table for the updates
-		_, err := tx.ExecContext(ctx, `
-	        CREATE TEMPORARY TABLE temp_candle_updates (
-	            symbol TEXT,
-	            timeframe TEXT,
-	            timestamp TIMESTAMP,
-	            source TEXT,
-	            open FLOAT,
-	            high FLOAT,
-	            low FLOAT,
-	            close FLOAT,
-	            volume FLOAT
-	        ) ON COMMIT DROP
-	    `)
-		if err != nil {
-			return fmt.Errorf("failed to create temporary table: %w", err)
-		}
-
-		// Prepare the statement for bulk insert into temp table
+		// Prepare the update statement
 		stmt, err := tx.PrepareContext(ctx, `
-	        INSERT INTO temp_candle_updates (symbol, timeframe, timestamp, source, open, high, low, close, volume)
-	        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-	    `)
+			UPDATE candles 
+			SET open=$1, high=$2, low=$3, close=$4, volume=$5 
+			WHERE symbol=$6 AND timeframe=$7 AND timestamp=$8 AND source=$9
+		`)
 		if err != nil {
-			return fmt.Errorf("failed to prepare statement: %w", err)
+			return fmt.Errorf("failed to prepare update statement: %w", err)
 		}
 		defer stmt.Close()
 
-		// Insert all candles into the temp table
+		// Update each candle individually
+		updatedCount := 0
 		for _, c := range candles {
 			// Validate candle before updating
 			if err := c.Validate(); err != nil {
@@ -589,43 +602,28 @@ func (p *Default) UpdateCandles(ctx context.Context, candles []candle.Candle) er
 					c.Symbol, c.Timeframe, c.Timestamp, err)
 			}
 
-			_, err = stmt.ExecContext(ctx,
-				c.Symbol, c.Timeframe, c.Timestamp, c.Source,
-				c.Open, c.High, c.Low, c.Close, c.Volume)
+			result, err := stmt.ExecContext(ctx,
+				c.Open, c.High, c.Low, c.Close, c.Volume,
+				c.Symbol, c.Timeframe, c.Timestamp, c.Source)
 			if err != nil {
-				return fmt.Errorf("failed to insert into temp table: %w", err)
+				return fmt.Errorf("failed to update candle (%s %s at %s): %w",
+					c.Symbol, c.Timeframe, c.Timestamp, err)
+			}
+
+			rowsAffected, err := result.RowsAffected()
+			if err != nil {
+				return fmt.Errorf("failed to get rows affected for candle (%s %s at %s): %w",
+					c.Symbol, c.Timeframe, c.Timestamp, err)
+			}
+
+			if rowsAffected > 0 {
+				updatedCount++
 			}
 		}
 
-		// Perform the actual update in a single statement
-		result, err := tx.ExecContext(ctx, `
-	        UPDATE candles AS c
-	        SET 
-	            open = t.open,
-	            high = t.high,
-	            low = t.low,
-	            close = t.close,
-	            volume = t.volume
-	        FROM temp_candle_updates AS t
-	        WHERE 
-	            c.symbol = t.symbol AND
-	            c.timeframe = t.timeframe AND
-	            c.timestamp = t.timestamp AND
-	            c.source = t.source
-	    `)
-		if err != nil {
-			return fmt.Errorf("failed to update candles: %w", err)
-		}
-
-		// Check if any rows were affected
-		rowsAffected, err := result.RowsAffected()
-		if err != nil {
-			return fmt.Errorf("failed to get rows affected: %w", err)
-		}
-
-		if rowsAffected == 0 {
-			return fmt.Errorf("no candles were updated out of %d attempted", len(candles))
-		}
+		// if updatedCount == 0 {
+		// 	return fmt.Errorf("no candles were updated out of %d attempted", len(candles))
+		// }
 
 		return nil
 	})
@@ -744,29 +742,41 @@ func (p *Default) GetCandleSourceStats(ctx context.Context, symbol string, start
 	// Get constructed vs raw candle counts
 	var constructedCount, rawCount int
 
-	row := p.queryRowWithTransaction(ctx, `
+	rows, err = p.queryWithTransaction(ctx, `
 		SELECT COUNT(*) FROM candles 
 		WHERE symbol=$1 AND source='constructed' AND timestamp >= $2 AND timestamp < $3`,
 		symbol, start, end)
-	if row == nil {
+	if err != nil {
+		return nil, fmt.Errorf("failed to get constructed count: %w", err)
+	}
+	if rows == nil {
 		constructedCount = 0
 	} else {
-		err = row.Scan(&constructedCount)
-		if err != nil {
-			return nil, fmt.Errorf("failed to scan constructed count: %w", err)
+		defer rows.Close()
+		if rows.Next() {
+			err = rows.Scan(&constructedCount)
+			if err != nil {
+				return nil, fmt.Errorf("failed to scan constructed count: %w", err)
+			}
 		}
 	}
 
-	row = p.queryRowWithTransaction(ctx, `
+	rows, err = p.queryWithTransaction(ctx, `
 		SELECT COUNT(*) FROM candles 
 		WHERE symbol=$1 AND source != 'constructed' AND timestamp >= $2 AND timestamp < $3`,
 		symbol, start, end)
-	if row == nil {
+	if err != nil {
+		return nil, fmt.Errorf("failed to get raw count: %w", err)
+	}
+	if rows == nil {
 		rawCount = 0
 	} else {
-		err = row.Scan(&rawCount)
-		if err != nil {
-			return nil, fmt.Errorf("failed to scan raw count: %w", err)
+		defer rows.Close()
+		if rows.Next() {
+			err = rows.Scan(&rawCount)
+			if err != nil {
+				return nil, fmt.Errorf("failed to scan raw count: %w", err)
+			}
 		}
 	}
 
@@ -839,16 +849,15 @@ func (p *Default) SaveTick(ctx context.Context, tick market.Tick) error {
 	})
 }
 
-// TODO: Batch
 func (p *Default) SaveTicks(ctx context.Context, ticks []market.Tick) error {
 	return p.executeWithTransaction(ctx, func(tx *sql.Tx) error {
-		stmt, err := tx.Prepare(`INSERT INTO ticks (symbol, price, quantity, side, timestamp) VALUES ($1,$2,$3,$4,$5)`)
+		stmt, err := tx.PrepareContext(ctx, `INSERT INTO ticks (symbol, price, quantity, side, timestamp) VALUES ($1,$2,$3,$4,$5)`)
 		if err != nil {
 			return fmt.Errorf("failed to prepare statement: %w", err)
 		}
 		defer stmt.Close()
 		for _, t := range ticks {
-			_, err := stmt.Exec(t.Symbol, t.Price, t.Quantity, t.Side, t.Timestamp)
+			_, err := stmt.ExecContext(ctx, t.Symbol, t.Price, t.Quantity, t.Side, t.Timestamp)
 			if err != nil {
 				return fmt.Errorf("failed to save tick: %w", err)
 			}
@@ -902,17 +911,26 @@ func (p *Default) SaveOrder(ctx context.Context, o order.OrderResponse) error {
 }
 
 func (p *Default) GetOrder(ctx context.Context, orderID string) (*order.OrderResponse, error) {
-	row := p.queryRowWithTransaction(ctx, `SELECT order_id, symbol, side, type, price, quantity, status, filled_qty, avg_price, created_at, updated_at FROM orders WHERE order_id=$1`, orderID)
-	if row == nil {
+	rows, err := p.queryWithTransaction(ctx, `SELECT order_id, symbol, side, type, price, quantity, status, filled_qty, avg_price, created_at, updated_at FROM orders WHERE order_id=$1`, orderID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query order: %w", err)
+	}
+	if rows == nil {
 		return nil, nil
 	}
+	defer rows.Close()
+
 	var o order.OrderResponse
-	if err := row.Scan(&o.OrderID, &o.Symbol, &o.Side, &o.Type, &o.Price, &o.Quantity, &o.Status, &o.FilledQty, &o.AvgPrice, &o.Timestamp, &o.UpdatedAt); err != nil {
-		return nil, err
+	if rows.Next() {
+		if err := rows.Scan(&o.OrderID, &o.Symbol, &o.Side, &o.Type, &o.Price, &o.Quantity, &o.Status, &o.FilledQty, &o.AvgPrice, &o.Timestamp, &o.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("failed to scan order: %w", err)
+		}
+		o.Timestamp = o.Timestamp.UTC() // TODO:
+		o.UpdatedAt = o.UpdatedAt.UTC() // TODO:
+		return &o, nil
 	}
-	o.Timestamp = o.Timestamp.UTC() // TODO:
-	o.UpdatedAt = o.UpdatedAt.UTC() // TODO:
-	return &o, nil
+
+	return nil, nil
 }
 
 func (p *Default) GetOpenOrders(ctx context.Context) ([]order.OrderResponse, error) {
