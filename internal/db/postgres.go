@@ -15,8 +15,82 @@ import (
 	_ "github.com/lib/pq"
 )
 
-// TODO: TX from context
-// If exists use it otherwise only create for insert, update, and delete.
+// Transaction context key
+type txKey struct{}
+
+// WithTransaction adds a transaction to the context
+func WithTransaction(ctx context.Context, tx *sql.Tx) context.Context {
+	return context.WithValue(ctx, txKey{}, tx)
+}
+
+// GetTransaction retrieves a transaction from context, or returns nil if not present
+func GetTransaction(ctx context.Context) *sql.Tx {
+	if tx, ok := ctx.Value(txKey{}).(*sql.Tx); ok {
+		return tx
+	}
+	return nil
+}
+
+// executeWithTransaction executes a function with proper transaction management
+// If a transaction exists in context, it uses that. Otherwise, it creates a new one.
+func (p *Default) executeWithTransaction(ctx context.Context, fn func(*sql.Tx) error) error {
+	// Check if transaction exists in context
+	if tx := GetTransaction(ctx); tx != nil {
+		// Use existing transaction
+		return fn(tx)
+	}
+
+	// Create new transaction
+	tx, err := p.db.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+
+	// Execute the function
+	if fnErr := fn(tx); fnErr != nil {
+		// Rollback on error
+		if rbErr := tx.Rollback(); rbErr != nil {
+			return fmt.Errorf("transaction rollback failed: %w (original error: %v)", rbErr, fnErr)
+		}
+		return fnErr
+	}
+
+	// Commit on success
+	if commitErr := tx.Commit(); commitErr != nil {
+		return fmt.Errorf("transaction commit failed: %w", commitErr)
+	}
+
+	return nil
+}
+
+// executeWithReadTransaction executes a read function with transaction from context if available
+// For read operations, we don't create a new transaction if one doesn't exist in context
+func (p *Default) executeWithReadTransaction(ctx context.Context, fn func(*sql.Tx) error) error {
+	// Check if transaction exists in context
+	if tx := GetTransaction(ctx); tx != nil {
+		// Use existing transaction
+		return fn(tx)
+	}
+
+	// For read operations, execute directly without transaction
+	return fn(nil)
+}
+
+// queryWithTransaction executes a query using transaction from context if available
+func (p *Default) queryWithTransaction(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	if tx := GetTransaction(ctx); tx != nil {
+		return tx.Query(query, args...)
+	}
+	return p.db.Query(query, args...)
+}
+
+// queryRowWithTransaction executes a query row using transaction from context if available
+func (p *Default) queryRowWithTransaction(ctx context.Context, query string, args ...any) *sql.Row {
+	if tx := GetTransaction(ctx); tx != nil {
+		return tx.QueryRow(query, args...)
+	}
+	return p.db.QueryRow(query, args...)
+}
 
 type Default struct {
 	db *sql.DB
@@ -33,18 +107,20 @@ func (p *Default) SaveCandle(ctx context.Context, c *candle.Candle) error {
 		return fmt.Errorf("invalid candle for %s %s at %s: %w", c.Symbol, c.Timeframe, c.Timestamp, err)
 	}
 
-	_, err := p.db.Exec(`
+	return p.executeWithTransaction(ctx, func(tx *sql.Tx) error {
+		_, err := tx.Exec(`
 		INSERT INTO candles (symbol, timeframe, timestamp, open, high, low, close, volume, source)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
 		ON CONFLICT (symbol, timeframe, timestamp, source) DO UPDATE SET 
 			open=EXCLUDED.open, high=EXCLUDED.high, low=EXCLUDED.low, 
 			close=EXCLUDED.close, volume=EXCLUDED.volume`,
-		c.Symbol, c.Timeframe, c.Timestamp, c.Open, c.High, c.Low, c.Close, c.Volume, c.Source)
-	if err != nil {
-		return fmt.Errorf("failed to save candle for %s %s at %s: %w", c.Symbol, c.Timeframe, c.Timestamp, err)
-	}
+			c.Symbol, c.Timeframe, c.Timestamp, c.Open, c.High, c.Low, c.Close, c.Volume, c.Source)
+		if err != nil {
+			return fmt.Errorf("failed to save candle for %s %s at %s: %w", c.Symbol, c.Timeframe, c.Timestamp, err)
+		}
 
-	return nil
+		return nil
+	})
 }
 
 func (p *Default) SaveCandles(ctx context.Context, candles []candle.Candle) error {
@@ -60,51 +136,43 @@ func (p *Default) SaveCandles(ctx context.Context, candles []candle.Candle) erro
 		}
 	}
 
-	tx, err := p.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err != nil {
-			tx.Rollback()
-		}
-	}()
-
-	// Build the batch insert query
-	query := `INSERT INTO candles (symbol, timeframe, timestamp, open, high, low, close, volume, source)
+	return p.executeWithTransaction(ctx, func(tx *sql.Tx) error {
+		// Build the batch insert query
+		query := `INSERT INTO candles (symbol, timeframe, timestamp, open, high, low, close, volume, source)
 		VALUES `
 
-	args := []any{}
-	paramCount := 0
+		args := []any{}
+		paramCount := 0
 
-	for i, c := range candles {
-		// Add comma if not the first value
-		if i > 0 {
-			query += ","
+		for i, c := range candles {
+			// Add comma if not the first value
+			if i > 0 {
+				query += ","
+			}
+
+			// Add parameter placeholders for this candle - $1,$2,$3...
+			query += fmt.Sprintf("($%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d)",
+				paramCount+1, paramCount+2, paramCount+3, paramCount+4,
+				paramCount+5, paramCount+6, paramCount+7, paramCount+8, paramCount+9)
+
+			// Add the actual parameters
+			args = append(args, c.Symbol, c.Timeframe, c.Timestamp, c.Open, c.High, c.Low, c.Close, c.Volume, c.Source)
+			paramCount += 9
 		}
 
-		// Add parameter placeholders for this candle - $1,$2,$3...
-		query += fmt.Sprintf("($%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d)",
-			paramCount+1, paramCount+2, paramCount+3, paramCount+4,
-			paramCount+5, paramCount+6, paramCount+7, paramCount+8, paramCount+9)
-
-		// Add the actual parameters
-		args = append(args, c.Symbol, c.Timeframe, c.Timestamp, c.Open, c.High, c.Low, c.Close, c.Volume, c.Source)
-		paramCount += 9
-	}
-
-	// Add ON CONFLICT clause
-	query += ` ON CONFLICT (symbol, timeframe, timestamp, source) DO UPDATE SET 
+		// Add ON CONFLICT clause
+		query += ` ON CONFLICT (symbol, timeframe, timestamp, source) DO UPDATE SET 
 		open=EXCLUDED.open, high=EXCLUDED.high, low=EXCLUDED.low, 
 		close=EXCLUDED.close, volume=EXCLUDED.volume`
 
-	// Execute the single batch statement
-	_, err = tx.Exec(query, args...)
-	if err != nil {
-		return fmt.Errorf("failed to batch save candles: %w", err)
-	}
+		// Execute the single batch statement
+		_, err := tx.Exec(query, args...)
+		if err != nil {
+			return fmt.Errorf("failed to batch save candles: %w", err)
+		}
 
-	return tx.Commit()
+		return nil
+	})
 }
 
 // SaveConstructedCandles efficiently saves constructed (aggregated) candles
@@ -122,7 +190,6 @@ func (p *Default) SaveConstructedCandles(ctx context.Context, candles []candle.C
 }
 
 // SaveRaw1mCandles efficiently saves raw 1m candles with optimized batch processing
-// TODO: TX
 func (p *Default) SaveRaw1mCandles(ctx context.Context, candles []candle.Candle) error {
 	if len(candles) == 0 {
 		return nil
@@ -345,60 +412,64 @@ func (p *Default) GetLatestConstructedCandle(ctx context.Context, symbol, timefr
 }
 
 // DeleteCandle removes a specific candle
-// TODO: TX
 func (p *Default) DeleteCandle(ctx context.Context, symbol, timeframe, source string, timestamp time.Time) error {
-	result, err := p.db.Exec(`DELETE FROM candles WHERE symbol=$1 AND timeframe=$2 AND timestamp=$3 AND source=$4`,
-		symbol, timeframe, timestamp, source)
-	if err != nil {
-		return fmt.Errorf("failed to delete candle: %w", err)
-	}
+	return p.executeWithTransaction(ctx, func(tx *sql.Tx) error {
+		result, err := tx.Exec(`DELETE FROM candles WHERE symbol=$1 AND timeframe=$2 AND timestamp=$3 AND source=$4`,
+			symbol, timeframe, timestamp, source)
+		if err != nil {
+			return fmt.Errorf("failed to delete candle: %w", err)
+		}
 
-	rowsAffected, _ := result.RowsAffected()
-	if rowsAffected == 0 {
-		return fmt.Errorf("no candle found to delete for %s %s at %s", symbol, timeframe, timestamp)
-	}
+		rowsAffected, _ := result.RowsAffected()
+		if rowsAffected == 0 {
+			return fmt.Errorf("no candle found to delete for %s %s at %s", symbol, timeframe, timestamp)
+		}
 
-	return nil
+		return nil
+	})
 }
 
 // DeleteCandles removes old candles with optimized deletion
 func (p *Default) DeleteCandles(ctx context.Context, symbol, timeframe string, before time.Time) error {
-	_, err := p.db.Exec(`DELETE FROM candles WHERE symbol=$1 AND timeframe=$2 AND timestamp < $3`,
-		symbol, timeframe, before)
-	if err != nil {
-		return fmt.Errorf("failed to delete candles: %w", err)
-	}
-
-	return nil
+	return p.executeWithTransaction(ctx, func(tx *sql.Tx) error {
+		_, err := tx.Exec(`DELETE FROM candles WHERE symbol=$1 AND timeframe=$2 AND timestamp < $3`,
+			symbol, timeframe, before)
+		if err != nil {
+			return fmt.Errorf("failed to delete candles: %w", err)
+		}
+		return nil
+	})
 }
 
 // DeleteCandlesInRange removes candles in a specific time range for a symbol and timeframe
 func (p *Default) DeleteCandlesInRange(ctx context.Context, symbol, timeframe, source string, start, end time.Time) error {
-	query := `DELETE FROM candles WHERE symbol=$1 AND timeframe=$2 AND timestamp >= $3 AND timestamp < $4`
-	args := []any{symbol, timeframe, start, end}
+	return p.executeWithTransaction(ctx, func(tx *sql.Tx) error {
+		query := `DELETE FROM candles WHERE symbol=$1 AND timeframe=$2 AND timestamp >= $3 AND timestamp < $4`
+		args := []any{symbol, timeframe, start, end}
 
-	if source != "" {
-		query += " AND source=$5"
-		args = append(args, source)
-	}
+		if source != "" {
+			query += " AND source=$5"
+			args = append(args, source)
+		}
 
-	_, err := p.db.Exec(query, args...)
-	if err != nil {
-		return fmt.Errorf("failed to delete candles in range: %w", err)
-	}
-	return nil
+		_, err := tx.Exec(query, args...)
+		if err != nil {
+			return fmt.Errorf("failed to delete candles in range: %w", err)
+		}
+		return nil
+	})
 }
 
 // DeleteConstructedCandles removes old constructed candles
 func (p *Default) DeleteConstructedCandles(ctx context.Context, symbol, timeframe string, before time.Time) error {
-	// TODO: TX
-	_, err := p.db.Exec(`DELETE FROM candles WHERE symbol=$1 AND timeframe=$2 AND source='constructed' AND timestamp < $3`,
-		symbol, timeframe, before)
-	if err != nil {
-		return fmt.Errorf("failed to delete constructed candles: %w", err)
-	}
-
-	return nil
+	return p.executeWithTransaction(ctx, func(tx *sql.Tx) error {
+		_, err := tx.Exec(`DELETE FROM candles WHERE symbol=$1 AND timeframe=$2 AND source='constructed' AND timestamp < $3`,
+			symbol, timeframe, before)
+		if err != nil {
+			return fmt.Errorf("failed to delete constructed candles: %w", err)
+		}
+		return nil
+	})
 }
 
 // GetCandleCount returns the count of candles in a time range
@@ -428,27 +499,28 @@ func (p *Default) GetConstructedCandleCount(ctx context.Context, symbol, timefra
 }
 
 // UpdateCandle updates an existing candle
-// TODO: TX
 func (p *Default) UpdateCandle(ctx context.Context, c candle.Candle) error {
 	if err := c.Validate(); err != nil {
 		return fmt.Errorf("invalid candle for update: %w", err)
 	}
 
-	result, err := p.db.Exec(`
+	return p.executeWithTransaction(ctx, func(tx *sql.Tx) error {
+		result, err := tx.Exec(`
 		UPDATE candles 
 		SET open=$1, high=$2, low=$3, close=$4, volume=$5 
 		WHERE symbol=$6 AND timeframe=$7 AND timestamp=$8 AND source=$9`,
-		c.Open, c.High, c.Low, c.Close, c.Volume, c.Symbol, c.Timeframe, c.Timestamp, c.Source)
-	if err != nil {
-		return fmt.Errorf("failed to update candle: %w", err)
-	}
+			c.Open, c.High, c.Low, c.Close, c.Volume, c.Symbol, c.Timeframe, c.Timestamp, c.Source)
+		if err != nil {
+			return fmt.Errorf("failed to update candle: %w", err)
+		}
 
-	rowsAffected, _ := result.RowsAffected()
-	if rowsAffected == 0 {
-		return fmt.Errorf("no candle found to update for %s %s at %s", c.Symbol, c.Timeframe, c.Timestamp)
-	}
+		rowsAffected, _ := result.RowsAffected()
+		if rowsAffected == 0 {
+			return fmt.Errorf("no candle found to update for %s %s at %s", c.Symbol, c.Timeframe, c.Timestamp)
+		}
 
-	return nil
+		return nil
+	})
 }
 
 // UpdateCandles updates multiple candles in a single transaction using a bulk update approach
@@ -457,19 +529,9 @@ func (p *Default) UpdateCandles(ctx context.Context, candles []candle.Candle) er
 		return nil
 	}
 
-	// Start a transaction
-	tx, err := p.db.Begin()
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer func() {
-		if err != nil {
-			tx.Rollback()
-		}
-	}()
-
-	// Create a temporary table for the updates
-	_, err = tx.Exec(`
+	return p.executeWithTransaction(ctx, func(tx *sql.Tx) error {
+		// Create a temporary table for the updates
+		_, err := tx.Exec(`
         CREATE TEMPORARY TABLE temp_candle_updates (
             symbol TEXT,
             timeframe TEXT,
@@ -482,38 +544,38 @@ func (p *Default) UpdateCandles(ctx context.Context, candles []candle.Candle) er
             volume FLOAT
         ) ON COMMIT DROP
     `)
-	if err != nil {
-		return fmt.Errorf("failed to create temporary table: %w", err)
-	}
+		if err != nil {
+			return fmt.Errorf("failed to create temporary table: %w", err)
+		}
 
-	// Prepare the statement for bulk insert into temp table
-	stmt, err := tx.Prepare(`
+		// Prepare the statement for bulk insert into temp table
+		stmt, err := tx.Prepare(`
         INSERT INTO temp_candle_updates (symbol, timeframe, timestamp, source, open, high, low, close, volume)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
     `)
-	if err != nil {
-		return fmt.Errorf("failed to prepare statement: %w", err)
-	}
-	defer stmt.Close()
-
-	// Insert all candles into the temp table
-	for _, c := range candles {
-		// Validate candle before updating
-		if err := c.Validate(); err != nil {
-			return fmt.Errorf("invalid candle for update (%s %s at %s): %w",
-				c.Symbol, c.Timeframe, c.Timestamp, err)
-		}
-
-		_, err = stmt.Exec(
-			c.Symbol, c.Timeframe, c.Timestamp, c.Source,
-			c.Open, c.High, c.Low, c.Close, c.Volume)
 		if err != nil {
-			return fmt.Errorf("failed to insert into temp table: %w", err)
+			return fmt.Errorf("failed to prepare statement: %w", err)
 		}
-	}
+		defer stmt.Close()
 
-	// Perform the actual update in a single statement
-	result, err := tx.Exec(`
+		// Insert all candles into the temp table
+		for _, c := range candles {
+			// Validate candle before updating
+			if err := c.Validate(); err != nil {
+				return fmt.Errorf("invalid candle for update (%s %s at %s): %w",
+					c.Symbol, c.Timeframe, c.Timestamp, err)
+			}
+
+			_, err = stmt.Exec(
+				c.Symbol, c.Timeframe, c.Timestamp, c.Source,
+				c.Open, c.High, c.Low, c.Close, c.Volume)
+			if err != nil {
+				return fmt.Errorf("failed to insert into temp table: %w", err)
+			}
+		}
+
+		// Perform the actual update in a single statement
+		result, err := tx.Exec(`
         UPDATE candles AS c
         SET 
             open = t.open,
@@ -528,26 +590,22 @@ func (p *Default) UpdateCandles(ctx context.Context, candles []candle.Candle) er
             c.timestamp = t.timestamp AND
             c.source = t.source
     `)
-	if err != nil {
-		return fmt.Errorf("failed to update candles: %w", err)
-	}
+		if err != nil {
+			return fmt.Errorf("failed to update candles: %w", err)
+		}
 
-	// Check if any rows were affected
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("failed to get rows affected: %w", err)
-	}
+		// Check if any rows were affected
+		rowsAffected, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("failed to get rows affected: %w", err)
+		}
 
-	if rowsAffected == 0 {
-		return fmt.Errorf("no candles were updated out of %d attempted", len(candles))
-	}
+		if rowsAffected == 0 {
+			return fmt.Errorf("no candles were updated out of %d attempted", len(candles))
+		}
 
-	// Commit the transaction
-	if err = tx.Commit(); err != nil {
-		return fmt.Errorf("failed to commit transaction: %w", err)
-	}
-
-	return nil
+		return nil
+	})
 }
 
 // GetAggregationStats returns statistics useful for aggregation
@@ -681,18 +739,16 @@ func (p *Default) GetCandleSourceStats(ctx context.Context, symbol string, start
 }
 
 func (p *Default) SaveOrderBook(ctx context.Context, ob market.OrderBook) error {
-	tx, err := p.db.Begin()
-	if err != nil {
-		return err
-	}
-	bids, _ := json.Marshal(ob.Bids)
-	asks, _ := json.Marshal(ob.Asks)
-	_, err = tx.Exec(`INSERT INTO orderbooks (symbol, timestamp, bids, asks) VALUES ($1,$2,$3,$4)`, ob.Symbol, ob.Timestamp, bids, asks)
-	if err != nil {
-		tx.Rollback()
-		return err
-	}
-	return tx.Commit()
+	return p.executeWithTransaction(ctx, func(tx *sql.Tx) error {
+		bids, _ := json.Marshal(ob.Bids)
+		asks, _ := json.Marshal(ob.Asks)
+		_, err := tx.Exec(`INSERT INTO orderbooks (symbol, timestamp, bids, asks) VALUES ($1,$2,$3,$4)`,
+			ob.Symbol, ob.Timestamp, bids, asks)
+		if err != nil {
+			return fmt.Errorf("failed to save orderbook: %w", err)
+		}
+		return nil
+	})
 }
 
 func (p *Default) GetOrderBooks(ctx context.Context, symbol string, start, end time.Time) ([]market.OrderBook, error) {
@@ -717,51 +773,46 @@ func (p *Default) GetOrderBooks(ctx context.Context, symbol string, start, end t
 }
 
 func (p *Default) DeleteOrderBooks(ctx context.Context, symbol string, before time.Time) error {
-	// TODO: TX
-	_, err := p.db.Exec(`DELETE FROM orderbooks WHERE symbol=$1 AND timestamp < $2`, symbol, before)
-	return err
+	return p.executeWithTransaction(ctx, func(tx *sql.Tx) error {
+		_, err := tx.Exec(`DELETE FROM orderbooks WHERE symbol=$1 AND timestamp < $2`, symbol, before)
+		if err != nil {
+			return fmt.Errorf("failed to delete orderbooks: %w", err)
+		}
+		return nil
+	})
 }
 
 func (p *Default) SaveTick(ctx context.Context, tick market.Tick) error {
-	tx, err := p.db.Begin()
-	if err != nil {
-		return err
-	}
-	stmt, err := tx.Prepare(`INSERT INTO ticks (symbol, price, quantity, side, timestamp) VALUES ($1,$2,$3,$4,$5)`)
-	if err != nil {
-		tx.Rollback()
-		return err
-	}
-	defer stmt.Close()
-	_, err = stmt.Exec(tick.Symbol, tick.Price, tick.Quantity, tick.Side, tick.Timestamp)
-	if err != nil {
-		tx.Rollback()
-		return err
-	}
-
-	return tx.Commit()
+	return p.executeWithTransaction(ctx, func(tx *sql.Tx) error {
+		stmt, err := tx.Prepare(`INSERT INTO ticks (symbol, price, quantity, side, timestamp) VALUES ($1,$2,$3,$4,$5)`)
+		if err != nil {
+			return fmt.Errorf("failed to prepare statement: %w", err)
+		}
+		defer stmt.Close()
+		_, err = stmt.Exec(tick.Symbol, tick.Price, tick.Quantity, tick.Side, tick.Timestamp)
+		if err != nil {
+			return fmt.Errorf("failed to save tick: %w", err)
+		}
+		return nil
+	})
 }
 
 // TODO: Batch
 func (p *Default) SaveTicks(ctx context.Context, ticks []market.Tick) error {
-	tx, err := p.db.Begin()
-	if err != nil {
-		return err
-	}
-	stmt, err := tx.Prepare(`INSERT INTO ticks (symbol, price, quantity, side, timestamp) VALUES ($1,$2,$3,$4,$5)`)
-	if err != nil {
-		tx.Rollback()
-		return err
-	}
-	defer stmt.Close()
-	for _, t := range ticks {
-		_, err := stmt.Exec(t.Symbol, t.Price, t.Quantity, t.Side, t.Timestamp)
+	return p.executeWithTransaction(ctx, func(tx *sql.Tx) error {
+		stmt, err := tx.Prepare(`INSERT INTO ticks (symbol, price, quantity, side, timestamp) VALUES ($1,$2,$3,$4,$5)`)
 		if err != nil {
-			tx.Rollback()
-			return err
+			return fmt.Errorf("failed to prepare statement: %w", err)
 		}
-	}
-	return tx.Commit()
+		defer stmt.Close()
+		for _, t := range ticks {
+			_, err := stmt.Exec(t.Symbol, t.Price, t.Quantity, t.Side, t.Timestamp)
+			if err != nil {
+				return fmt.Errorf("failed to save tick: %w", err)
+			}
+		}
+		return nil
+	})
 }
 
 func (p *Default) GetTicks(ctx context.Context, symbol string, start, end time.Time) ([]market.Tick, error) {
@@ -783,18 +834,26 @@ func (p *Default) GetTicks(ctx context.Context, symbol string, start, end time.T
 }
 
 func (p *Default) DeleteTicks(ctx context.Context, symbol string, before time.Time) error {
-	// TODO: TX
-	_, err := p.db.Exec(`DELETE FROM ticks WHERE symbol=$1 AND timestamp < $2`, symbol, before)
-	return err
+	return p.executeWithTransaction(ctx, func(tx *sql.Tx) error {
+		_, err := tx.Exec(`DELETE FROM ticks WHERE symbol=$1 AND timestamp < $2`, symbol, before)
+		if err != nil {
+			return fmt.Errorf("failed to delete ticks: %w", err)
+		}
+		return nil
+	})
 }
 
 func (p *Default) SaveOrder(ctx context.Context, o order.OrderResponse) error {
-	// TODO: TX
-	_, err := p.db.Exec(`INSERT INTO orders (order_id, symbol, side, type, price, quantity, status, filled_qty, avg_price, created_at, updated_at)
+	return p.executeWithTransaction(ctx, func(tx *sql.Tx) error {
+		_, err := tx.Exec(`INSERT INTO orders (order_id, symbol, side, type, price, quantity, status, filled_qty, avg_price, created_at, updated_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
 		ON CONFLICT (order_id) DO UPDATE SET status=EXCLUDED.status, filled_qty=EXCLUDED.filled_qty, avg_price=EXCLUDED.avg_price, updated_at=EXCLUDED.updated_at`,
-		o.OrderID, o.Symbol, o.Side, o.Type, o.Price, o.Quantity, o.Status, o.FilledQty, o.AvgPrice, o.Timestamp, o.Timestamp)
-	return err
+			o.OrderID, o.Symbol, o.Side, o.Type, o.Price, o.Quantity, o.Status, o.FilledQty, o.AvgPrice, o.Timestamp, o.Timestamp)
+		if err != nil {
+			return fmt.Errorf("failed to save order: %w", err)
+		}
+		return nil
+	})
 }
 
 func (p *Default) GetOrder(ctx context.Context, orderID string) (order.OrderResponse, error) {
@@ -828,27 +887,46 @@ func (p *Default) GetOpenOrders(ctx context.Context) ([]order.OrderResponse, err
 }
 
 func (p *Default) CloseOrder(ctx context.Context, orderID string) error {
-	_, err := p.db.Exec(`UPDATE orders SET status='CLOSED', updated_at=$1 WHERE order_id=$2`, time.Now(), orderID)
-	return err
+	return p.executeWithTransaction(ctx, func(tx *sql.Tx) error {
+		_, err := tx.Exec(`UPDATE orders SET status='CLOSED', updated_at=$1 WHERE order_id=$2`, time.Now(), orderID)
+		if err != nil {
+			return fmt.Errorf("failed to close order: %w", err)
+		}
+		return nil
+	})
 }
 
 func (p *Default) UpdateOrderStatus(ctx context.Context, orderID, status string, filledQty, avgPrice float64, updatedAt time.Time) error {
-	// TODO: TX
-	_, err := p.db.Exec(`UPDATE orders SET status=$1, filled_qty=$2, avg_price=$3, updated_at=$4 WHERE order_id=$5`, status, filledQty, avgPrice, updatedAt, orderID)
-	return err
+	return p.executeWithTransaction(ctx, func(tx *sql.Tx) error {
+		_, err := tx.Exec(`UPDATE orders SET status=$1, filled_qty=$2, avg_price=$3, updated_at=$4 WHERE order_id=$5`,
+			status, filledQty, avgPrice, updatedAt, orderID)
+		if err != nil {
+			return fmt.Errorf("failed to update order status: %w", err)
+		}
+		return nil
+	})
 }
 
 func (p *Default) DeleteOrder(ctx context.Context, orderID string) error {
-	// TODO: TX
-	_, err := p.db.Exec(`DELETE FROM orders WHERE order_id=$1`, orderID)
-	return err
+	return p.executeWithTransaction(ctx, func(tx *sql.Tx) error {
+		_, err := tx.Exec(`DELETE FROM orders WHERE order_id=$1`, orderID)
+		if err != nil {
+			return fmt.Errorf("failed to delete order: %w", err)
+		}
+		return nil
+	})
 }
 
 func (p *Default) LogEvent(ctx context.Context, event journal.Event) error {
-	data, _ := json.Marshal(event.Data)
-	// TODO: TX
-	_, err := p.db.Exec(`INSERT INTO events (time, type, description, data) VALUES ($1,$2,$3,$4)`, event.Time, event.Type, event.Description, data)
-	return err
+	return p.executeWithTransaction(ctx, func(tx *sql.Tx) error {
+		data, _ := json.Marshal(event.Data)
+		_, err := tx.Exec(`INSERT INTO events (time, type, description, data) VALUES ($1,$2,$3,$4)`,
+			event.Time, event.Type, event.Description, data)
+		if err != nil {
+			return fmt.Errorf("failed to log event: %w", err)
+		}
+		return nil
+	})
 }
 
 func (p *Default) GetEvents(ctx context.Context, eventType string, start, end time.Time) ([]journal.Event, error) {
@@ -872,25 +950,26 @@ func (p *Default) GetEvents(ctx context.Context, eventType string, start, end ti
 }
 
 func (p *Default) DeleteEvents(ctx context.Context, eventType string, before time.Time) error {
-	// TODO: TX
-	_, err := p.db.Exec(`DELETE FROM events WHERE type=$1 AND time < $2`, eventType, before)
-	return err
+	return p.executeWithTransaction(ctx, func(tx *sql.Tx) error {
+		_, err := tx.Exec(`DELETE FROM events WHERE type=$1 AND time < $2`, eventType, before)
+		if err != nil {
+			return fmt.Errorf("failed to delete events: %w", err)
+		}
+		return nil
+	})
 }
 
 func (p *Default) SaveState(ctx context.Context, state map[string]any) error {
-	tx, err := p.db.Begin()
-	if err != nil {
-		return err
-	}
-	for k, v := range state {
-		val, _ := json.Marshal(v)
-		_, err := tx.Exec(`INSERT INTO state (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value`, k, val)
-		if err != nil {
-			tx.Rollback()
-			return err
+	return p.executeWithTransaction(ctx, func(tx *sql.Tx) error {
+		for k, v := range state {
+			val, _ := json.Marshal(v)
+			_, err := tx.Exec(`INSERT INTO state (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value`, k, val)
+			if err != nil {
+				return fmt.Errorf("failed to save state for key %s: %w", k, err)
+			}
 		}
-	}
-	return tx.Commit()
+		return nil
+	})
 }
 
 func (p *Default) LoadState(ctx context.Context) (map[string]any, error) {
@@ -914,7 +993,11 @@ func (p *Default) LoadState(ctx context.Context) (map[string]any, error) {
 }
 
 func (p *Default) DeleteState(ctx context.Context, key string) error {
-	// TODO: TX
-	_, err := p.db.Exec(`DELETE FROM state WHERE key=$1`, key)
-	return err
+	return p.executeWithTransaction(ctx, func(tx *sql.Tx) error {
+		_, err := tx.Exec(`DELETE FROM state WHERE key=$1`, key)
+		if err != nil {
+			return fmt.Errorf("failed to delete state: %w", err)
+		}
+		return nil
+	})
 }
