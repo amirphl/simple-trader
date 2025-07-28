@@ -10,20 +10,23 @@ import (
 type State string
 
 const (
-	// NoPosition - No position is held, monitoring for entry signals
-	NoPosition State = "NoPosition"
+	// NoPositionState - No position is held, monitoring for entry signals
+	NoPositionState State = "No Position"
 
-	// LongBullishPositionUnder20BeforeBuy - Waiting for bullish Heiken Ashi when all stochastics are under 20
-	LongBullishPositionUnder20BeforeBuy State = "LongBullishPositionUnder20BeforeBuy"
+	// LongBullish - Long position when green stochastic has crossed above 20
+	LongBullishState State = "Long Bullish"
 
-	// LongBullishPositionUnder20 - Long position when all stochastics are under 20
-	LongBullishPositionUnder20 State = "LongBullishPositionUnder20"
+	// LongBullishPositionUnderOversoldBeforeBuyState - Waiting for bullish Heiken Ashi when all stochastics are under 20
+	LongBullishPositionUnderOversoldBeforeBuyState State = "Long Bullish Position Under Oversold (20) Before Buy"
 
-	// LongBullishPositionUpper20 - Long position when green stochastic has crossed above 20
-	LongBullishPositionUpper20 State = "LongBullishPositionUpper20"
+	// LongBullishPositionUnderOversoldState - Long position when all stochastics are under 20
+	LongBullishPositionUnderOversoldState State = "Long Bullish Position Under Oversold (20)"
 
-	// LongBearishPositionAbove80 - Waiting for bearish Heiken Ashi when green stochastic is above 80
-	LongBearishPositionAbove80 State = "LongBearishPositionAbove80"
+	// LongBullishPositionUpperOversoldState - Long position when green stochastic has crossed above 20
+	LongBullishPositionUpperOversoldState State = "Long Bullish Position Above Oversold (80)"
+
+	// LongBearishPositionAboveOverboughtState - Waiting for bearish Heiken Ashi when green stochastic is above 80
+	LongBearishPositionAboveOverboughtState State = "Long Bearish Position Above Overbought (80)"
 )
 
 // StateTransition represents a transition from one state to another
@@ -49,7 +52,7 @@ type StateMachine struct {
 // NewStateMachine creates a new state machine for a trading strategy
 func NewStateMachine(symbol string) *StateMachine {
 	return &StateMachine{
-		currentState:   NoPosition,
+		currentState:   NoPositionState,
 		transitions:    make([]StateTransition, 0),
 		symbol:         symbol,
 		stateHistory:   make([]StateTransition, 0),
@@ -141,7 +144,7 @@ func (sm *StateMachine) GetStateDuration() time.Duration {
 
 // Reset resets the state machine to initial state
 func (sm *StateMachine) Reset() {
-	sm.TransitionTo(NoPosition, "reset", Hold, "state machine reset")
+	sm.TransitionTo(NoPositionState, "reset", Hold, "state machine reset")
 }
 
 // String returns a string representation of the state machine

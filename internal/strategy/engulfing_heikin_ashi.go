@@ -24,11 +24,16 @@ type EngulfingHeikinAshi struct {
 
 	Storage Storage
 
-	initialized  bool
-	maxHistory   int // Maximum number of candles to keep in memory
+	initialized bool
+	maxHistory  int // Maximum number of candles to keep in memory
+
+	// Strategy parameters
 	minBodyRatio float64
 	maxBodyRatio float64
 	maxLowRatio  float64
+
+	// State machine for managing trading positions
+	stateMachine *StateMachine
 }
 
 func NewEngulfingHeikinAshi(symbol string, storage Storage) *EngulfingHeikinAshi {
@@ -40,6 +45,7 @@ func NewEngulfingHeikinAshi(symbol string, storage Storage) *EngulfingHeikinAshi
 		minBodyRatio: 1.8,
 		maxBodyRatio: 4,
 		maxLowRatio:  0.002,
+		stateMachine: NewStateMachine(symbol),
 	}
 }
 
@@ -62,6 +68,11 @@ func (s *EngulfingHeikinAshi) trimCandles() {
 		excess := len(s.heikenAshiCandles) - s.maxHistory
 		s.heikenAshiCandles = s.heikenAshiCandles[excess:]
 	}
+}
+
+// isHeikinAshiBearish checks if a Heiken Ashi candle is bearish
+func (s *EngulfingHeikinAshi) isHeikinAshiBearish(haCandle candle.Candle) bool {
+	return haCandle.Close < haCandle.Open
 }
 
 // OnCandles processes new candles and generates trading signals
@@ -207,59 +218,53 @@ func (s *EngulfingHeikinAshi) OnCandles(ctx context.Context, oneHourCandles []ca
 	minOpenCloseThird := min(thirdCandle.Open, thirdCandle.Close) * 1.0001
 	minOpenCloseSecond := min(secondCandle.Open, secondCandle.Close) * 1.0001
 
-	// Check for bullish engulfing pattern
-	if currCandle.Close > currCandle.Open && // Current candle is bullish
-		openBelowPrevClose &&
-		closeAbovePrevOpen &&
-		bodyRatio >= s.minBodyRatio &&
-		bodyRatio <= s.maxBodyRatio &&
-		// lowRatio <= s.maxLowRatio &&
-		prevBearish &&
-		currCandle.Close > maxOpenCloseSecond &&
-		currCandle.Close > maxOpenCloseThird &&
-		currCandle.Close > maxOpenCloseFourth &&
-		currCandle.Open <= minOpenCloseSecond &&
-		currCandle.Open <= minOpenCloseThird &&
-		currCandle.Open <= minOpenCloseFourth {
+	// State Machine Logic
+	currentState := s.stateMachine.GetCurrentState()
 
-		return Signal{
-			Time:         currCandle.Timestamp,
-			Position:     LongBullish,
-			Reason:       "bullish engulfing heikin ashi - long bullish",
-			StrategyName: s.Name(),
-			TriggerPrice: currCandle.Close,
-			Candle:       lastCandle, // Use the actual candle, not the HA candle
-		}, nil
+	switch currentState {
+	case NoPositionState:
+		// Check for bullish engulfing pattern
+		if currCandle.Close > currCandle.Open && // Current candle is bullish
+			openBelowPrevClose &&
+			closeAbovePrevOpen &&
+			bodyRatio >= s.minBodyRatio &&
+			bodyRatio <= s.maxBodyRatio &&
+			// lowRatio <= s.maxLowRatio &&
+			prevBearish &&
+			currCandle.Close > maxOpenCloseSecond &&
+			currCandle.Close > maxOpenCloseThird &&
+			currCandle.Close > maxOpenCloseFourth &&
+			currCandle.Open <= minOpenCloseSecond &&
+			currCandle.Open <= minOpenCloseThird &&
+			currCandle.Open <= minOpenCloseFourth {
+
+			s.stateMachine.TransitionTo(LongBullishState, "bullish_engulfing_pattern", LongBullish, "buy signal triggered")
+			return Signal{
+				Time:         currCandle.Timestamp,
+				Position:     LongBullish,
+				Reason:       "bullish engulfing heikin ashi - long bullish",
+				StrategyName: s.Name(),
+				TriggerPrice: currCandle.Close,
+				Candle:       lastCandle, // Use the actual candle, not the HA candle
+			}, nil
+		}
+
+	case LongBullishState:
+		// Check if Heiken Ashi has become bearish
+		if s.isHeikinAshiBearish(currHA) {
+			s.stateMachine.TransitionTo(NoPositionState, "bearish_ha_detected", LongBearish, "exit signal triggered")
+			return Signal{
+				Time:         currHA.Timestamp,
+				Position:     LongBearish,
+				Reason:       "bearish heikin ashi - long bearish",
+				StrategyName: s.Name(),
+				TriggerPrice: currCandle.Close,
+				Candle:       lastCandle, // Use the actual candle, not the HA candle
+			}, nil
+		}
 	}
 
-	// Alternative buy signal: strong bullish Heikin Ashi candle
-	// with small or no lower shadow
-	// if currHA.Close > currHA.Open && // Bullish candle
-	// 	(currHA.Low >= currHA.Open || (currHA.Open-currHA.Low)/currBody < 0.1) && // Small or no lower shadow
-	// 	currBody/((currHA.High-currHA.Low)+0.0001) > 0.7 { // Body is at least 70% of the range
-
-	// 	return Signal{
-	// 		Time:         currHA.Timestamp,
-	// 		Position:     Long,
-	// 		Reason:       "strong bullish heiken ashi candle",
-	// 		StrategyName: s.Name(),
-	// 		TriggerPrice: currHA.Close,
-	// 		Candle:       lastCandle, // Use the actual candle, not the HA candle
-	// 	}, nil
-	// }
-
-	// Sell signal: if current Heiken Ashi candle is bearish
-	if currHA.Close < currHA.Open {
-		return Signal{
-			Time:         currHA.Timestamp,
-			Position:     LongBearish,
-			Reason:       "bearish heikin ashi - long bearish",
-			StrategyName: s.Name(),
-			TriggerPrice: currCandle.Close, // TODO: Use HA close?
-			Candle:       lastCandle,       // Use the actual candle, not the HA candle
-		}, nil
-	}
-
+	// Default: Hold
 	return Signal{
 		Time:         lastCandle.Timestamp,
 		Position:     Hold,
@@ -272,11 +277,21 @@ func (s *EngulfingHeikinAshi) OnCandles(ctx context.Context, oneHourCandles []ca
 
 // PerformanceMetrics returns performance metrics for the strategy
 func (s *EngulfingHeikinAshi) PerformanceMetrics() map[string]float64 {
-	return map[string]float64{
-		"heikenAshiCount": float64(len(s.heikenAshiCandles)),
-		"candleCount":     float64(len(s.candles)),
-		"maxHistory":      float64(s.maxHistory),
+	stateMetrics := s.stateMachine.GetStateMetrics()
+
+	metrics := map[string]float64{
+		"heikenAshiCount":  float64(len(s.heikenAshiCandles)),
+		"candleCount":      float64(len(s.candles)),
+		"maxHistory":       float64(s.maxHistory),
+		"minBodyRatio":     s.minBodyRatio,
+		"maxBodyRatio":     s.maxBodyRatio,
+		"maxLowRatio":      s.maxLowRatio,
+		"currentState":     float64(len(string(s.stateMachine.GetCurrentState()))), // Convert state to numeric for metrics
+		"totalTransitions": float64(stateMetrics["total_transitions"].(int)),
+		"stateHistorySize": float64(stateMetrics["history_size"].(int)),
 	}
+
+	return metrics
 }
 
 // WarmupPeriod returns the number of candles needed for warm-up

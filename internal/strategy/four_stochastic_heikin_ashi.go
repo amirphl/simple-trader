@@ -368,10 +368,10 @@ func (s *FourStochasticHeikinAshi) OnCandles(ctx context.Context, oneHourCandles
 	currentState := s.stateMachine.GetCurrentState()
 
 	switch currentState {
-	case NoPosition:
+	case NoPositionState:
 		// Check for buy signal: all stochastics oversold + bullish Heiken Ashi
 		if s.areAllStochasticsOversold() && s.isHeikinAshiBullish(currHA) {
-			s.stateMachine.TransitionTo(LongBullishPositionUnder20, "all_stochastics_oversold_bullish_ha", LongBullish, "buy signal triggered")
+			s.stateMachine.TransitionTo(LongBullishPositionUnderOversoldState, "all_stochastics_oversold_bullish_ha", LongBullish, "buy signal triggered")
 			return Signal{
 				Time:         lastCandle.Timestamp,
 				Position:     LongBullish,
@@ -384,13 +384,13 @@ func (s *FourStochasticHeikinAshi) OnCandles(ctx context.Context, oneHourCandles
 
 		// Check if all stochastics are oversold but Heiken Ashi is not bullish yet
 		if s.areAllStochasticsOversold() {
-			s.stateMachine.TransitionTo(LongBullishPositionUnder20BeforeBuy, "all_stochastics_oversold_waiting_bullish_ha", Hold, "waiting for bullish heikin ashi")
+			s.stateMachine.TransitionTo(LongBullishPositionUnderOversoldBeforeBuyState, "all_stochastics_oversold_waiting_bullish_ha", Hold, "waiting for bullish heikin ashi")
 		}
 
-	case LongBullishPositionUnder20BeforeBuy:
+	case LongBullishPositionUnderOversoldBeforeBuyState:
 		// Check if Heiken Ashi has become bullish
 		if s.isHeikinAshiBullish(currHA) {
-			s.stateMachine.TransitionTo(LongBullishPositionUnder20, "bullish_ha_detected", LongBullish, "buy signal triggered")
+			s.stateMachine.TransitionTo(LongBullishPositionUnderOversoldState, "bullish_ha_detected", LongBullish, "buy signal triggered")
 			return Signal{
 				Time:         lastCandle.Timestamp,
 				Position:     LongBullish,
@@ -406,16 +406,16 @@ func (s *FourStochasticHeikinAshi) OnCandles(ctx context.Context, oneHourCandles
 		// 	s.stateMachine.TransitionTo(NoPosition, "stochastics_no_longer_oversold", Hold, "returning to monitoring")
 		// }
 
-	case LongBullishPositionUnder20:
+	case LongBullishPositionUnderOversoldState:
 		// Check if green stochastic has crossed above 20
 		if s.isGreenStochasticAbove20() {
-			s.stateMachine.TransitionTo(LongBullishPositionUpper20, "green_stoch_crossed_above_20", Hold, "position maintained, monitoring for exit")
+			s.stateMachine.TransitionTo(LongBullishPositionUpperOversoldState, "green_stoch_crossed_above_20", Hold, "position maintained, monitoring for exit")
 		}
 
-	case LongBullishPositionUpper20:
+	case LongBullishPositionUpperOversoldState:
 		// Check if green stochastic has crossed back below 20
 		if s.isGreenStochasticBelow20() {
-			s.stateMachine.TransitionTo(NoPosition, "green_stoch_crossed_below_20", LongBearish, "exit signal triggered")
+			s.stateMachine.TransitionTo(NoPositionState, "green_stoch_crossed_below_20", LongBearish, "exit signal triggered")
 			return Signal{
 				Time:         lastCandle.Timestamp,
 				Position:     LongBearish,
@@ -430,7 +430,7 @@ func (s *FourStochasticHeikinAshi) OnCandles(ctx context.Context, oneHourCandles
 		if s.isGreenStochasticOverbought() {
 			// If Heiken Ashi is bearish, sell immediately
 			if s.isHeikinAshiBearish(currHA) {
-				s.stateMachine.TransitionTo(NoPosition, "green_stoch_overbought_bearish_ha", LongBearish, "exit signal triggered")
+				s.stateMachine.TransitionTo(NoPositionState, "green_stoch_overbought_bearish_ha", LongBearish, "exit signal triggered")
 				return Signal{
 					Time:         lastCandle.Timestamp,
 					Position:     LongBearish,
@@ -441,13 +441,13 @@ func (s *FourStochasticHeikinAshi) OnCandles(ctx context.Context, oneHourCandles
 				}, nil
 			}
 			// If Heiken Ashi is bullish, wait for bearish candle
-			s.stateMachine.TransitionTo(LongBearishPositionAbove80, "green_stoch_overbought_bullish_ha", Hold, "waiting for bearish heiken ashi")
+			s.stateMachine.TransitionTo(LongBearishPositionAboveOverboughtState, "green_stoch_overbought_bullish_ha", Hold, "waiting for bearish heiken ashi")
 		}
 
-	case LongBearishPositionAbove80:
+	case LongBearishPositionAboveOverboughtState:
 		// Check if Heiken Ashi has become bearish
 		if s.isHeikinAshiBearish(currHA) {
-			s.stateMachine.TransitionTo(NoPosition, "bearish_ha_detected", LongBearish, "exit signal triggered")
+			s.stateMachine.TransitionTo(NoPositionState, "bearish_ha_detected", LongBearish, "exit signal triggered")
 			return Signal{
 				Time:         lastCandle.Timestamp,
 				Position:     LongBearish,
@@ -490,14 +490,14 @@ func (s *FourStochasticHeikinAshi) PerformanceMetrics() map[string]float64 {
 	}
 
 	// Add state-specific metrics
-	if s.stateMachine.IsInState(LongBearishPositionAbove80) {
+	if s.stateMachine.IsInState(LongBearishPositionAboveOverboughtState) {
 		metrics["waitingForBearishHA"] = 1.0
 	} else {
 		metrics["waitingForBearishHA"] = 0.0
 	}
 
 	// Add new state metrics
-	if s.stateMachine.IsInState(LongBullishPositionUnder20BeforeBuy) {
+	if s.stateMachine.IsInState(LongBullishPositionUnderOversoldBeforeBuyState) {
 		metrics["waitingForBullishHA"] = 1.0
 	} else {
 		metrics["waitingForBullishHA"] = 0.0

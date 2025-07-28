@@ -3,7 +3,6 @@ package strategy
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"math"
 	"sort"
@@ -28,6 +27,13 @@ type StochasticHeikinAshi struct {
 	periodK int
 	smoothK int
 	periodD int
+
+	// Strategy parameters
+	overbought float64
+	oversold   float64
+
+	// State machine for managing trading positions
+	stateMachine *StateMachine
 }
 
 func NewStochasticHeikinAshi(symbol string, storage Storage) *StochasticHeikinAshi {
@@ -38,11 +44,14 @@ func NewStochasticHeikinAshi(symbol string, storage Storage) *StochasticHeikinAs
 			K: []float64{},
 			D: []float64{},
 		},
-		initialized: false,
-		maxHistory:  100, // Keep only the last 100 candles in memory
-		periodK:     24,
-		smoothK:     10,
-		periodD:     3,
+		initialized:  false,
+		maxHistory:   100, // Keep only the last 100 candles in memory
+		periodK:      24,
+		smoothK:      10,
+		periodD:      3,
+		overbought:   80.0,
+		oversold:     20.0,
+		stateMachine: NewStateMachine(symbol),
 	}
 }
 
@@ -84,6 +93,43 @@ func (s *StochasticHeikinAshi) trimCandles() {
 // isHeikinAshiBullish checks if a Heikin Ashi candle is bullish
 func (s *StochasticHeikinAshi) isHeikinAshiBullish(haCandle candle.Candle) bool {
 	return haCandle.Close > haCandle.Open
+}
+
+// isHeikinAshiBearish checks if a Heiken Ashi candle is bearish
+func (s *StochasticHeikinAshi) isHeikinAshiBearish(haCandle candle.Candle) bool {
+	return haCandle.Close < haCandle.Open
+}
+
+// isStochasticOversold checks if the stochastic is below oversold level
+func (s *StochasticHeikinAshi) isStochasticOversold() bool {
+	if len(s.stochasticResult.K) == 0 {
+		return false
+	}
+
+	latestIdx := len(s.stochasticResult.K) - 1
+	kValue := s.stochasticResult.K[latestIdx]
+
+	if math.IsNaN(kValue) {
+		return false
+	}
+
+	return kValue < s.oversold
+}
+
+// isStochasticOverbought checks if the stochastic is above overbought level
+func (s *StochasticHeikinAshi) isStochasticOverbought() bool {
+	if len(s.stochasticResult.K) == 0 {
+		return false
+	}
+
+	latestIdx := len(s.stochasticResult.K) - 1
+	kValue := s.stochasticResult.K[latestIdx]
+
+	if math.IsNaN(kValue) {
+		return false
+	}
+
+	return kValue > s.overbought
 }
 
 // OnCandles processes new candles and generates trading signals
@@ -174,11 +220,12 @@ func (s *StochasticHeikinAshi) OnCandles(ctx context.Context, oneHourCandles []c
 	for _, c := range filteredCandles {
 		kValue, dValue, err := indicator.UpdateStochastic(s.stochasticResult, s.candles, c, s.periodK, s.smoothK, s.periodD)
 		if err != nil {
-			log.Fatalf("Strategy | [%s Stochastic Heikin Ashi] Error updating stochastic: %v\n", s.symbol, err)
-			return Signal{}, fmt.Errorf("error updating stochastic: %v", err)
+			log.Printf("Strategy | [%s Stochastic Heikin Ashi] Error updating stochastic: %v\n", s.symbol, err)
+			// Continue with the current candles even if stochastic update fails
+		} else {
+			s.stochasticResult.K = append(s.stochasticResult.K, kValue)
+			s.stochasticResult.D = append(s.stochasticResult.D, dValue)
 		}
-		s.stochasticResult.K = append(s.stochasticResult.K, kValue)
-		s.stochasticResult.D = append(s.stochasticResult.D, dValue)
 
 		s.candles = append(s.candles, c) // NOTE: modified inside UpdateStochastic
 
@@ -236,31 +283,40 @@ func (s *StochasticHeikinAshi) OnCandles(ctx context.Context, oneHourCandles []c
 	// Get the latest Heikin Ashi candle
 	currHA := s.heikenAshiCandles[len(s.heikenAshiCandles)-1]
 
-	// Signal 1: LongBullish - %K below 20 & %K above %D & Heikin Ashi is bullish
-	if kValue < 20 && kValue > dValue && s.isHeikinAshiBullish(currHA) {
-		return Signal{
-			Time:         lastCandle.Timestamp,
-			Position:     LongBullish,
-			Reason:       "stochastic oversold + bullish crossover + bullish heikin ashi",
-			StrategyName: s.Name(),
-			TriggerPrice: lastCandle.Close,
-			Candle:       lastCandle,
-		}, nil
+	// State Machine Logic
+	currentState := s.stateMachine.GetCurrentState()
+
+	switch currentState {
+	case NoPositionState:
+		// Check for buy signal: stochastic oversold + bullish crossover + bullish Heikin Ashi
+		if s.isStochasticOversold() && kValue > dValue && s.isHeikinAshiBullish(currHA) {
+			s.stateMachine.TransitionTo(LongBullishState, "stochastic_oversold_bullish_crossover_bullish_ha", LongBullish, "buy signal triggered")
+			return Signal{
+				Time:         lastCandle.Timestamp,
+				Position:     LongBullish,
+				Reason:       "stochastic oversold + bullish crossover + bullish heikin ashi",
+				StrategyName: s.Name(),
+				TriggerPrice: lastCandle.Close,
+				Candle:       lastCandle,
+			}, nil
+		}
+
+	case LongBullishState:
+		// Check for sell signal: stochastic overbought + bearish crossover
+		if s.isStochasticOverbought() && kValue < dValue {
+			s.stateMachine.TransitionTo(NoPositionState, "stochastic_overbought_bearish_crossover", LongBearish, "exit signal triggered")
+			return Signal{
+				Time:         lastCandle.Timestamp,
+				Position:     LongBearish,
+				Reason:       "stochastic overbought + bearish crossover",
+				StrategyName: s.Name(),
+				TriggerPrice: lastCandle.Close,
+				Candle:       lastCandle,
+			}, nil
+		}
 	}
 
-	// Signal 2: LongBearish - %K above 80 & %K below %D
-	if 80 < kValue && kValue < dValue {
-		return Signal{
-			Time:         lastCandle.Timestamp,
-			Position:     LongBearish,
-			Reason:       "stochastic not overbought + bearish crossover",
-			StrategyName: s.Name(),
-			TriggerPrice: lastCandle.Close,
-			Candle:       lastCandle,
-		}, nil
-	}
-
-	// Otherwise: Hold
+	// Default: Hold
 	return Signal{
 		Time:         lastCandle.Timestamp,
 		Position:     Hold,
@@ -273,14 +329,23 @@ func (s *StochasticHeikinAshi) OnCandles(ctx context.Context, oneHourCandles []c
 
 // PerformanceMetrics returns performance metrics for the strategy
 func (s *StochasticHeikinAshi) PerformanceMetrics() map[string]float64 {
-	return map[string]float64{
-		"heikenAshiCount": float64(len(s.heikenAshiCandles)),
-		"candleCount":     float64(len(s.candles)),
-		"maxHistory":      float64(s.maxHistory),
-		"periodK":         float64(s.periodK),
-		"smoothK":         float64(s.smoothK),
-		"periodD":         float64(s.periodD),
+	stateMetrics := s.stateMachine.GetStateMetrics()
+
+	metrics := map[string]float64{
+		"heikenAshiCount":  float64(len(s.heikenAshiCandles)),
+		"candleCount":      float64(len(s.candles)),
+		"maxHistory":       float64(s.maxHistory),
+		"periodK":          float64(s.periodK),
+		"smoothK":          float64(s.smoothK),
+		"periodD":          float64(s.periodD),
+		"overbought":       s.overbought,
+		"oversold":         s.oversold,
+		"currentState":     float64(len(string(s.stateMachine.GetCurrentState()))), // Convert state to numeric for metrics
+		"totalTransitions": float64(stateMetrics["total_transitions"].(int)),
+		"stateHistorySize": float64(stateMetrics["history_size"].(int)),
 	}
+
+	return metrics
 }
 
 // WarmupPeriod returns the number of candles needed for warm-up
