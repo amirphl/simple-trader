@@ -30,7 +30,7 @@ type StochasticHeikinAshi struct {
 	periodD int
 }
 
-func NewStochasticHeikinAshi(symbol string, storage Storage, periodK, smoothK, periodD int) *StochasticHeikinAshi {
+func NewStochasticHeikinAshi(symbol string, storage Storage) *StochasticHeikinAshi {
 	return &StochasticHeikinAshi{
 		symbol:  symbol,
 		Storage: storage,
@@ -40,9 +40,9 @@ func NewStochasticHeikinAshi(symbol string, storage Storage, periodK, smoothK, p
 		},
 		initialized: false,
 		maxHistory:  100, // Keep only the last 100 candles in memory
-		periodK:     periodK,
-		smoothK:     smoothK,
-		periodD:     periodD,
+		periodK:     24,
+		smoothK:     10,
+		periodD:     3,
 	}
 }
 

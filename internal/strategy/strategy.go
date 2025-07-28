@@ -67,7 +67,7 @@ func New(cfg config.Config, storage Storage) []Strategy {
 		case "Engulfing Heikin Ashi":
 			strat = NewEngulfingHeikinAshi("DOGE-USDT", storage)
 		case "Stochastic Heikin Ashi":
-			strat = NewStochasticHeikinAshi("DOGE-USDT", storage, 24, 10, 3)
+			strat = NewStochasticHeikinAshi("DOGE-USDT", storage)
 		case "Four Stochastic Heikin Ashi":
 			strat = NewFourStochasticHeikinAshi("DOGE-USDT", storage)
 		default:
