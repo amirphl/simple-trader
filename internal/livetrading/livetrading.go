@@ -378,7 +378,7 @@ func runTradingLoop(
 					log.Printf("runTradingLoop | [%s] Error processing candles: %v", strat.Name(), err)
 					continue
 				}
-				pos.OnSignalV2(ctx, signal)
+				pos.OnSignal(ctx, signal)
 				lastProcessed = candles[len(candles)-1].Timestamp
 			}
 		}

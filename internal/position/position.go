@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/amirphl/simple-trader/internal/config"
+	"github.com/amirphl/simple-trader/internal/db"
 	"github.com/amirphl/simple-trader/internal/exchange"
 	"github.com/amirphl/simple-trader/internal/journal"
 	"github.com/amirphl/simple-trader/internal/notifier"
@@ -25,11 +26,24 @@ type Storage interface {
 	LogEvent(ctx context.Context, event journal.Event) error
 }
 
+// executeWithTransaction executes a function with proper transaction management
+// If a transaction exists in context, it uses that. Otherwise, it creates a new one.
+func executeWithTransaction(ctx context.Context, fn func(context.Context) error) error {
+	// Check if transaction exists in context
+	if tx := db.GetTransaction(ctx); tx != nil {
+		// Use existing transaction
+		return fn(ctx)
+	}
+
+	// Create new transaction context
+	txCtx := db.WithTransaction(ctx, nil) // This will be set by the storage layer
+	return fn(txCtx)
+}
+
 type Position interface {
-	OnSignalV2(ctx context.Context, signal strategy.Signal)
+	OnSignal(ctx context.Context, signal strategy.Signal)
 	OnTick(ctx context.Context, tick Tick, depthState map[string]exchange.OrderBook, marketCapState *exchange.MarketCapData)
-	Stats() (wins, losses, trades int64, winRate, pnl, maxDD float64)
-	StatsV2() (map[string]interface{}, error)
+	Stats() (map[string]interface{}, error)
 	DailyPnL() (float64, error)
 	IsActive() bool
 }
@@ -67,6 +81,36 @@ func New(cfg config.Config, strategyName, symbol string, storage Storage, exchan
 	pos.OrderSpec.Delay = time.Second * 2
 
 	return pos
+}
+
+// positionState represents a backup of position state for rollback
+type positionState struct {
+	Side            string
+	Entry           float64
+	Size            float64
+	OrderID         string
+	Time            time.Time
+	Active          bool
+	LastPNL         float64
+	MeanPNL         float64
+	StdPNL          float64
+	Sharpe          float64
+	Expectancy      float64
+	LiveEquity      float64
+	LiveMaxEquity   float64
+	LiveMaxDrawdown float64
+	LiveWins        int64
+	LiveLosses      int64
+	LiveTrades      int64
+	LiveWinRate     float64
+	LiveTradeLog    []Trade
+	LiveEquityCurve []float64
+	LiveWinPnls     []float64
+	LiveLossPnls    []float64
+	ProfitFactor    float64
+	TrailingStop    float64
+	RiskParams      config.RiskParams
+	TradingDisabled bool
 }
 
 // position represents a trading position with risk management and statistics
@@ -124,6 +168,68 @@ type position struct {
 	LiveTradeLog    []Trade   `json:"live_trade_log"`
 
 	mu sync.RWMutex // Added mutex for thread safety
+}
+
+// backupState creates a backup of the current position state
+func (p *position) backupState() positionState {
+	return positionState{
+		Side:            p.Side,
+		Entry:           p.Entry,
+		Size:            p.Size,
+		OrderID:         p.OrderID,
+		Time:            p.Time,
+		Active:          p.Active,
+		LastPNL:         p.LastPNL,
+		MeanPNL:         p.MeanPNL,
+		StdPNL:          p.StdPNL,
+		Sharpe:          p.Sharpe,
+		Expectancy:      p.Expectancy,
+		LiveEquity:      p.LiveEquity,
+		LiveMaxEquity:   p.LiveMaxEquity,
+		LiveMaxDrawdown: p.LiveMaxDrawdown,
+		LiveWins:        p.LiveWins,
+		LiveLosses:      p.LiveLosses,
+		LiveTrades:      p.LiveTrades,
+		LiveWinRate:     p.LiveWinRate,
+		LiveTradeLog:    p.LiveTradeLog,
+		LiveEquityCurve: p.LiveEquityCurve,
+		LiveWinPnls:     p.LiveWinPnls,
+		LiveLossPnls:    p.LiveLossPnls,
+		ProfitFactor:    p.ProfitFactor,
+		TrailingStop:    p.TrailingStop,
+		RiskParams:      p.RiskParams,
+		TradingDisabled: p.TradingDisabled,
+	}
+}
+
+// rollbackState restores the position state from backup
+func (p *position) rollbackState(backup positionState) {
+	p.Side = backup.Side
+	p.Entry = backup.Entry
+	p.Size = backup.Size
+	p.OrderID = backup.OrderID
+	p.Time = backup.Time
+	p.Active = backup.Active
+	p.LastPNL = backup.LastPNL
+	p.MeanPNL = backup.MeanPNL
+	p.StdPNL = backup.StdPNL
+	p.Sharpe = backup.Sharpe
+	p.Expectancy = backup.Expectancy
+	p.LiveEquity = backup.LiveEquity
+	p.LiveMaxEquity = backup.LiveMaxEquity
+	p.LiveMaxDrawdown = backup.LiveMaxDrawdown
+	p.LiveWins = backup.LiveWins
+	p.LiveLosses = backup.LiveLosses
+	p.LiveTrades = backup.LiveTrades
+	p.LiveWinRate = backup.LiveWinRate
+	p.LiveTradeLog = backup.LiveTradeLog
+	p.LiveEquityCurve = backup.LiveEquityCurve
+	p.LiveWinPnls = backup.LiveWinPnls
+	p.LiveLossPnls = backup.LiveLossPnls
+	p.ProfitFactor = backup.ProfitFactor
+	p.TrailingStop = backup.TrailingStop
+	p.RiskParams = backup.RiskParams
+	p.TradingDisabled = backup.TradingDisabled
 }
 
 // Trade represents a single trade record
@@ -209,138 +315,82 @@ func (p *position) DailyPnL() (float64, error) {
 	return dailyPnL, nil
 }
 
-// OnSignal handles incoming trading signals
-func (p *position) OnSignal(ctx context.Context, signal strategy.Signal) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	defer func() {
-		if err := p.flush(); err != nil {
-			log.Printf("Position | [%s %s] Failed to flush data to storage: %v", p.Symbol, p.StrategyName, err)
-		}
-	}()
-
-	// If its new trading day, reset daily stats
-	if time.Now().Day() != p.Time.Day() {
-		p.ResetDailyStats()
-	} // Flush logs and data to persistent storage
-
-	// Check if trading is disabled
-	if p.TradingDisabled {
-		log.Printf("Position | [%s %s] Trading disabled, ignoring signal", p.Symbol, signal.StrategyName)
-		return
-	}
-
-	if p.Active {
-		p.handleActivePosition(ctx, signal)
-	} else {
-		p.handleInactivePosition(ctx, signal)
-	}
-
-	// Send signal notification
-	p.sendSignalNotification(ctx, signal)
-}
-
-// handleActivePosition manages active positions
-func (p *position) handleActivePosition(ctx context.Context, signal strategy.Signal) {
-	// Check stop loss
-	if p.shouldTriggerStopLoss(signal.TriggerPrice) {
-		p.executeStopLossTick(ctx, signal.TriggerPrice)
-		return
-	}
-
-	// Handle trailing stop
-	if p.RiskParams.TrailingStopPercent > 0 {
-		p.updateTrailingStop(signal.TriggerPrice)
-		if p.shouldTriggerTrailingStop(signal.TriggerPrice) {
-			p.executeTrailingStopTick(ctx, signal.TriggerPrice)
-			return
-		}
-	}
-
-	// Handle take profit
-	if p.shouldTriggerTakeProfit(signal.TriggerPrice) {
-		p.executeTakeProfitTick(ctx, signal.TriggerPrice)
-		return
-	}
-
-	// Handle manual exit signals
-	if (signal.Position == strategy.LongBearish && p.Side == "buy") || (signal.Position == strategy.ShortBullish && p.Side == "sell") {
-		p.executeManualExit(ctx, signal)
-	}
-}
-
-// handleInactivePosition manages inactive positions
-func (p *position) handleInactivePosition(ctx context.Context, signal strategy.Signal) {
-	// Support both buy and sell signals for futures trading
-	if signal.Position == strategy.LongBullish || signal.Position == strategy.ShortBearish {
-		p.executeEntry(ctx, signal)
-	}
-}
-
-// executeStopLoss executes a stop loss order
-func (p *position) executeStopLoss(ctx context.Context, signal strategy.Signal) {
-	orderReq := p.createExitOrder(signal, "stop_loss")
+// executeStopLoss executes a stop loss order atomically with error handling
+func (p *position) executeStopLoss(ctx context.Context, price float64) error {
+	orderReq := p.createExitOrder(price, "stop_loss")
 	orderResp, err := p.Exchange.SubmitOrderWithRetry(ctx, orderReq, p.OrderSpec.MaxAttempts, p.OrderSpec.Delay)
 	if err != nil {
-		p.handleOrderError(ctx, err, "stop_loss_order", signal.StrategyName)
-		return
+		p.handleOrderError(ctx, err, "stop_loss_order")
+		return fmt.Errorf("failed to submit stop loss order: %w", err)
 	}
 
-	p.handleOrderSuccess(ctx, orderResp, signal, "Stop Loss")
-	p.onPositionClose(signal)
-	p.updateLiveStats(signal)
+	// Update position state
+	p.handleExitSuccess(ctx, orderResp, "Stop Loss")
+	p.onPositionClose(orderResp.AvgPrice)
+	p.updateLiveStats()
+
+	return nil
 }
 
-// executeTrailingStop executes a trailing stop order
-func (p *position) executeTrailingStop(ctx context.Context, signal strategy.Signal) {
-	orderReq := p.createExitOrder(signal, "trailing_stop")
+// executeTakeProfit executes a take profit order atomically with error handling
+func (p *position) executeTakeProfit(ctx context.Context, price float64) error {
+	orderReq := p.createExitOrder(price, "take_profit")
 	orderResp, err := p.Exchange.SubmitOrderWithRetry(ctx, orderReq, p.OrderSpec.MaxAttempts, p.OrderSpec.Delay)
 	if err != nil {
-		p.handleOrderError(ctx, err, "trailing_stop_order", signal.StrategyName)
-		return
+		p.handleOrderError(ctx, err, "take_profit_order")
+		return fmt.Errorf("failed to submit take profit order: %w", err)
 	}
+	// Update position state
+	p.handleExitSuccess(ctx, orderResp, "Take Profit")
+	p.onPositionClose(orderResp.AvgPrice)
+	p.updateLiveStats()
 
-	p.handleOrderSuccess(ctx, orderResp, signal, "Trailing Stop")
-	p.onPositionClose(signal)
-	p.updateLiveStats(signal)
+	return nil
 }
 
-// executeTakeProfit executes a take profit order
-func (p *position) executeTakeProfit(ctx context.Context, signal strategy.Signal) {
-	orderReq := p.createExitOrder(signal, "take_profit")
+// executeTrailingStop executes a trailing stop order atomically with error handling
+func (p *position) executeTrailingStop(ctx context.Context, price float64) error {
+	orderReq := p.createExitOrder(price, "trailing_stop")
 	orderResp, err := p.Exchange.SubmitOrderWithRetry(ctx, orderReq, p.OrderSpec.MaxAttempts, p.OrderSpec.Delay)
 	if err != nil {
-		p.handleOrderError(ctx, err, "take_profit_order", signal.StrategyName)
-		return
+		p.handleOrderError(ctx, err, "trailing_stop_order")
+		return fmt.Errorf("failed to submit trailing stop order: %w", err)
 	}
 
-	p.handleOrderSuccess(ctx, orderResp, signal, "Take Profit")
-	p.onPositionClose(signal)
-	p.updateLiveStats(signal)
+	// Update position state
+	p.handleExitSuccess(ctx, orderResp, "Trailing Stop")
+	p.onPositionClose(orderResp.AvgPrice)
+	p.updateLiveStats()
+
+	return nil
 }
 
-// executeManualExit executes a manual exit order for both long and short positions
-func (p *position) executeManualExit(ctx context.Context, signal strategy.Signal) {
-	orderReq := p.createExitOrder(signal, "manual_exit")
+// executeManualExit executes a manual exit order atomically with error handling
+func (p *position) executeManualExit(ctx context.Context, price float64) error {
+	orderReq := p.createExitOrder(price, "manual_exit")
 	orderResp, err := p.Exchange.SubmitOrderWithRetry(ctx, orderReq, p.OrderSpec.MaxAttempts, p.OrderSpec.Delay)
 	if err != nil {
-		p.handleOrderError(ctx, err, "order_submission", signal.StrategyName)
-		return
+		p.handleOrderError(ctx, err, "manual_exit_order")
+		return fmt.Errorf("failed to submit manual exit order: %w", err)
 	}
 
-	p.handleOrderSuccess(ctx, orderResp, signal, "Manual")
-	p.onPositionClose(signal)
-	p.updateLiveStats(signal)
+	// Update position state
+	p.handleExitSuccess(ctx, orderResp, "Manual Exit")
+	p.onPositionClose(orderResp.AvgPrice)
+	p.updateLiveStats()
+
+	return nil
 }
 
-// executeEntry executes an entry order
-func (p *position) executeEntry(ctx context.Context, signal strategy.Signal) {
+// executeEntry executes an entry order atomically with error handling
+func (p *position) executeEntry(ctx context.Context, signal strategy.Signal) error {
 	// Check if we have enough balance
 	if p.RiskParams.Balance <= 0 {
-		log.Printf("Position | [%s %s] Insufficient balance: %.2f", p.Symbol, signal.StrategyName, p.RiskParams.Balance)
-		return
+		return fmt.Errorf("insufficient balance: %.2f", p.RiskParams.Balance)
 	}
+
+	orderSize := p.RiskParams.Balance * p.RiskParams.RiskPercent / 100
+	// TODO: check with max loss
 
 	// Support both long and short positions based on signal
 	side := "buy"
@@ -348,25 +398,26 @@ func (p *position) executeEntry(ctx context.Context, signal strategy.Signal) {
 		side = "sell"
 	}
 
-	orderReq := p.createEntryOrder(signal, side)
+	// TODO: Better price management for guaranteed full execution
+	// TODO : Decide using market cap and orderbook
+	orderReq := p.createEntryOrder(signal.TriggerPrice, orderSize, side)
 	orderResp, err := p.Exchange.SubmitOrderWithRetry(ctx, orderReq, p.OrderSpec.MaxAttempts, p.OrderSpec.Delay)
 	if err != nil {
-		p.handleOrderError(ctx, err, "order_submission", signal.StrategyName)
-		return
+		p.handleOrderError(ctx, err, "entry_order_submission")
+		return fmt.Errorf("failed to submit entry order: %w", err)
 	}
 
-	p.handleEntrySuccess(ctx, orderResp, signal, orderReq.Quantity, side)
+	p.handleEntrySuccess(ctx, orderResp, orderReq.Quantity, side)
+
+	return nil
 }
 
 // createExitOrder creates an exit order based on position side
-func (p *position) createExitOrder(signal strategy.Signal, orderType string) order.OrderRequest {
+func (p *position) createExitOrder(price float64, orderType string) order.OrderRequest {
 	// TODO: Better price management for ensuring full execution
 	// TODO: Handle other order types
 
-	side := "sell"
-	if p.Side == "sell" {
-		side = "buy"
-	}
+	side := p.getExitSide()
 
 	orderReq := order.OrderRequest{
 		Symbol:   p.Symbol,
@@ -377,13 +428,13 @@ func (p *position) createExitOrder(signal strategy.Signal, orderType string) ord
 	}
 
 	if p.OrderSpec.Type == "limit" {
-		orderReq.Price = signal.TriggerPrice
+		orderReq.Price = price
 		// Apply spread for better execution
 		if p.RiskParams.LimitSpread > 0 {
 			if side == "sell" {
-				orderReq.Price = signal.TriggerPrice * (1 - p.RiskParams.LimitSpread/100)
+				orderReq.Price = price * (1 - p.RiskParams.LimitSpread/100)
 			} else {
-				orderReq.Price = signal.TriggerPrice * (1 + p.RiskParams.LimitSpread/100)
+				orderReq.Price = price * (1 + p.RiskParams.LimitSpread/100)
 			}
 		}
 	}
@@ -392,21 +443,7 @@ func (p *position) createExitOrder(signal strategy.Signal, orderType string) ord
 }
 
 // createEntryOrder creates an entry order (buy or sell for futures)
-func (p *position) createEntryOrder(signal strategy.Signal, side string) order.OrderRequest {
-	// TODO: Better price management for ensuring full execution
-	// Calculate position size based on risk
-	// riskAmount := p.RiskParams.Balance * p.RiskParams.RiskPercent / 100
-	// stopLossAmount := signal.TriggerPrice * p.RiskParams.StopLossPercent / 100
-	// orderSize := riskAmount / stopLossAmount // TODO:
-
-	// // Ensure we don't exceed balance
-	// maxSize := p.RiskParams.Balance / signal.TriggerPrice
-	// if orderSize > maxSize {
-	// 	orderSize = maxSize
-	// }
-	orderSize := p.RiskParams.Balance * p.RiskParams.RiskPercent / 100
-
-	// TODO : Decide using market cap and orderbook
+func (p *position) createEntryOrder(price, orderSize float64, side string) order.OrderRequest {
 	var orderReq order.OrderRequest
 
 	switch p.OrderSpec.Type {
@@ -415,14 +452,14 @@ func (p *position) createEntryOrder(signal strategy.Signal, side string) order.O
 			Symbol:   p.Symbol,
 			Side:     side,
 			Type:     "limit",
-			Price:    signal.TriggerPrice,
+			Price:    price,
 			Quantity: orderSize,
 		}
 		if p.RiskParams.LimitSpread > 0 {
 			if side == "buy" {
-				orderReq.Price = signal.TriggerPrice * (1 - p.RiskParams.LimitSpread/100)
+				orderReq.Price = price * (1 - p.RiskParams.LimitSpread/100)
 			} else {
-				orderReq.Price = signal.TriggerPrice * (1 + p.RiskParams.LimitSpread/100)
+				orderReq.Price = price * (1 + p.RiskParams.LimitSpread/100)
 			}
 		}
 	case "stop-limit":
@@ -430,8 +467,8 @@ func (p *position) createEntryOrder(signal strategy.Signal, side string) order.O
 			Symbol:    p.Symbol,
 			Side:      side,
 			Type:      "stop-limit",
-			Price:     signal.TriggerPrice,
-			StopPrice: signal.TriggerPrice * 1.001,
+			Price:     price,
+			StopPrice: price * 1.001, // TODO: Better stop price management
 			Quantity:  orderSize,
 		}
 	case "oco":
@@ -439,22 +476,22 @@ func (p *position) createEntryOrder(signal strategy.Signal, side string) order.O
 			Symbol:   p.Symbol,
 			Side:     side,
 			Type:     "limit",
-			Price:    signal.TriggerPrice,
+			Price:    price,
 			Quantity: orderSize,
 		}
 		stopOrder := order.OrderRequest{
 			Symbol:    p.Symbol,
 			Side:      side,
 			Type:      "stop-limit",
-			Price:     signal.TriggerPrice,
-			StopPrice: signal.TriggerPrice * 1.001,
+			Price:     price,
+			StopPrice: price * 1.001,
 			Quantity:  orderSize,
 		}
 		orderReq = order.OrderRequest{
 			Symbol:      p.Symbol,
 			Side:        side,
 			Type:        "limit",
-			Price:       signal.TriggerPrice,
+			Price:       price,
 			Quantity:    orderSize,
 			AlgoType:    "OCO",
 			ChildOrders: []order.OrderRequest{limitOrder, stopOrder},
@@ -473,28 +510,29 @@ func (p *position) createEntryOrder(signal strategy.Signal, side string) order.O
 }
 
 // handleEntrySuccess handles successful entry order execution (buy or sell)
-func (p *position) handleEntrySuccess(ctx context.Context, orderResp order.OrderResponse, signal strategy.Signal, orderSize float64, side string) {
-	log.Printf("Position | [%s %s] Order submitted: %+v", p.Symbol, signal.StrategyName, orderResp)
+func (p *position) handleEntrySuccess(ctx context.Context, orderResp order.OrderResponse, orderSize float64, side string) {
+	log.Printf("Position | [%s %s] Entry order submitted: %+v", p.Symbol, p.StrategyName, orderResp)
 
 	if p.Storage != nil {
-		err2 := p.Storage.SaveOrder(ctx, orderResp)
-		err3 := p.Storage.LogEvent(ctx, journal.Event{
+		err := p.Storage.SaveOrder(ctx, orderResp)
+		if err != nil {
+			log.Printf("Position | [%s %s] Error saving order: %v", p.Symbol, p.StrategyName, err)
+		}
+
+		err = p.Storage.LogEvent(ctx, journal.Event{
 			Time:        time.Now(),
 			Type:        "order",
-			Description: "order_submitted",
-			Data:        map[string]any{"symbol": p.Symbol, "strategy_name": signal.StrategyName, "order": orderResp},
+			Description: "entry_order_submitted",
+			Data:        map[string]any{"symbol": p.Symbol, "strategy_name": p.StrategyName, "order": orderResp},
 		})
-		if err2 != nil {
-			log.Printf("Position | [%s %s] Error saving order: %v", p.Symbol, signal.StrategyName, err2)
-		}
-		if err3 != nil {
-			log.Printf("Position | [%s %s] Error logging event: %v", p.Symbol, signal.StrategyName, err3)
+		if err != nil {
+			log.Printf("Position | [%s %s] Error logging event: %v", p.Symbol, p.StrategyName, err)
 		}
 	}
 
 	// Update position
 	p.Side = side
-	p.Entry = signal.TriggerPrice
+	p.Entry = orderResp.AvgPrice
 	p.Size = orderSize
 	p.OrderID = orderResp.OrderID
 	p.Active = true
@@ -503,77 +541,77 @@ func (p *position) handleEntrySuccess(ctx context.Context, orderResp order.Order
 	// NOTE: Don't update balance here. It's updated in onPositionClose.
 
 	if p.Notifier != nil {
-		msg := fmt.Sprintf("[ORDER FILLED]\nSide: %s\nSymbol: %s\nQty: %.4f\nPrice: %.2f\nType: %s\nOrderID: %s\nEvent: Manual\nTime: %s",
-			side, p.Symbol, orderSize, signal.TriggerPrice, p.OrderSpec.Type, orderResp.OrderID, time.Now().Format(time.RFC3339))
-		err2 := p.Notifier.SendWithRetry(msg)
-		if err2 != nil {
-			log.Printf("Position | [%s %s] Error sending notification: %v", p.Symbol, signal.StrategyName, err2)
+		msg := fmt.Sprintf("[ORDER FILLED]\nSide: %s\nSymbol: %s\nQty: %.4f\nAvgPrice: %.2f\nType: %s\nOrderID: %s\nEvent: Manual\nTime: %s",
+			side, p.Symbol, orderSize, orderResp.AvgPrice, p.OrderSpec.Type, orderResp.OrderID, time.Now().Format(time.RFC3339))
+		err := p.Notifier.SendWithRetry(msg)
+		if err != nil {
+			log.Printf("Position | [%s %s] Error sending notification: %v", p.Symbol, p.StrategyName, err)
 		}
 	}
 }
 
 // handleOrderError handles order execution errors
-func (p *position) handleOrderError(ctx context.Context, err error, description, strategyName string) {
-	log.Printf("Position | [%s %s] %s failed: %v", p.Symbol, strategyName, description, err)
+func (p *position) handleOrderError(ctx context.Context, err error, description string) {
+	log.Printf("Position | [%s %s] %s failed: %v", p.Symbol, p.StrategyName, description, err)
 
 	if p.Storage != nil {
-		err2 := p.Storage.LogEvent(ctx, journal.Event{
+		err := p.Storage.LogEvent(ctx, journal.Event{
 			Time:        time.Now(),
 			Type:        "error",
 			Description: description,
-			Data:        map[string]any{"symbol": p.Symbol, "strategy_name": strategyName, "error": err.Error()},
+			Data:        map[string]any{"symbol": p.Symbol, "strategy_name": p.StrategyName, "error": err.Error()},
 		})
-		if err2 != nil {
-			log.Printf("Position | [%s %s] Error logging event: %v", p.Symbol, strategyName, err2)
+		if err != nil {
+			log.Printf("Position | [%s %s] Error logging event: %v", p.Symbol, p.StrategyName, err)
 		}
 	}
 
 	if p.Notifier != nil {
 		msg := fmt.Sprintf("ERROR: %s: %v", description, err)
-		err2 := p.Notifier.SendWithRetry(msg)
-		if err2 != nil {
-			log.Printf("Position | [%s %s] Error sending notification: %v", p.Symbol, strategyName, err2)
+		err := p.Notifier.SendWithRetry(msg)
+		if err != nil {
+			log.Printf("Position | [%s %s] Error sending notification: %v", p.Symbol, p.StrategyName, err)
 		}
 	}
 }
 
-// handleOrderSuccess handles successful order execution
-func (p *position) handleOrderSuccess(ctx context.Context, orderResp order.OrderResponse, signal strategy.Signal, event string) {
-	log.Printf("Position | [%s %s] %s triggered, order submitted: %+v", p.Symbol, signal.StrategyName, event, orderResp)
+// handleExitSuccess handles successful exit order execution
+func (p *position) handleExitSuccess(ctx context.Context, orderResp order.OrderResponse, event string) {
+	log.Printf("Position | [%s %s] %s triggered, order submitted: %+v", p.Symbol, p.StrategyName, event, orderResp)
 
 	if p.Storage != nil {
-		err2 := p.Storage.SaveOrder(ctx, orderResp)
-		err3 := p.Storage.LogEvent(ctx, journal.Event{
+		err := p.Storage.SaveOrder(ctx, orderResp)
+		if err != nil {
+			log.Printf("Position | [%s %s] Error saving order: %v", p.Symbol, p.StrategyName, err)
+		}
+		err = p.Storage.LogEvent(ctx, journal.Event{
 			Time:        time.Now(),
 			Type:        "order",
 			Description: fmt.Sprintf("%s_triggered", event),
-			Data:        map[string]any{"symbol": p.Symbol, "strategy_name": signal.StrategyName, "order": orderResp},
+			Data:        map[string]any{"symbol": p.Symbol, "strategy_name": p.StrategyName, "order": orderResp},
 		})
-		if err2 != nil {
-			log.Printf("Position | [%s %s] Error saving order: %v", p.Symbol, signal.StrategyName, err2)
-		}
-		if err3 != nil {
-			log.Printf("Position | [%s %s] Error logging event: %v", p.Symbol, signal.StrategyName, err3)
+		if err != nil {
+			log.Printf("Position | [%s %s] Error saving order: %v", p.Symbol, p.StrategyName, err)
 		}
 	}
 
 	if p.Notifier != nil {
-		msg := fmt.Sprintf("[ORDER FILLED]\nSide: %s\nSymbol: %s\nQty: %.4f\nPrice: %.2f\nType: %s\nOrderID: %s\nEvent: %s\nPnL: %.2f\nTime: %s",
-			p.getExitSide(), p.Symbol, p.Size, signal.TriggerPrice, p.OrderSpec.Type, orderResp.OrderID, event, p.LastPNL, time.Now().Format(time.RFC3339))
-		err2 := p.Notifier.SendWithRetry(msg)
-		if err2 != nil {
-			log.Printf("Position | [%s %s] Error sending notification: %v", p.Symbol, signal.StrategyName, err2)
+		msg := fmt.Sprintf("[ORDER FILLED]\nSide: %s\nSymbol: %s\nQty: %.4f\nAvgPrice: %.2f\nType: %s\nOrderID: %s\nEvent: %s\nPnL: %.2f\nTime: %s",
+			p.getExitSide(), p.Symbol, p.Size, orderResp.AvgPrice, p.OrderSpec.Type, orderResp.OrderID, event, p.LastPNL, time.Now().Format(time.RFC3339))
+		err := p.Notifier.SendWithRetry(msg)
+		if err != nil {
+			log.Printf("Position | [%s %s] Error sending notification: %v", p.Symbol, p.StrategyName, err)
 		}
 	}
 }
 
 // calculatePNL calculates the current PNL
-func (p *position) calculatePNL(currentPrice float64) float64 {
+func (p *position) calculatePNL(exitPrice float64) float64 {
 	if p.Side == "buy" {
-		return (currentPrice - p.Entry) * p.Size
+		return (exitPrice - p.Entry) * p.Size
 	}
 	// For short positions
-	return (p.Entry - currentPrice) * p.Size
+	return (p.Entry - exitPrice) * p.Size
 }
 
 // getExitSide returns the opposite side for exit orders
@@ -585,8 +623,8 @@ func (p *position) getExitSide() string {
 }
 
 // onPositionClose handles position closing logic
-func (p *position) onPositionClose(signal strategy.Signal) {
-	p.LastPNL = p.calculatePNL(signal.TriggerPrice) // TODO: Incorrect calculation, mean price should be used
+func (p *position) onPositionClose(exitPrice float64) {
+	p.LastPNL = p.calculatePNL(exitPrice)
 
 	p.Active = false
 	// Update balance with PNL
@@ -595,7 +633,7 @@ func (p *position) onPositionClose(signal strategy.Signal) {
 	// Add to trade log
 	p.LiveTradeLog = append(p.LiveTradeLog, Trade{
 		Entry:     p.Entry,
-		Exit:      signal.TriggerPrice,
+		Exit:      exitPrice,
 		PnL:       p.LastPNL,
 		EntryTime: p.Time,
 		ExitTime:  time.Now(),
@@ -603,7 +641,7 @@ func (p *position) onPositionClose(signal strategy.Signal) {
 }
 
 // updateLiveStats updates live trading statistics
-func (p *position) updateLiveStats(signal strategy.Signal) {
+func (p *position) updateLiveStats() {
 	p.LiveEquity += p.LastPNL
 	p.LiveEquityCurve = append(p.LiveEquityCurve, p.LiveEquity)
 
@@ -626,26 +664,6 @@ func (p *position) updateLiveStats(signal strategy.Signal) {
 		p.LiveMaxDrawdown = diff
 	}
 
-	// Check daily loss limit
-	if p.LiveEquity < -p.RiskParams.MaxDailyLoss {
-		p.TradingDisabled = true
-		if p.Notifier != nil {
-			msg := fmt.Sprintf("⚠️ DAILY LOSS LIMIT REACHED\nSymbol: %s\nStrategyName: %s\nDaily PnL: %.2f\nLimit: %.2f\nTrading disabled until next day",
-				p.Symbol, signal.StrategyName, p.LiveEquity, p.RiskParams.MaxDailyLoss)
-			err2 := p.Notifier.SendWithRetry(msg)
-			if err2 != nil {
-				log.Printf("Position | [%s %s] Error sending notification: %v", p.Symbol, signal.StrategyName, err2)
-			}
-		}
-	}
-
-	// Calculate statistics
-	p.calculateStats()
-	p.logStats(signal.StrategyName)
-}
-
-// calculateStats calculates trading statistics
-func (p *position) calculateStats() {
 	// Win rate
 	if p.LiveTrades > 0 {
 		p.LiveWinRate = float64(p.LiveWins) / float64(p.LiveTrades)
@@ -697,13 +715,28 @@ func (p *position) calculateStats() {
 	if p.LiveTrades > 0 {
 		p.Expectancy = (p.LiveWinRate*avgWin + (1-p.LiveWinRate)*avgLoss)
 	}
+
+	// Check daily loss limit
+	if p.LiveEquity < -p.RiskParams.MaxDailyLoss {
+		p.TradingDisabled = true
+		if p.Notifier != nil {
+			msg := fmt.Sprintf("⚠️ DAILY LOSS LIMIT REACHED\nSymbol: %s\nStrategyName: %s\nDaily PnL: %.2f\nLimit: %.2f\nTrading disabled until next day",
+				p.Symbol, p.StrategyName, p.LiveEquity, p.RiskParams.MaxDailyLoss)
+			err := p.Notifier.SendWithRetry(msg)
+			if err != nil {
+				log.Printf("Position | [%s %s] Error sending notification: %v", p.Symbol, p.StrategyName, err)
+			}
+		}
+	}
+
+	p.logStats()
 }
 
 // logStats logs trading statistics
-func (p *position) logStats(strategyName string) {
+func (p *position) logStats() {
 	log.Printf("Position | [%s %s] Live Stats: Trades=%d, WinRate=%.2f%%, PnL=%.2f, MaxDD=%.2f, ProfitFactor=%.2f",
-		p.Symbol, strategyName, p.LiveTrades, p.LiveWinRate*100, p.LiveEquity, p.LiveMaxDrawdown, p.ProfitFactor)
-	log.Printf("Position | [%s] REPORT:", strategyName)
+		p.Symbol, p.StrategyName, p.LiveTrades, p.LiveWinRate*100, p.LiveEquity, p.LiveMaxDrawdown, p.ProfitFactor)
+	log.Printf("Position | [%s] REPORT:", p.StrategyName)
 	log.Printf("  Trades=%d, Wins=%d, Losses=%d, WinRate=%.2f%%", p.LiveTrades, p.LiveWins, p.LiveLosses, p.LiveWinRate*100)
 	log.Printf("  PnL=%.2f, MaxDrawdown=%.2f", p.LiveEquity, p.LiveMaxDrawdown)
 	log.Printf("  Sharpe=%.2f, Expectancy=%.2f", p.Sharpe, p.Expectancy)
@@ -755,15 +788,16 @@ func (p *position) sendSignalNotification(ctx context.Context, signal strategy.S
 
 	if err := p.Notifier.SendWithRetry(msg); err != nil {
 		log.Printf("Position | [%s %s] Notification failed: %v", p.Symbol, signal.StrategyName, err)
+
 		if p.Storage != nil {
-			err2 := p.Storage.LogEvent(ctx, journal.Event{
+			err = p.Storage.LogEvent(ctx, journal.Event{
 				Time:        time.Now(),
 				Type:        "error",
 				Description: "notification",
 				Data:        map[string]any{"symbol": p.Symbol, "strategy_name": signal.StrategyName, "error": err.Error(), "msg": msg},
 			})
-			if err2 != nil {
-				log.Printf("Position | [%s %s] Error logging event: %v", p.Symbol, signal.StrategyName, err2)
+			if err != nil {
+				log.Printf("Position | [%s %s] Error logging event: %v", p.Symbol, signal.StrategyName, err)
 			}
 		}
 	}
@@ -794,25 +828,18 @@ func (p *position) ResetDailyStats() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
+	// Note: Keep cumulative stats like LiveWins, LiveLosses, etc.
+	// Reset only daily-specific metrics
+
 	p.TradingDisabled = false
 	// TODO: Reset other daily stats?
 	// p.LiveEquity = 0
 	// p.LiveMaxEquity = 0
 	// p.LiveMaxDrawdown = 0
-	// Note: Keep cumulative stats like LiveWins, LiveLosses, etc.
-	// Reset only daily-specific metrics
-}
-
-// GetStats returns current trading statistics (thread-safe)
-func (p *position) Stats() (wins, losses, trades int64, winRate, pnl, maxDD float64) {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-
-	return p.LiveWins, p.LiveLosses, p.LiveTrades, p.LiveWinRate, p.LiveEquity, p.LiveMaxDrawdown
 }
 
 // GetStats returns position statistics
-func (p *position) StatsV2() (map[string]interface{}, error) {
+func (p *position) Stats() (map[string]interface{}, error) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
@@ -925,45 +952,49 @@ func (p *position) OnTick(ctx context.Context, tick Tick, depthState map[string]
 		}
 	}
 
-	flush := false
+	// Create backup of current state for rollback
+	backup := p.backupState()
 
-	// Use tick.Price for all stop/take/trailing logic
-	if p.shouldTriggerStopLoss(price) {
-		p.executeStopLossTick(ctx, price)
-		flush = true
-		return
-	}
-	if p.shouldTriggerTakeProfit(price) {
-		p.executeTakeProfitTick(ctx, price)
-		flush = true
-		return
-	}
-	if p.RiskParams.TrailingStopPercent > 0 {
-		p.updateTrailingStop(price)
-		if p.shouldTriggerTrailingStop(price) {
-			p.executeTrailingStopTick(ctx, price)
-			return
+	// Execute with transaction management
+	err := executeWithTransaction(ctx, func(txCtx context.Context) error {
+		// Use tick.Price for all stop/take/trailing logic
+		if p.shouldTriggerStopLoss(price) {
+			return p.executeStopLoss(txCtx, price)
 		}
-		flush = true
-	}
+		if p.shouldTriggerTakeProfit(price) {
+			return p.executeTakeProfit(txCtx, price)
+		}
+		if p.RiskParams.TrailingStopPercent > 0 {
+			p.updateTrailingStop(price)
+			if p.shouldTriggerTrailingStop(price) {
+				return p.executeTrailingStop(txCtx, price)
+			}
+		}
+		return nil
+	})
 
-	if flush {
-		if err := p.flush(); err != nil {
-			log.Printf("Position | [%s %s] Failed to flush data to storage: %v", p.Symbol, p.StrategyName, err)
+	// Handle errors with rollback
+	if err != nil {
+		log.Printf("Position | [%s %s] Error processing tick, rolling back state: %v", p.Symbol, p.StrategyName, err)
+		p.rollbackState(backup)
+
+		// Log the error
+		if p.Storage != nil {
+			p.Storage.LogEvent(ctx, journal.Event{
+				Time:        time.Now(),
+				Type:        "error",
+				Description: "tick_processing_failed",
+				Data:        map[string]any{"symbol": p.Symbol, "strategy_name": p.StrategyName, "error": err.Error(), "price": price},
+			})
 		}
+		return
 	}
 }
 
-// OnSignalV2 processes a new signal for open/close logic (lower frequency)
-func (p *position) OnSignalV2(ctx context.Context, signal strategy.Signal) {
+// OnSignal processes a new signal for open/close logic (lower frequency)
+func (p *position) OnSignal(ctx context.Context, signal strategy.Signal) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-
-	defer func() {
-		if err := p.flush(); err != nil {
-			log.Printf("Position | [%s %s] Failed to flush data to storage: %v", p.Symbol, p.StrategyName, err)
-		}
-	}()
 
 	// If its new trading day, reset daily stats
 	if time.Now().Day() != p.Time.Day() {
@@ -981,17 +1012,44 @@ func (p *position) OnSignalV2(ctx context.Context, signal strategy.Signal) {
 		return
 	}
 
-	if p.Active {
-		// Manual close (sell signal)
-		if (signal.Position == strategy.LongBearish && p.Side == "buy") || (signal.Position == strategy.ShortBullish && p.Side == "sell") {
-			p.executeManualExit(ctx, signal)
+	// Create backup of current state for rollback
+	backup := p.backupState()
+
+	// Execute with transaction management
+	err := executeWithTransaction(ctx, func(txCtx context.Context) error {
+		// Execute the signal logic
+		if p.Active {
+			// Manual close (sell signal)
+			if (signal.Position == strategy.LongBearish && p.Side == "buy") || (signal.Position == strategy.ShortBullish && p.Side == "sell") {
+				return p.executeManualExit(txCtx, signal.TriggerPrice)
+			}
+		} else {
+			// Open position (buy signal)
+			if signal.Position == strategy.LongBullish || signal.Position == strategy.ShortBearish {
+				return p.executeEntry(txCtx, signal)
+			}
 		}
-	} else {
-		// Open position (buy signal)
-		if signal.Position == strategy.LongBullish || signal.Position == strategy.ShortBearish {
-			p.executeEntry(ctx, signal)
+		return nil
+	})
+
+	// Handle errors with rollback
+	if err != nil {
+		log.Printf("Position | [%s %s] Error processing signal, rolling back state: %v", p.Symbol, signal.StrategyName, err)
+		p.rollbackState(backup)
+
+		// Log the error
+		if p.Storage != nil {
+			p.Storage.LogEvent(ctx, journal.Event{
+				Time:        time.Now(),
+				Type:        "error",
+				Description: "signal_processing_failed",
+				Data:        map[string]any{"symbol": p.Symbol, "strategy_name": signal.StrategyName, "error": err.Error(), "signal": signal},
+			})
 		}
+		return
 	}
+	// Send signal notification
+	p.sendSignalNotification(ctx, signal)
 }
 
 // --- Tick-based stop/take/trailing logic ---
@@ -1043,59 +1101,4 @@ func (p *position) shouldTriggerTrailingStop(price float64) bool {
 		trailingStopPrice := p.Entry - p.TrailingStop + (p.Entry * p.RiskParams.TrailingStopPercent / 100)
 		return price >= trailingStopPrice
 	}
-}
-
-func (p *position) executeStopLossTick(ctx context.Context, price float64) {
-	position := strategy.Hold
-	if p.Side == "buy" {
-		position = strategy.LongBearish
-	} else {
-		position = strategy.ShortBullish
-	}
-
-	// Create a dummy signal for exit
-	signal := strategy.Signal{
-		Time:         time.Now(),
-		Position:     position,
-		Reason:       "stop_loss_tick",
-		StrategyName: p.StrategyName,
-		TriggerPrice: price,
-	}
-	p.executeStopLoss(ctx, signal)
-}
-
-func (p *position) executeTakeProfitTick(ctx context.Context, price float64) {
-	position := strategy.Hold
-	if p.Side == "buy" {
-		position = strategy.LongBearish
-	} else {
-		position = strategy.ShortBullish
-	}
-
-	signal := strategy.Signal{
-		Time:         time.Now(),
-		Position:     position,
-		Reason:       "take_profit_tick",
-		StrategyName: p.StrategyName,
-		TriggerPrice: price,
-	}
-	p.executeTakeProfit(ctx, signal)
-}
-
-func (p *position) executeTrailingStopTick(ctx context.Context, price float64) {
-	position := strategy.Hold
-	if p.Side == "buy" {
-		position = strategy.LongBearish
-	} else {
-		position = strategy.ShortBullish
-	}
-
-	signal := strategy.Signal{
-		Time:         time.Now(),
-		Position:     position,
-		Reason:       "trailing_stop_tick",
-		StrategyName: p.StrategyName,
-		TriggerPrice: price,
-	}
-	p.executeTrailingStop(ctx, signal)
 }
