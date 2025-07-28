@@ -3,6 +3,7 @@ package position
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -22,22 +23,51 @@ import (
 )
 
 type Storage interface {
+	GetDB() *sql.DB
 	SaveOrder(ctx context.Context, order order.OrderResponse) error
 	LogEvent(ctx context.Context, event journal.Event) error
 }
 
+// Tick represents a market tick (price update)
+type Tick interface {
+	Price() float64
+	Timestamp() time.Time
+}
+
 // executeWithTransaction executes a function with proper transaction management
 // If a transaction exists in context, it uses that. Otherwise, it creates a new one.
-func executeWithTransaction(ctx context.Context, fn func(context.Context) error) error {
+func executeWithTransaction(ctx context.Context, storage Storage, fn func(context.Context) error) error {
 	// Check if transaction exists in context
 	if tx := db.GetTransaction(ctx); tx != nil {
 		// Use existing transaction
 		return fn(ctx)
 	}
 
-	// Create new transaction context
-	txCtx := db.WithTransaction(ctx, nil) // This will be set by the storage layer
-	return fn(txCtx)
+	// Create new transaction
+	dbConn := storage.GetDB()
+	tx, err := dbConn.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+
+	// Create context with transaction
+	txCtx := db.WithTransaction(ctx, tx)
+
+	// Execute the function
+	if fnErr := fn(txCtx); fnErr != nil {
+		// Rollback on error
+		if rbErr := tx.Rollback(); rbErr != nil {
+			return fmt.Errorf("transaction rollback failed: %w (original error: %v)", rbErr, fnErr)
+		}
+		return fnErr
+	}
+
+	// Commit on success
+	if commitErr := tx.Commit(); commitErr != nil {
+		return fmt.Errorf("transaction commit failed: %w", commitErr)
+	}
+
+	return nil
 }
 
 type Position interface {
@@ -877,12 +907,6 @@ func (p *position) Stats() (map[string]interface{}, error) {
 	return stats, nil
 }
 
-// Tick represents a market tick (price update)
-type Tick interface {
-	Price() float64
-	Timestamp() time.Time
-}
-
 // OnTick processes a new tick with optional market depth and market cap information
 func (p *position) OnTick(ctx context.Context, tick Tick, depthState map[string]exchange.OrderBook, marketCapState *exchange.MarketCapData) {
 	if tick == nil {
@@ -901,7 +925,7 @@ func (p *position) OnTick(ctx context.Context, tick Tick, depthState map[string]
 	var bestBuyPrice, bestSellPrice float64
 	if depthState != nil {
 		// Process market depth data
-		buyBook, ok := depthState[fmt.Sprintf("%s@buyDepth", exchange.NormalizeSymbol(p.Symbol))]
+		buyBook, ok := depthState[exchange.GetBuyDepthKey(p.Symbol)]
 		if ok {
 			// Get best buy price (highest price in buy book)
 			for _, entry := range buyBook {
@@ -914,7 +938,7 @@ func (p *position) OnTick(ctx context.Context, tick Tick, depthState map[string]
 			log.Printf("Position | [%s %s] Best buy price: %.8f", p.Symbol, p.StrategyName, bestBuyPrice)
 		}
 
-		sellBook, ok := depthState[fmt.Sprintf("%s@sellDepth", exchange.NormalizeSymbol(p.Symbol))]
+		sellBook, ok := depthState[exchange.GetSellDepthKey(p.Symbol)]
 		if ok {
 			// Get best sell price (lowest price in sell book)
 			first := true
@@ -956,7 +980,7 @@ func (p *position) OnTick(ctx context.Context, tick Tick, depthState map[string]
 	backup := p.backupState()
 
 	// Execute with transaction management
-	err := executeWithTransaction(ctx, func(txCtx context.Context) error {
+	err := executeWithTransaction(ctx, p.Storage, func(txCtx context.Context) error {
 		// Use tick.Price for all stop/take/trailing logic
 		if p.shouldTriggerStopLoss(price) {
 			return p.executeStopLoss(txCtx, price)
@@ -1016,7 +1040,7 @@ func (p *position) OnSignal(ctx context.Context, signal strategy.Signal) {
 	backup := p.backupState()
 
 	// Execute with transaction management
-	err := executeWithTransaction(ctx, func(txCtx context.Context) error {
+	err := executeWithTransaction(ctx, p.Storage, func(txCtx context.Context) error {
 		// Execute the signal logic
 		if p.Active {
 			// Manual close (sell signal)

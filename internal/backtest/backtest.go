@@ -31,7 +31,7 @@ func RunBacktest(
 	ctx context.Context,
 	cfg config.Config,
 	strats []strategy.Strategy,
-	storage db.DB,
+	storage db.Storage,
 ) {
 	for _, strat := range strats {
 		// Load candles for backtesting
@@ -69,7 +69,7 @@ func getSideString(pos strategy.Position) string {
 // loadBacktestCandles loads candles for backtesting, downloading from public API if necessary
 func loadBacktestCandles(
 	ctx context.Context,
-	storage db.DB,
+	storage db.Storage,
 	symbol, timeframe string,
 	from, to time.Time,
 	cfg config.Config,

@@ -214,7 +214,7 @@ func fetchTopBinanceSymbolsWithRetry(ctx context.Context, topN int, proxyURL str
 func RunMultiSymbolBacktest(
 	ctx context.Context,
 	cfg config.Config,
-	storage db.DB,
+	storage db.Storage,
 ) {
 	if len(cfg.Strategies) == 0 {
 		log.Fatal("No strategies specified in config")

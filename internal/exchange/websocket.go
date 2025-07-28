@@ -231,6 +231,16 @@ func NormalizeSymbol(symbol string) string {
 	return strings.ToUpper(strings.ReplaceAll(symbol, "-", ""))
 }
 
+// GetBuyDepthKey returns the normalized key for buy depth data
+func GetBuyDepthKey(symbol string) string {
+	return fmt.Sprintf("%s@buyDepth", NormalizeSymbol(symbol))
+}
+
+// GetSellDepthKey returns the normalized key for sell depth data
+func GetSellDepthKey(symbol string) string {
+	return fmt.Sprintf("%s@sellDepth", NormalizeSymbol(symbol))
+}
+
 // Start connects to Wallex websocket and streams trades to all subscribers, with reconnect and health check
 func (w *WallexTradeChannel) Start(ctx context.Context, symbol string) {
 	w.mu.Lock()
@@ -506,7 +516,7 @@ type OrderBook map[string]OrderBookEntry
 // MarketDepthState holds the latest order book state for a symbol/depth type.
 type MarketDepthState struct {
 	mu    sync.RWMutex
-	state map[string]*OrderBook // key: "SYMBOL@buyDepth" or "SYMBOL@sellDepth"
+	state map[string]*OrderBook // key: GetBuyDepthKey(symbol) or GetSellDepthKey(symbol)
 }
 
 // NewMarketDepthState creates a new MarketDepthState.

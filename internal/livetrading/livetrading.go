@@ -41,7 +41,7 @@ func RunLiveTrading(
 	ctx context.Context,
 	cfg config.Config,
 	strats []strategy.Strategy,
-	storage db.DB,
+	storage db.Storage,
 	ex exchange.Exchange,
 	notifier notifier.Notifier,
 ) {
@@ -134,7 +134,7 @@ func RunLiveTrading(
 
 // orderStatusChecker periodically checks the status of open orders
 // and updates the database accordingly
-func orderStatusChecker(ctx context.Context, storage db.DB, ex exchange.Exchange, checkInterval time.Duration) {
+func orderStatusChecker(ctx context.Context, storage db.Storage, ex exchange.Exchange, checkInterval time.Duration) {
 	ticker := time.NewTicker(checkInterval)
 	defer ticker.Stop()
 
@@ -229,7 +229,7 @@ func runTradingLoop(
 	ctx context.Context,
 	cfg config.Config,
 	strat strategy.Strategy,
-	storage db.DB,
+	storage db.Storage,
 	ex exchange.Exchange,
 	notifier notifier.Notifier,
 	websocketChannels map[string]exchange.TradeChannel,
@@ -289,11 +289,11 @@ func runTradingLoop(
 				sellDepth, sellOk := depthState.Get(symbol, "sellDepth")
 
 				if buyOk && buyDepth != nil {
-					posDepthState[fmt.Sprintf("%s@buyDepth", exchange.NormalizeSymbol(symbol))] = *buyDepth
+					posDepthState[exchange.GetBuyDepthKey(symbol)] = *buyDepth
 				}
 
 				if sellOk && sellDepth != nil {
-					posDepthState[fmt.Sprintf("%s@sellDepth", exchange.NormalizeSymbol(symbol))] = *sellDepth
+					posDepthState[exchange.GetSellDepthKey(symbol)] = *sellDepth
 				}
 
 				// Get latest market cap data if available

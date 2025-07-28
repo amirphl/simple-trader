@@ -79,6 +79,10 @@ func New(c conf.Config) (*Default, error) {
 	return &Default{db: c.DB}, nil
 }
 
+func (p *Default) GetDB() *sql.DB {
+	return p.db
+}
+
 // SaveCandle saves a single candle to the database
 func (p *Default) SaveCandle(ctx context.Context, c *candle.Candle) error {
 	// Validate candle before saving
