@@ -1077,9 +1077,10 @@ func (p *Default) DeleteState(ctx context.Context, key string) error {
 	})
 }
 
-// SavePosition saves a position to the database
-func (p *Default) SavePosition(ctx context.Context, pos Position) error {
-	return p.executeWithTransaction(ctx, func(tx *sql.Tx) error {
+// SavePosition saves a position to the database and returns the generated ID
+func (p *Default) SavePosition(ctx context.Context, pos Position) (int64, error) {
+	var id int64
+	err := p.executeWithTransaction(ctx, func(tx *sql.Tx) error {
 		// Marshal JSON fields
 		liveWinPnls, err := json.Marshal(pos.LiveWinPnls)
 		if err != nil {
@@ -1112,7 +1113,7 @@ func (p *Default) SavePosition(ctx context.Context, pos Position) error {
 		}
 
 		now := time.Now()
-		_, err = tx.ExecContext(ctx, `
+		err = tx.QueryRowContext(ctx, `
 			INSERT INTO positions (
 				strategy_name, symbol, side, entry, size, order_id, time, active, trading_disabled,
 				balance, last_pnl, mean_pnl, std_pnl, sharpe, expectancy, trailing_stop,
@@ -1122,33 +1123,22 @@ func (p *Default) SavePosition(ctx context.Context, pos Position) error {
 			) VALUES (
 				$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
 				$17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32
-			)
-			ON CONFLICT (strategy_name, symbol) DO UPDATE SET
-				side=EXCLUDED.side, entry=EXCLUDED.entry, size=EXCLUDED.size, order_id=EXCLUDED.order_id,
-				time=EXCLUDED.time, active=EXCLUDED.active, trading_disabled=EXCLUDED.trading_disabled,
-				balance=EXCLUDED.balance, last_pnl=EXCLUDED.last_pnl, mean_pnl=EXCLUDED.mean_pnl,
-				std_pnl=EXCLUDED.std_pnl, sharpe=EXCLUDED.sharpe, expectancy=EXCLUDED.expectancy,
-				trailing_stop=EXCLUDED.trailing_stop, live_equity=EXCLUDED.live_equity,
-				live_max_equity=EXCLUDED.live_max_equity, live_max_drawdown=EXCLUDED.live_max_drawdown,
-				live_wins=EXCLUDED.live_wins, live_losses=EXCLUDED.live_losses, live_trades=EXCLUDED.live_trades,
-				live_win_rate=EXCLUDED.live_win_rate, profit_factor=EXCLUDED.profit_factor,
-				live_win_pnls=EXCLUDED.live_win_pnls, live_loss_pnls=EXCLUDED.live_loss_pnls,
-				live_equity_curve=EXCLUDED.live_equity_curve, live_trade_log=EXCLUDED.live_trade_log,
-				risk_params=EXCLUDED.risk_params, order_spec=EXCLUDED.order_spec, updated_at=EXCLUDED.updated_at`,
+			) RETURNING id`,
 			pos.StrategyName, pos.Symbol, pos.Side, pos.Entry, pos.Size, pos.OrderID, pos.Time,
 			pos.Active, pos.TradingDisabled, pos.Balance, pos.LastPNL, pos.MeanPNL, pos.StdPNL,
 			pos.Sharpe, pos.Expectancy, pos.TrailingStop, pos.LiveEquity, pos.LiveMaxEquity,
 			pos.LiveMaxDrawdown, pos.LiveWins, pos.LiveLosses, pos.LiveTrades, pos.LiveWinRate,
 			pos.ProfitFactor, liveWinPnls, liveLossPnls, liveEquityCurve, liveTradeLog,
-			riskParams, orderSpec, now, now)
+			riskParams, orderSpec, now, now).Scan(&id)
 		if err != nil {
 			return fmt.Errorf("failed to save position [%s %s]: %w", pos.StrategyName, pos.Symbol, err)
 		}
 		return nil
 	})
+	return id, err
 }
 
-// UpdatePosition updates an existing position in the database
+// UpdatePosition updates an existing position in the database by ID
 func (p *Default) UpdatePosition(ctx context.Context, pos Position) error {
 	return p.executeWithTransaction(ctx, func(tx *sql.Tx) error {
 		// Marshal JSON fields
@@ -1191,15 +1181,15 @@ func (p *Default) UpdatePosition(ctx context.Context, pos Position) error {
 				live_wins=$18, live_losses=$19, live_trades=$20, live_win_rate=$21, profit_factor=$22,
 				live_win_pnls=$23, live_loss_pnls=$24, live_equity_curve=$25, live_trade_log=$26,
 				risk_params=$27, order_spec=$28, updated_at=$29
-			WHERE strategy_name=$30 AND symbol=$31`,
+			WHERE id=$30`,
 			pos.Side, pos.Entry, pos.Size, pos.OrderID, pos.Time, pos.Active, pos.TradingDisabled,
 			pos.Balance, pos.LastPNL, pos.MeanPNL, pos.StdPNL, pos.Sharpe, pos.Expectancy,
 			pos.TrailingStop, pos.LiveEquity, pos.LiveMaxEquity, pos.LiveMaxDrawdown,
 			pos.LiveWins, pos.LiveLosses, pos.LiveTrades, pos.LiveWinRate, pos.ProfitFactor,
 			liveWinPnls, liveLossPnls, liveEquityCurve, liveTradeLog, riskParams, orderSpec, now,
-			pos.StrategyName, pos.Symbol)
+			pos.ID)
 		if err != nil {
-			return fmt.Errorf("failed to update position [%s %s]: %w", pos.StrategyName, pos.Symbol, err)
+			return fmt.Errorf("failed to update position [ID %d]: %w", pos.ID, err)
 		}
 
 		rowsAffected, err := result.RowsAffected()
@@ -1208,7 +1198,7 @@ func (p *Default) UpdatePosition(ctx context.Context, pos Position) error {
 		}
 
 		if rowsAffected == 0 {
-			return fmt.Errorf("no position found to update for [%s %s]", pos.StrategyName, pos.Symbol)
+			return fmt.Errorf("no position found to update for ID %d", pos.ID)
 		}
 
 		return nil
@@ -1218,12 +1208,12 @@ func (p *Default) UpdatePosition(ctx context.Context, pos Position) error {
 // GetPosition retrieves a position from the database
 func (p *Default) GetPosition(ctx context.Context, strategyName, symbol string) (*Position, error) {
 	rows, err := p.queryWithTransaction(ctx, `
-		SELECT strategy_name, symbol, side, entry, size, order_id, time, active, trading_disabled,
+		SELECT id, strategy_name, symbol, side, entry, size, order_id, time, active, trading_disabled,
 			balance, last_pnl, mean_pnl, std_pnl, sharpe, expectancy, trailing_stop,
 			live_equity, live_max_equity, live_max_drawdown, live_wins, live_losses, live_trades,
 			live_win_rate, profit_factor, live_win_pnls, live_loss_pnls, live_equity_curve,
 			live_trade_log, risk_params, order_spec, created_at, updated_at
-		FROM positions WHERE strategy_name=$1 AND symbol=$2`,
+		FROM positions WHERE strategy_name=$1 AND symbol=$2 AND active=true`,
 		strategyName, symbol)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query position: %w", err)
@@ -1237,7 +1227,7 @@ func (p *Default) GetPosition(ctx context.Context, strategyName, symbol string) 
 	if rows.Next() {
 		var liveWinPnls, liveLossPnls, liveEquityCurve, liveTradeLog, riskParams, orderSpec []byte
 		if err := rows.Scan(
-			&pos.StrategyName, &pos.Symbol, &pos.Side, &pos.Entry, &pos.Size, &pos.OrderID, &pos.Time,
+			&pos.ID, &pos.StrategyName, &pos.Symbol, &pos.Side, &pos.Entry, &pos.Size, &pos.OrderID, &pos.Time,
 			&pos.Active, &pos.TradingDisabled, &pos.Balance, &pos.LastPNL, &pos.MeanPNL, &pos.StdPNL,
 			&pos.Sharpe, &pos.Expectancy, &pos.TrailingStop, &pos.LiveEquity, &pos.LiveMaxEquity,
 			&pos.LiveMaxDrawdown, &pos.LiveWins, &pos.LiveLosses, &pos.LiveTrades, &pos.LiveWinRate,
@@ -1282,10 +1272,72 @@ func (p *Default) GetPosition(ctx context.Context, strategyName, symbol string) 
 	return nil, nil
 }
 
+// GetPositionByID retrieves a position from the database by ID
+func (p *Default) GetPositionByID(ctx context.Context, id int64) (*Position, error) {
+	rows, err := p.queryWithTransaction(ctx, `
+		SELECT id, strategy_name, symbol, side, entry, size, order_id, time, active, trading_disabled,
+			balance, last_pnl, mean_pnl, std_pnl, sharpe, expectancy, trailing_stop,
+			live_equity, live_max_equity, live_max_drawdown, live_wins, live_losses, live_trades,
+			live_win_rate, profit_factor, live_win_pnls, live_loss_pnls, live_equity_curve,
+			live_trade_log, risk_params, order_spec, created_at, updated_at
+		FROM positions WHERE id=$1`,
+		id)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query position by ID: %w", err)
+	}
+	if rows == nil {
+		return nil, nil
+	}
+	defer rows.Close()
+
+	var pos Position
+	if rows.Next() {
+		var liveWinPnls, liveLossPnls, liveEquityCurve, liveTradeLog, riskParams, orderSpec []byte
+		if err := rows.Scan(
+			&pos.ID, &pos.StrategyName, &pos.Symbol, &pos.Side, &pos.Entry, &pos.Size, &pos.OrderID, &pos.Time,
+			&pos.Active, &pos.TradingDisabled, &pos.Balance, &pos.LastPNL, &pos.MeanPNL, &pos.StdPNL,
+			&pos.Sharpe, &pos.Expectancy, &pos.TrailingStop, &pos.LiveEquity, &pos.LiveMaxEquity,
+			&pos.LiveMaxDrawdown, &pos.LiveWins, &pos.LiveLosses, &pos.LiveTrades, &pos.LiveWinRate,
+			&pos.ProfitFactor, &liveWinPnls, &liveLossPnls, &liveEquityCurve, &liveTradeLog,
+			&riskParams, &orderSpec, &pos.CreatedAt, &pos.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("failed to scan position: %w", err)
+		}
+
+		// Unmarshal JSON fields
+		if err := json.Unmarshal(liveWinPnls, &pos.LiveWinPnls); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal live_win_pnls: %w", err)
+		}
+		if err := json.Unmarshal(liveLossPnls, &pos.LiveLossPnls); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal live_loss_pnls: %w", err)
+		}
+		if err := json.Unmarshal(liveEquityCurve, &pos.LiveEquityCurve); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal live_equity_curve: %w", err)
+		}
+		if err := json.Unmarshal(liveTradeLog, &pos.LiveTradeLog); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal live_trade_log: %w", err)
+		}
+		if err := json.Unmarshal(riskParams, &pos.RiskParams); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal risk_params: %w", err)
+		}
+		if err := json.Unmarshal(orderSpec, &pos.OrderSpec); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal order_spec: %w", err)
+		}
+
+		// Convert timestamps to UTC
+		pos.Time = pos.Time.UTC()
+		pos.CreatedAt = pos.CreatedAt.UTC()
+		pos.UpdatedAt = pos.UpdatedAt.UTC()
+
+		return &pos, nil
+	}
+
+	return nil, nil
+}
+
 // GetAllPositions retrieves all positions from the database
 func (p *Default) GetAllPositions(ctx context.Context) ([]Position, error) {
 	rows, err := p.queryWithTransaction(ctx, `
-		SELECT strategy_name, symbol, side, entry, size, order_id, time, active, trading_disabled,
+		SELECT id, strategy_name, symbol, side, entry, size, order_id, time, active, trading_disabled,
 			balance, last_pnl, mean_pnl, std_pnl, sharpe, expectancy, trailing_stop,
 			live_equity, live_max_equity, live_max_drawdown, live_wins, live_losses, live_trades,
 			live_win_rate, profit_factor, live_win_pnls, live_loss_pnls, live_equity_curve,
@@ -1304,7 +1356,7 @@ func (p *Default) GetAllPositions(ctx context.Context) ([]Position, error) {
 		var pos Position
 		var liveWinPnls, liveLossPnls, liveEquityCurve, liveTradeLog, riskParams, orderSpec []byte
 		if err := rows.Scan(
-			&pos.StrategyName, &pos.Symbol, &pos.Side, &pos.Entry, &pos.Size, &pos.OrderID, &pos.Time,
+			&pos.ID, &pos.StrategyName, &pos.Symbol, &pos.Side, &pos.Entry, &pos.Size, &pos.OrderID, &pos.Time,
 			&pos.Active, &pos.TradingDisabled, &pos.Balance, &pos.LastPNL, &pos.MeanPNL, &pos.StdPNL,
 			&pos.Sharpe, &pos.Expectancy, &pos.TrailingStop, &pos.LiveEquity, &pos.LiveMaxEquity,
 			&pos.LiveMaxDrawdown, &pos.LiveWins, &pos.LiveLosses, &pos.LiveTrades, &pos.LiveWinRate,
@@ -1352,7 +1404,7 @@ func (p *Default) GetAllPositions(ctx context.Context) ([]Position, error) {
 // GetActivePositions retrieves all active positions from the database
 func (p *Default) GetActivePositions(ctx context.Context) ([]Position, error) {
 	rows, err := p.queryWithTransaction(ctx, `
-		SELECT strategy_name, symbol, side, entry, size, order_id, time, active, trading_disabled,
+		SELECT id, strategy_name, symbol, side, entry, size, order_id, time, active, trading_disabled,
 			balance, last_pnl, mean_pnl, std_pnl, sharpe, expectancy, trailing_stop,
 			live_equity, live_max_equity, live_max_drawdown, live_wins, live_losses, live_trades,
 			live_win_rate, profit_factor, live_win_pnls, live_loss_pnls, live_equity_curve,
@@ -1371,7 +1423,7 @@ func (p *Default) GetActivePositions(ctx context.Context) ([]Position, error) {
 		var pos Position
 		var liveWinPnls, liveLossPnls, liveEquityCurve, liveTradeLog, riskParams, orderSpec []byte
 		if err := rows.Scan(
-			&pos.StrategyName, &pos.Symbol, &pos.Side, &pos.Entry, &pos.Size, &pos.OrderID, &pos.Time,
+			&pos.ID, &pos.StrategyName, &pos.Symbol, &pos.Side, &pos.Entry, &pos.Size, &pos.OrderID, &pos.Time,
 			&pos.Active, &pos.TradingDisabled, &pos.Balance, &pos.LastPNL, &pos.MeanPNL, &pos.StdPNL,
 			&pos.Sharpe, &pos.Expectancy, &pos.TrailingStop, &pos.LiveEquity, &pos.LiveMaxEquity,
 			&pos.LiveMaxDrawdown, &pos.LiveWins, &pos.LiveLosses, &pos.LiveTrades, &pos.LiveWinRate,
@@ -1432,6 +1484,27 @@ func (p *Default) DeletePosition(ctx context.Context, strategyName, symbol strin
 
 		if rowsAffected == 0 {
 			return fmt.Errorf("no position found to delete for [%s %s]", strategyName, symbol)
+		}
+
+		return nil
+	})
+}
+
+// DeletePositionByID deletes a position from the database by ID
+func (p *Default) DeletePositionByID(ctx context.Context, id int64) error {
+	return p.executeWithTransaction(ctx, func(tx *sql.Tx) error {
+		result, err := tx.ExecContext(ctx, `DELETE FROM positions WHERE id=$1`, id)
+		if err != nil {
+			return fmt.Errorf("failed to delete position [ID %d]: %w", id, err)
+		}
+
+		rowsAffected, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("failed to get rows affected: %w", err)
+		}
+
+		if rowsAffected == 0 {
+			return fmt.Errorf("no position found to delete for ID %d", id)
 		}
 
 		return nil

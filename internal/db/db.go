@@ -185,6 +185,7 @@ type JournalStorage interface {
 
 // PositionData represents the data structure for position persistence
 type Position struct {
+	ID              int64                  `json:"id"`
 	StrategyName    string                 `json:"strategy_name"`
 	Symbol          string                 `json:"symbol"`
 	Side            string                 `json:"side"`
@@ -230,12 +231,14 @@ type Trade struct {
 
 // PositionStorage defines the interface for position persistence operations
 type PositionStorage interface {
-	SavePosition(ctx context.Context, pos Position) error
+	SavePosition(ctx context.Context, pos Position) (int64, error)
 	UpdatePosition(ctx context.Context, pos Position) error
 	GetPosition(ctx context.Context, strategyName, symbol string) (*Position, error)
+	GetPositionByID(ctx context.Context, id int64) (*Position, error)
 	GetAllPositions(ctx context.Context) ([]Position, error)
 	GetActivePositions(ctx context.Context) ([]Position, error)
 	DeletePosition(ctx context.Context, strategyName, symbol string) error
+	DeletePositionByID(ctx context.Context, id int64) error
 }
 
 // Storage is the interface for all persistent storage.
