@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/amirphl/simple-trader/internal/candle"
 	dbconf "github.com/amirphl/simple-trader/internal/db/conf"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -24,7 +23,7 @@ func TestPostgresDB_SaveCandle(t *testing.T) {
 	// Test 1: Basic candle save
 	t.Run("Basic candle save", func(t *testing.T) {
 		now := time.Now().UTC().Truncate(time.Minute)
-		c := &candle.Candle{
+		c := Candle{
 			Symbol:    "BTC-USDT",
 			Timeframe: "1m",
 			Timestamp: now,
@@ -59,7 +58,7 @@ func TestPostgresDB_SaveCandle(t *testing.T) {
 
 	// Test 2: Save candle with zero timestamp
 	t.Run("Zero timestamp", func(t *testing.T) {
-		c := &candle.Candle{
+		c := Candle{
 			Symbol:    "BTC-USDT",
 			Timeframe: "1m",
 			Timestamp: time.Time{}, // Zero time
@@ -82,7 +81,7 @@ func TestPostgresDB_SaveCandle(t *testing.T) {
 	// Test 3: Save candle with invalid prices
 	t.Run("Invalid prices", func(t *testing.T) {
 		now := time.Now().UTC().Truncate(time.Minute)
-		c := &candle.Candle{
+		c := Candle{
 			Symbol:    "BTC-USDT",
 			Timeframe: "1m",
 			Timestamp: now,
@@ -105,7 +104,7 @@ func TestPostgresDB_SaveCandle(t *testing.T) {
 	// Test 4: Save candle with high < low
 	t.Run("High less than low", func(t *testing.T) {
 		now := time.Now().UTC().Truncate(time.Minute)
-		c := &candle.Candle{
+		c := Candle{
 			Symbol:    "BTC-USDT",
 			Timeframe: "1m",
 			Timestamp: now,
@@ -128,7 +127,7 @@ func TestPostgresDB_SaveCandle(t *testing.T) {
 	// Test 5: Save candle with open outside high-low range
 	t.Run("Open outside high-low range", func(t *testing.T) {
 		now := time.Now().UTC().Truncate(time.Minute)
-		c := &candle.Candle{
+		c := Candle{
 			Symbol:    "BTC-USDT",
 			Timeframe: "1m",
 			Timestamp: now,
@@ -151,7 +150,7 @@ func TestPostgresDB_SaveCandle(t *testing.T) {
 	// Test 6: Save candle with close outside high-low range
 	t.Run("Close outside high-low range", func(t *testing.T) {
 		now := time.Now().UTC().Truncate(time.Minute)
-		c := &candle.Candle{
+		c := Candle{
 			Symbol:    "BTC-USDT",
 			Timeframe: "1m",
 			Timestamp: now,
@@ -174,7 +173,7 @@ func TestPostgresDB_SaveCandle(t *testing.T) {
 	// Test 7: Save candle with negative volume
 	t.Run("Negative volume", func(t *testing.T) {
 		now := time.Now().UTC().Truncate(time.Minute)
-		c := &candle.Candle{
+		c := Candle{
 			Symbol:    "BTC-USDT",
 			Timeframe: "1m",
 			Timestamp: now,
@@ -197,7 +196,7 @@ func TestPostgresDB_SaveCandle(t *testing.T) {
 	// Test 8: Save candle with empty symbol
 	t.Run("Empty symbol", func(t *testing.T) {
 		now := time.Now().UTC().Truncate(time.Minute)
-		c := &candle.Candle{
+		c := Candle{
 			Symbol:    "", // Empty symbol
 			Timeframe: "1m",
 			Timestamp: now,
@@ -220,7 +219,7 @@ func TestPostgresDB_SaveCandle(t *testing.T) {
 	// Test 9: Save candle with empty timeframe
 	t.Run("Empty timeframe", func(t *testing.T) {
 		now := time.Now().UTC().Truncate(time.Minute)
-		c := &candle.Candle{
+		c := Candle{
 			Symbol:    "BTC-USDT",
 			Timeframe: "", // Empty timeframe
 			Timestamp: now,
@@ -243,7 +242,7 @@ func TestPostgresDB_SaveCandle(t *testing.T) {
 	// Test 10: Save candle with extreme values
 	t.Run("Extreme values", func(t *testing.T) {
 		now := time.Now().UTC().Truncate(time.Minute)
-		c := &candle.Candle{
+		c := Candle{
 			Symbol:    "BTC-USDT",
 			Timeframe: "1m",
 			Timestamp: now,
@@ -275,7 +274,7 @@ func TestPostgresDB_SaveCandle(t *testing.T) {
 	// Test 11: Save candle with special characters in symbol
 	t.Run("Special characters in symbol", func(t *testing.T) {
 		now := time.Now().UTC().Truncate(time.Minute)
-		c := &candle.Candle{
+		c := Candle{
 			Symbol:    "BTC/USDT-2024", // Special characters
 			Timeframe: "1m",
 			Timestamp: now,
@@ -304,7 +303,7 @@ func TestPostgresDB_SaveCandle(t *testing.T) {
 	t.Run("Very long symbol name", func(t *testing.T) {
 		now := time.Now().UTC().Truncate(time.Minute)
 		longSymbol := "VERY-LONG-SYMBOL-NAME-THAT-EXCEEDS-NORMAL-LENGTH"
-		c := &candle.Candle{
+		c := Candle{
 			Symbol:    longSymbol,
 			Timeframe: "1m",
 			Timestamp: now,
@@ -338,7 +337,7 @@ func TestPostgresDB_SaveCandles(t *testing.T) {
 	// Test 1: Save multiple valid candles
 	t.Run("Multiple valid candles", func(t *testing.T) {
 		now := time.Now().UTC().Truncate(time.Minute)
-		candles := []candle.Candle{
+		candles := []Candle{
 			{
 				Symbol:    "BTC-USDT",
 				Timeframe: "1m",
@@ -399,7 +398,7 @@ func TestPostgresDB_SaveCandles(t *testing.T) {
 
 	// Test 2: Save empty slice
 	t.Run("Empty slice", func(t *testing.T) {
-		candles := []candle.Candle{}
+		candles := []Candle{}
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
@@ -410,7 +409,7 @@ func TestPostgresDB_SaveCandles(t *testing.T) {
 	// Test 3: Save candles with one invalid candle
 	t.Run("One invalid candle in batch", func(t *testing.T) {
 		now := time.Now().UTC().Truncate(time.Minute)
-		candles := []candle.Candle{
+		candles := []Candle{
 			{
 				Symbol:    "BTC-USDT",
 				Timeframe: "1m",
@@ -446,10 +445,10 @@ func TestPostgresDB_SaveCandles(t *testing.T) {
 	// Test 4: Save large batch of candles
 	t.Run("Large batch", func(t *testing.T) {
 		now := time.Now().UTC().Truncate(time.Minute)
-		candles := make([]candle.Candle, 100)
+		candles := make([]Candle, 100)
 
 		for i := range 100 {
-			candles[i] = candle.Candle{
+			candles[i] = Candle{
 				Symbol:    "BTC-USDT",
 				Timeframe: "1m",
 				Timestamp: now.Add(time.Duration(-i) * time.Minute),
@@ -487,7 +486,7 @@ func TestPostgresDB_SaveCandles(t *testing.T) {
 		now := time.Now().UTC().Truncate(time.Minute)
 
 		// First candle
-		c1 := candle.Candle{
+		c1 := Candle{
 			Symbol:    "BTC-USDT",
 			Timeframe: "1m",
 			Timestamp: now,
@@ -500,7 +499,7 @@ func TestPostgresDB_SaveCandles(t *testing.T) {
 		}
 
 		// Second candle with same timestamp but different values
-		c2 := candle.Candle{
+		c2 := Candle{
 			Symbol:    "BTC-USDT",
 			Timeframe: "1m",
 			Timestamp: now,
@@ -516,11 +515,11 @@ func TestPostgresDB_SaveCandles(t *testing.T) {
 		defer cancel()
 
 		// Save first candle
-		err := db.SaveCandles(ctx, []candle.Candle{c1})
+		err := db.SaveCandles(ctx, []Candle{c1})
 		assert.NoError(t, err)
 
 		// Save second candle (should update the first)
-		err = db.SaveCandles(ctx, []candle.Candle{c2})
+		err = db.SaveCandles(ctx, []Candle{c2})
 		assert.NoError(t, err)
 
 		// Verify the candle was updated
@@ -536,7 +535,7 @@ func TestPostgresDB_SaveCandles(t *testing.T) {
 	// Test 6: Save candles with different timeframes
 	t.Run("Different timeframes", func(t *testing.T) {
 		now := time.Now().UTC().Truncate(time.Minute)
-		candles := []candle.Candle{
+		candles := []Candle{
 			{
 				Symbol:    "BTC-USDT",
 				Timeframe: "1m",
@@ -601,7 +600,7 @@ func TestPostgresDB_SaveConstructedCandles(t *testing.T) {
 	// Test 1: Save constructed candles
 	t.Run("Save constructed candles", func(t *testing.T) {
 		now := time.Now().UTC().Truncate(time.Minute)
-		candles := []candle.Candle{
+		candles := []Candle{
 			{
 				Symbol:    "BTC-USDT",
 				Timeframe: "5m",
@@ -651,7 +650,7 @@ func TestPostgresDB_SaveConstructedCandles(t *testing.T) {
 
 	// Test 2: Save empty constructed candles slice
 	t.Run("Empty constructed candles slice", func(t *testing.T) {
-		candles := []candle.Candle{}
+		candles := []Candle{}
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
@@ -662,7 +661,7 @@ func TestPostgresDB_SaveConstructedCandles(t *testing.T) {
 	// Test 3: Save constructed candles with invalid data
 	t.Run("Invalid constructed candles", func(t *testing.T) {
 		now := time.Now().UTC().Truncate(time.Minute)
-		candles := []candle.Candle{
+		candles := []Candle{
 			{
 				Symbol:    "BTC-USDT",
 				Timeframe: "5m",
@@ -700,7 +699,7 @@ func TestPostgresDB_SaveConstructedCandles(t *testing.T) {
 		now := time.Now().UTC().Truncate(time.Minute)
 
 		// Save a raw candle first
-		rawCandle := candle.Candle{
+		rawCandle := Candle{
 			Symbol:    "BTC-USDT",
 			Timeframe: "5m",
 			Timestamp: now.Truncate(5 * time.Minute),
@@ -715,11 +714,11 @@ func TestPostgresDB_SaveConstructedCandles(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		err := db.SaveCandle(ctx, &rawCandle)
+		err := db.SaveCandle(ctx, rawCandle)
 		assert.NoError(t, err)
 
 		// Save a constructed candle with same symbol/timeframe/timestamp
-		constructedCandle := candle.Candle{
+		constructedCandle := Candle{
 			Symbol:    "BTC-USDT",
 			Timeframe: "5m",
 			Timestamp: now.Truncate(5 * time.Minute),
@@ -731,7 +730,7 @@ func TestPostgresDB_SaveConstructedCandles(t *testing.T) {
 			Source:    "original", // Will be changed to "constructed"
 		}
 
-		err = db.SaveConstructedCandles(ctx, []candle.Candle{constructedCandle})
+		err = db.SaveConstructedCandles(ctx, []Candle{constructedCandle})
 		assert.NoError(t, err)
 
 		// Verify both candles exist with different sources
@@ -751,10 +750,10 @@ func TestPostgresDB_SaveConstructedCandles(t *testing.T) {
 	// Test 5: Save large batch of constructed candles
 	t.Run("Large batch of constructed candles", func(t *testing.T) {
 		now := time.Now().UTC().Truncate(time.Minute)
-		candles := make([]candle.Candle, 50)
+		candles := make([]Candle, 50)
 
 		for i := range 50 {
-			candles[i] = candle.Candle{
+			candles[i] = Candle{
 				Symbol:    "BTC-USDT",
 				Timeframe: "5m",
 				Timestamp: now.Truncate(5 * time.Minute).Add(time.Duration(-i*5) * time.Minute),
@@ -791,7 +790,7 @@ func TestPostgresDB_SaveConstructedCandles(t *testing.T) {
 	// Test 6: Save constructed candles with different timeframes
 	t.Run("Constructed candles with different timeframes", func(t *testing.T) {
 		now := time.Now().UTC().Truncate(time.Minute)
-		candles := []candle.Candle{
+		candles := []Candle{
 			{
 				Symbol:    "BTC-USDT",
 				Timeframe: "5m",
@@ -879,7 +878,7 @@ func TestPostgresDB_GetCandle(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Minute)
 
 	// Insert test candle
-	testCandle := candle.Candle{
+	testCandle := Candle{
 		Symbol:    "BTC-USDT",
 		Timeframe: "1m",
 		Timestamp: now,
@@ -894,7 +893,7 @@ func TestPostgresDB_GetCandle(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	err = db.SaveCandle(ctx, &testCandle)
+	err = db.SaveCandle(ctx, testCandle)
 	require.NoError(t, err)
 
 	// Test 1: Get existing candle
@@ -948,7 +947,7 @@ func TestPostgresDB_GetCandles(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Minute)
 
 	// Insert test candles
-	candles := []candle.Candle{
+	candles := []Candle{
 		{
 			Symbol:    "BTC-USDT",
 			Timeframe: "1m",
@@ -1047,7 +1046,7 @@ func TestPostgresDB_GetCandlesV2(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Minute)
 
 	// Insert test candles with multiple symbols and same timeframe
-	candles := []candle.Candle{
+	candles := []Candle{
 		{
 			Symbol:    "BTC-USDT",
 			Timeframe: "1m",
@@ -1170,7 +1169,7 @@ func TestPostgresDB_GetCandlesInRange(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Minute)
 
 	// Insert test candles
-	candles := []candle.Candle{
+	candles := []Candle{
 		{
 			Symbol:    "BTC-USDT",
 			Timeframe: "1m",
@@ -1270,7 +1269,7 @@ func TestPostgresDB_GetConstructedCandles(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Minute)
 
 	// Insert test candles
-	candles := []candle.Candle{
+	candles := []Candle{
 		{
 			Symbol:    "BTC-USDT",
 			Timeframe: "1m",
@@ -1370,7 +1369,7 @@ func TestPostgresDB_GetRawCandles(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Minute)
 
 	// Insert test candles
-	candles := []candle.Candle{
+	candles := []Candle{
 		{
 			Symbol:    "BTC-USDT",
 			Timeframe: "1m",
@@ -1507,7 +1506,7 @@ func TestPostgresDB_GetLatestCandle(t *testing.T) {
 	// Test 1: Get latest candle when multiple exist
 	t.Run("Get latest from multiple candles", func(t *testing.T) {
 		// Insert test candles with different timestamps
-		candles := []candle.Candle{
+		candles := []Candle{
 			{
 				Symbol:    "BTC-USDT",
 				Timeframe: "1m",
@@ -1576,7 +1575,7 @@ func TestPostgresDB_GetLatestCandle(t *testing.T) {
 	// Test 3: Get latest candle with specific timeframe
 	t.Run("Get latest with specific timeframe", func(t *testing.T) {
 		// Insert candles with different timeframes
-		candles := []candle.Candle{
+		candles := []Candle{
 			{
 				Symbol:    "ETH-USDT",
 				Timeframe: "1m",
@@ -1632,7 +1631,7 @@ func TestPostgresDB_GetLatestCandle(t *testing.T) {
 	// Test 4: Get latest candle with multiple sources
 	t.Run("Get latest with multiple sources", func(t *testing.T) {
 		// Insert candles with same timestamp but different sources
-		candles := []candle.Candle{
+		candles := []Candle{
 			{
 				Symbol:    "LTC-USDT",
 				Timeframe: "1m",
@@ -1703,7 +1702,7 @@ func TestPostgresDB_GetLatestCandleInRange(t *testing.T) {
 	// Test 1: Get latest in range with multiple candles
 	t.Run("Get latest in range with multiple candles", func(t *testing.T) {
 		// Insert test candles with different timestamps
-		candles := []candle.Candle{
+		candles := []Candle{
 			{
 				Symbol:    "BTC-USDT",
 				Timeframe: "1m",
@@ -1782,7 +1781,7 @@ func TestPostgresDB_GetLatestCandleInRange(t *testing.T) {
 		exactTime := now.Add(-4 * time.Hour)
 
 		// Insert test candle with exact timestamp
-		testCandle := candle.Candle{
+		testCandle := Candle{
 			Symbol:    "ETH-USDT",
 			Timeframe: "1m",
 			Timestamp: exactTime,
@@ -1797,7 +1796,7 @@ func TestPostgresDB_GetLatestCandleInRange(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		err := db.SaveCandle(ctx, &testCandle)
+		err := db.SaveCandle(ctx, testCandle)
 		require.NoError(t, err)
 
 		// Define range with exact start and end time
@@ -1834,7 +1833,7 @@ func TestPostgresDB_GetLatestCandleInRange(t *testing.T) {
 		sameTime := now.Add(-5 * time.Hour)
 
 		// Insert candles with same timestamp but different sources
-		candles := []candle.Candle{
+		candles := []Candle{
 			{
 				Symbol:    "XRP-USDT",
 				Timeframe: "1m",
@@ -1898,7 +1897,7 @@ func TestPostgresDB_GetLatestConstructedCandle(t *testing.T) {
 	// Test 1: Get latest constructed candle with multiple candles
 	t.Run("Get latest constructed candle with multiple candles", func(t *testing.T) {
 		// Insert mix of constructed and raw candles
-		candles := []candle.Candle{
+		candles := []Candle{
 			{
 				Symbol:    "BTC-USDT",
 				Timeframe: "1h",
@@ -1967,7 +1966,7 @@ func TestPostgresDB_GetLatestConstructedCandle(t *testing.T) {
 	// Test 3: Get latest constructed candle with specific timeframe
 	t.Run("Get latest constructed candle with specific timeframe", func(t *testing.T) {
 		// Insert constructed candles with different timeframes
-		candles := []candle.Candle{
+		candles := []Candle{
 			{
 				Symbol:    "ETH-USDT",
 				Timeframe: "1h",
@@ -2024,7 +2023,7 @@ func TestPostgresDB_GetLatestConstructedCandle(t *testing.T) {
 	// Test 4: Get latest constructed when only raw candles exist
 	t.Run("Get latest constructed when only raw candles exist", func(t *testing.T) {
 		// Insert only raw candles
-		candles := []candle.Candle{
+		candles := []Candle{
 			{
 				Symbol:    "LTC-USDT",
 				Timeframe: "1h",
@@ -2087,7 +2086,7 @@ func TestPostgresDB_GetLatest1mCandle(t *testing.T) {
 	// Test 1: Get latest 1m candle with multiple candles
 	t.Run("Get latest 1m candle with multiple candles", func(t *testing.T) {
 		// Insert 1m candles with different timestamps
-		candles := []candle.Candle{
+		candles := []Candle{
 			{
 				Symbol:    "BTC-USDT",
 				Timeframe: "1m",
@@ -2157,7 +2156,7 @@ func TestPostgresDB_GetLatest1mCandle(t *testing.T) {
 	// Test 3: Get latest 1m candle when only other timeframes exist
 	t.Run("Get latest 1m candle when only other timeframes exist", func(t *testing.T) {
 		// Insert candles with non-1m timeframes
-		candles := []candle.Candle{
+		candles := []Candle{
 			{
 				Symbol:    "ETH-USDT",
 				Timeframe: "5m",
@@ -2197,7 +2196,7 @@ func TestPostgresDB_GetLatest1mCandle(t *testing.T) {
 	// Test 4: Get latest 1m candle with multiple sources
 	t.Run("Get latest 1m candle with multiple sources", func(t *testing.T) {
 		// Insert 1m candles with different sources but same timestamp
-		candles := []candle.Candle{
+		candles := []Candle{
 			{
 				Symbol:    "XRP-USDT",
 				Timeframe: "1m",
@@ -2255,7 +2254,7 @@ func TestPostgresDB_GetLatest1mCandle(t *testing.T) {
 	// Test 6: Verify GetLatest1mCandle is equivalent to GetLatestCandle with "1m"
 	t.Run("Verify GetLatest1mCandle is equivalent to GetLatestCandle", func(t *testing.T) {
 		// Insert a new 1m candle
-		testCandle := candle.Candle{
+		testCandle := Candle{
 			Symbol:    "DOGE-USDT",
 			Timeframe: "1m",
 			Timestamp: now,
@@ -2270,7 +2269,7 @@ func TestPostgresDB_GetLatest1mCandle(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		err := db.SaveCandle(ctx, &testCandle)
+		err := db.SaveCandle(ctx, testCandle)
 		require.NoError(t, err)
 
 		// Get with both methods
@@ -2311,7 +2310,7 @@ func TestPostgresDB_DeleteCandles(t *testing.T) {
 	// Test 1: Delete candles before a specified time
 	t.Run("Delete candles before time", func(t *testing.T) {
 		// Insert test candles with different timestamps
-		candles := []candle.Candle{
+		candles := []Candle{
 			{
 				Symbol:    "BTC-USDT",
 				Timeframe: "1m",
@@ -2381,7 +2380,7 @@ func TestPostgresDB_DeleteCandles(t *testing.T) {
 	// Test 2: Delete candles for a specific symbol and timeframe
 	t.Run("Delete candles for specific symbol and timeframe", func(t *testing.T) {
 		// Insert test candles with different symbols and timeframes
-		candles := []candle.Candle{
+		candles := []Candle{
 			{
 				Symbol:    "ETH-USDT",
 				Timeframe: "1m",
@@ -2446,7 +2445,7 @@ func TestPostgresDB_DeleteCandles(t *testing.T) {
 	// Test 3: Delete with future timestamp (should delete nothing)
 	t.Run("Delete with future timestamp", func(t *testing.T) {
 		// Insert test candle
-		testCandle := candle.Candle{
+		testCandle := Candle{
 			Symbol:    "XRP-USDT",
 			Timeframe: "1m",
 			Timestamp: now,
@@ -2461,7 +2460,7 @@ func TestPostgresDB_DeleteCandles(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		err := db.SaveCandle(ctx, &testCandle)
+		err := db.SaveCandle(ctx, testCandle)
 		require.NoError(t, err)
 
 		// Try to delete with a timestamp in the future
@@ -2499,7 +2498,7 @@ func TestPostgresDB_DeleteCandlesInRange(t *testing.T) {
 	// Test 1: Delete candles in a specific time range with source filter
 	t.Run("Delete candles in range with source filter", func(t *testing.T) {
 		// Insert test candles with different timestamps and sources
-		candles := []candle.Candle{
+		candles := []Candle{
 			{
 				Symbol:    "BTC-USDT",
 				Timeframe: "1m",
@@ -2564,7 +2563,7 @@ func TestPostgresDB_DeleteCandlesInRange(t *testing.T) {
 	// Test 2: Delete candles in range without source filter
 	t.Run("Delete candles in range without source filter", func(t *testing.T) {
 		// Insert test candles with different timestamps and sources
-		candles := []candle.Candle{
+		candles := []Candle{
 			{
 				Symbol:    "ETH-USDT",
 				Timeframe: "1m",
@@ -2631,7 +2630,7 @@ func TestPostgresDB_DeleteCandlesInRange(t *testing.T) {
 		exactTime := now.Add(-4 * time.Hour)
 
 		// Insert test candle with exact timestamp
-		testCandle := candle.Candle{
+		testCandle := Candle{
 			Symbol:    "LTC-USDT",
 			Timeframe: "1m",
 			Timestamp: exactTime,
@@ -2646,7 +2645,7 @@ func TestPostgresDB_DeleteCandlesInRange(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		err := db.SaveCandle(ctx, &testCandle)
+		err := db.SaveCandle(ctx, testCandle)
 		require.NoError(t, err)
 
 		// Delete with exact start and end time
@@ -2662,7 +2661,7 @@ func TestPostgresDB_DeleteCandlesInRange(t *testing.T) {
 	// Test 4: Delete with inverted time range (should delete nothing)
 	t.Run("Delete with inverted time range", func(t *testing.T) {
 		// Insert test candle
-		testCandle := candle.Candle{
+		testCandle := Candle{
 			Symbol:    "XRP-USDT",
 			Timeframe: "1m",
 			Timestamp: now.Add(-5 * time.Hour),
@@ -2677,7 +2676,7 @@ func TestPostgresDB_DeleteCandlesInRange(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		err := db.SaveCandle(ctx, &testCandle)
+		err := db.SaveCandle(ctx, testCandle)
 		require.NoError(t, err)
 
 		// Try to delete with end before start
@@ -2719,7 +2718,7 @@ func TestPostgresDB_DeleteConstructedCandles(t *testing.T) {
 	// Test 1: Delete constructed candles before a specific time
 	t.Run("Delete constructed candles before time", func(t *testing.T) {
 		// Create candles with "constructed" source and other sources
-		candles := []candle.Candle{
+		candles := []Candle{
 			// Constructed candles
 			{
 				Symbol:    "BTC-USDT",
@@ -2812,7 +2811,7 @@ func TestPostgresDB_DeleteConstructedCandles(t *testing.T) {
 	// Test 2: Delete constructed candles for a specific timeframe
 	t.Run("Delete constructed candles for specific timeframe", func(t *testing.T) {
 		// Create candles with different timeframes
-		candles := []candle.Candle{
+		candles := []Candle{
 			{
 				Symbol:    "ETH-USDT",
 				Timeframe: "15m",
@@ -2861,7 +2860,7 @@ func TestPostgresDB_DeleteConstructedCandles(t *testing.T) {
 	// Test 3: Delete with future timestamp (should delete nothing)
 	t.Run("Delete with future timestamp", func(t *testing.T) {
 		// Insert constructed test candle
-		testCandle := candle.Candle{
+		testCandle := Candle{
 			Symbol:    "XRP-USDT",
 			Timeframe: "1h",
 			Timestamp: now,
@@ -2876,7 +2875,7 @@ func TestPostgresDB_DeleteConstructedCandles(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		err := db.SaveCandle(ctx, &testCandle)
+		err := db.SaveCandle(ctx, testCandle)
 		require.NoError(t, err)
 
 		// Try to delete with a timestamp in the future
@@ -2901,7 +2900,7 @@ func TestPostgresDB_DeleteConstructedCandles(t *testing.T) {
 	// Test 5: Delete from multiple symbols with the same timeframe
 	t.Run("Delete from multiple symbols with same timeframe", func(t *testing.T) {
 		// Create constructed candles for multiple symbols
-		candles := []candle.Candle{
+		candles := []Candle{
 			{
 				Symbol:    "LTC-USDT",
 				Timeframe: "4h",
@@ -2962,7 +2961,7 @@ func TestPostgresDB_GetCandleCount(t *testing.T) {
 	// Test 1: Count candles with multiple candles
 	t.Run("Count multiple candles", func(t *testing.T) {
 		// Insert test candles with different timestamps
-		candles := []candle.Candle{
+		candles := []Candle{
 			{
 				Symbol:    "BTC-USDT",
 				Timeframe: "1m",
@@ -3023,7 +3022,7 @@ func TestPostgresDB_GetCandleCount(t *testing.T) {
 	// Test 3: Count candles with specific timeframe
 	t.Run("Count with specific timeframe", func(t *testing.T) {
 		// Insert candles with different timeframes
-		candles := []candle.Candle{
+		candles := []Candle{
 			{
 				Symbol:    "ETH-USDT",
 				Timeframe: "1m",
@@ -3065,7 +3064,7 @@ func TestPostgresDB_GetCandleCount(t *testing.T) {
 		exactTime := now.Add(-5 * time.Hour)
 
 		// Insert test candle with exact timestamp
-		testCandle := candle.Candle{
+		testCandle := Candle{
 			Symbol:    "LTC-USDT",
 			Timeframe: "1m",
 			Timestamp: exactTime,
@@ -3080,7 +3079,7 @@ func TestPostgresDB_GetCandleCount(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		err := db.SaveCandle(ctx, &testCandle)
+		err := db.SaveCandle(ctx, testCandle)
 		require.NoError(t, err)
 
 		// Count with exact start and end time
@@ -3109,7 +3108,7 @@ func TestPostgresDB_GetCandleCount(t *testing.T) {
 		sameTime := now.Add(-6 * time.Hour)
 
 		// Insert candles with same timestamp but different sources
-		candles := []candle.Candle{
+		candles := []Candle{
 			{
 				Symbol:    "XRP-USDT",
 				Timeframe: "1m",
@@ -3162,7 +3161,7 @@ func TestPostgresDB_GetConstructedCandleCount(t *testing.T) {
 	// Test 1: Count constructed candles with mix of constructed and raw candles
 	t.Run("Count with mix of constructed and raw candles", func(t *testing.T) {
 		// Insert mix of constructed and raw candles
-		candles := []candle.Candle{
+		candles := []Candle{
 			{
 				Symbol:    "BTC-USDT",
 				Timeframe: "1h",
@@ -3228,7 +3227,7 @@ func TestPostgresDB_GetConstructedCandleCount(t *testing.T) {
 	// Test 3: Count constructed candles with specific timeframe
 	t.Run("Count constructed with specific timeframe", func(t *testing.T) {
 		// Insert constructed candles with different timeframes
-		candles := []candle.Candle{
+		candles := []Candle{
 			{
 				Symbol:    "ETH-USDT",
 				Timeframe: "1h",
@@ -3270,7 +3269,7 @@ func TestPostgresDB_GetConstructedCandleCount(t *testing.T) {
 		exactTime := now.Add(-5 * time.Hour)
 
 		// Insert constructed candle with exact timestamp
-		testCandle := candle.Candle{
+		testCandle := Candle{
 			Symbol:    "LTC-USDT",
 			Timeframe: "1h",
 			Timestamp: exactTime,
@@ -3285,7 +3284,7 @@ func TestPostgresDB_GetConstructedCandleCount(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		err := db.SaveCandle(ctx, &testCandle)
+		err := db.SaveCandle(ctx, testCandle)
 		require.NoError(t, err)
 
 		// Count with exact start and end time
@@ -3297,7 +3296,7 @@ func TestPostgresDB_GetConstructedCandleCount(t *testing.T) {
 	// Test 5: Count constructed candles when only raw candles exist
 	t.Run("Count constructed when only raw candles exist", func(t *testing.T) {
 		// Insert only raw candles
-		candles := []candle.Candle{
+		candles := []Candle{
 			{
 				Symbol:    "XRP-USDT",
 				Timeframe: "1h",
@@ -3350,7 +3349,7 @@ func TestPostgresDB_UpdateCandle(t *testing.T) {
 	// Test 1: Update existing candle
 	t.Run("Update existing candle", func(t *testing.T) {
 		// Insert initial candle
-		initialCandle := candle.Candle{
+		initialCandle := Candle{
 			Symbol:    "BTC-USDT",
 			Timeframe: "1m",
 			Timestamp: now,
@@ -3365,11 +3364,11 @@ func TestPostgresDB_UpdateCandle(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		err := db.SaveCandle(ctx, &initialCandle)
+		err := db.SaveCandle(ctx, initialCandle)
 		require.NoError(t, err)
 
 		// Create updated candle with same key but different values
-		updatedCandle := candle.Candle{
+		updatedCandle := Candle{
 			Symbol:    "BTC-USDT",
 			Timeframe: "1m",
 			Timestamp: now,
@@ -3399,7 +3398,7 @@ func TestPostgresDB_UpdateCandle(t *testing.T) {
 
 	// Test 2: Update non-existent candle
 	t.Run("Update non-existent candle", func(t *testing.T) {
-		nonExistentCandle := candle.Candle{
+		nonExistentCandle := Candle{
 			Symbol:    "NON-EXISTENT",
 			Timeframe: "1m",
 			Timestamp: now,
@@ -3423,7 +3422,7 @@ func TestPostgresDB_UpdateCandle(t *testing.T) {
 	// Test 3: Update with invalid candle data
 	t.Run("Update with invalid candle data", func(t *testing.T) {
 		// Insert initial valid candle
-		initialCandle := candle.Candle{
+		initialCandle := Candle{
 			Symbol:    "ETH-USDT",
 			Timeframe: "1m",
 			Timestamp: now,
@@ -3438,11 +3437,11 @@ func TestPostgresDB_UpdateCandle(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		err := db.SaveCandle(ctx, &initialCandle)
+		err := db.SaveCandle(ctx, initialCandle)
 		require.NoError(t, err)
 
 		// Create invalid candle (negative price)
-		invalidCandle := candle.Candle{
+		invalidCandle := Candle{
 			Symbol:    "ETH-USDT",
 			Timeframe: "1m",
 			Timestamp: now,
@@ -3463,7 +3462,7 @@ func TestPostgresDB_UpdateCandle(t *testing.T) {
 	// Test 4: Update with different source
 	t.Run("Update with different source", func(t *testing.T) {
 		// Insert initial candle with source1
-		initialCandle := candle.Candle{
+		initialCandle := Candle{
 			Symbol:    "LTC-USDT",
 			Timeframe: "1m",
 			Timestamp: now,
@@ -3478,11 +3477,11 @@ func TestPostgresDB_UpdateCandle(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		err := db.SaveCandle(ctx, &initialCandle)
+		err := db.SaveCandle(ctx, initialCandle)
 		require.NoError(t, err)
 
 		// Create updated candle with source2 (different primary key)
-		updatedCandle := candle.Candle{
+		updatedCandle := Candle{
 			Symbol:    "LTC-USDT",
 			Timeframe: "1m",
 			Timestamp: now,
@@ -3516,7 +3515,7 @@ func TestPostgresDB_UpdateCandles(t *testing.T) {
 	// Test 1: Update multiple existing candles
 	t.Run("Update multiple existing candles", func(t *testing.T) {
 		// Insert initial candles
-		initialCandles := []candle.Candle{
+		initialCandles := []Candle{
 			{
 				Symbol:    "BTC-USDT",
 				Timeframe: "1m",
@@ -3548,7 +3547,7 @@ func TestPostgresDB_UpdateCandles(t *testing.T) {
 		require.NoError(t, err)
 
 		// Create updated candles
-		updatedCandles := []candle.Candle{
+		updatedCandles := []Candle{
 			{
 				Symbol:    "BTC-USDT",
 				Timeframe: "1m",
@@ -3593,7 +3592,7 @@ func TestPostgresDB_UpdateCandles(t *testing.T) {
 
 	// Test 2: Update with empty slice
 	t.Run("Update with empty slice", func(t *testing.T) {
-		emptyCandles := []candle.Candle{}
+		emptyCandles := []Candle{}
 
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
@@ -3605,7 +3604,7 @@ func TestPostgresDB_UpdateCandles(t *testing.T) {
 
 	// Test 3: Update with non-existent candles
 	t.Run("Update with non-existent candles", func(t *testing.T) {
-		nonExistentCandles := []candle.Candle{
+		nonExistentCandles := []Candle{
 			{
 				Symbol:    "NON-EXISTENT",
 				Timeframe: "1m",
@@ -3631,7 +3630,7 @@ func TestPostgresDB_UpdateCandles(t *testing.T) {
 	// Test 4: Update with mix of existing and non-existent candles
 	t.Run("Update with mix of existing and non-existent candles", func(t *testing.T) {
 		// Insert one candle
-		existingCandle := candle.Candle{
+		existingCandle := Candle{
 			Symbol:    "ETH-USDT",
 			Timeframe: "1m",
 			Timestamp: now,
@@ -3646,11 +3645,11 @@ func TestPostgresDB_UpdateCandles(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		err := db.SaveCandle(ctx, &existingCandle)
+		err := db.SaveCandle(ctx, existingCandle)
 		require.NoError(t, err)
 
 		// Create mix of existing and non-existent candles
-		mixedCandles := []candle.Candle{
+		mixedCandles := []Candle{
 			{
 				Symbol:    "ETH-USDT",
 				Timeframe: "1m",
@@ -3695,7 +3694,7 @@ func TestPostgresDB_UpdateCandles(t *testing.T) {
 	// Test 5: Update with invalid candle data
 	t.Run("Update with invalid candle data", func(t *testing.T) {
 		// Insert valid candle
-		validCandle := candle.Candle{
+		validCandle := Candle{
 			Symbol:    "LTC-USDT",
 			Timeframe: "1m",
 			Timestamp: now,
@@ -3710,11 +3709,11 @@ func TestPostgresDB_UpdateCandles(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		err := db.SaveCandle(ctx, &validCandle)
+		err := db.SaveCandle(ctx, validCandle)
 		require.NoError(t, err)
 
 		// Try to update with invalid data
-		invalidCandles := []candle.Candle{
+		invalidCandles := []Candle{
 			{
 				Symbol:    "LTC-USDT",
 				Timeframe: "1m",
