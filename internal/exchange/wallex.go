@@ -10,10 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/amirphl/simple-trader/internal/candle"
-	"github.com/amirphl/simple-trader/internal/market"
 	"github.com/amirphl/simple-trader/internal/notifier"
-	"github.com/amirphl/simple-trader/internal/order"
+	"github.com/amirphl/simple-trader/internal/tfutils"
 	wallex "github.com/wallexchange/wallex-go"
 )
 
@@ -56,16 +54,25 @@ func retry(attempts int, delay time.Duration, fn func() error) error {
 	return errors.New("all retry attempts failed")
 }
 
-func (w *WallexExchange) FetchCandles(ctx context.Context, symbol string, timeframe string, start, end time.Time) ([]candle.Candle, error) {
+func trimTimeframe(timeframe string) string {
+	trimmedTimeframe := strings.TrimSuffix(timeframe, "m")
+	return trimmedTimeframe
+}
+
+func trimSymbol(symbol string) string {
+	symbolNoHyphen := strings.ReplaceAll(symbol, "-", "")
+	uppercasedSymbol := strings.ToUpper(symbolNoHyphen)
+	return uppercasedSymbol
+}
+
+func (w *WallexExchange) FetchCandles(ctx context.Context, symbol string, timeframe string, start, end time.Time) ([]Candle, error) {
 	// Validate timeframe
-	if !candle.IsValidTimeframe(timeframe) {
+	if !tfutils.IsValidTimeframe(timeframe) {
 		return nil, fmt.Errorf("unsupported timeframe: %s", timeframe)
 	}
 
-	trimmedTimeframe := strings.TrimSuffix(timeframe, "m")
-
-	symbolNoHyphen := strings.ReplaceAll(symbol, "-", "")
-	uppercasedSymbol := strings.ToUpper(symbolNoHyphen)
+	trimmedTimeframe := trimTimeframe(timeframe)
+	trimmedSymbol := trimSymbol(symbol)
 
 	var wallexCandles []*wallex.Candle
 
@@ -77,7 +84,7 @@ func (w *WallexExchange) FetchCandles(ctx context.Context, symbol string, timefr
 	default:
 		err := retry(3, 2*time.Second, func() error {
 			var err error
-			wallexCandles, err = w.client.Candles(uppercasedSymbol, trimmedTimeframe, start, end)
+			wallexCandles, err = w.client.Candles(trimmedSymbol, trimmedTimeframe, start, end)
 			if err != nil {
 				return fmt.Errorf("fetching candles: %w", err)
 			}
@@ -88,7 +95,7 @@ func (w *WallexExchange) FetchCandles(ctx context.Context, symbol string, timefr
 		}
 	}
 
-	var candles []candle.Candle
+	var candles []Candle
 	for _, wc := range wallexCandles {
 		open, _ := strconv.ParseFloat(string(wc.Open), 64)
 		high, _ := strconv.ParseFloat(string(wc.High), 64)
@@ -96,7 +103,7 @@ func (w *WallexExchange) FetchCandles(ctx context.Context, symbol string, timefr
 		close, _ := strconv.ParseFloat(string(wc.Close), 64)
 		volume, _ := strconv.ParseFloat(string(wc.Volume), 64)
 
-		c := candle.Candle{
+		c := Candle{
 			Timestamp: wc.Timestamp.UTC().Truncate(time.Minute),
 			Open:      open,
 			High:      high,
@@ -121,9 +128,9 @@ func (w *WallexExchange) FetchCandles(ctx context.Context, symbol string, timefr
 }
 
 // FetchLatestCandles fetches the most recent candles for a symbol and timeframe
-func (w *WallexExchange) FetchLatestCandles(ctx context.Context, symbol string, timeframe string, count int) ([]candle.Candle, error) {
+func (w *WallexExchange) FetchLatestCandles(ctx context.Context, symbol string, timeframe string, count int) ([]Candle, error) {
 	end := time.Now().UTC()
-	duration := candle.GetTimeframeDuration(timeframe)
+	duration := tfutils.GetTimeframeDuration(timeframe)
 	if duration == 0 {
 		return nil, fmt.Errorf("invalid timeframe: %s", timeframe)
 	}
@@ -134,115 +141,22 @@ func (w *WallexExchange) FetchLatestCandles(ctx context.Context, symbol string, 
 	return w.FetchCandles(ctx, symbol, timeframe, start, end)
 }
 
-func (w *WallexExchange) FetchOrderBook(ctx context.Context, symbol string) (market.OrderBook, error) {
-	select {
-	case <-ctx.Done():
-		log.Printf("Exchange | %s FetchOrderBook timeout", w.Name())
-		return market.OrderBook{}, ctx.Err()
-
-	default:
-		symbolNoHyphen := strings.ReplaceAll(symbol, "-", "")
-		uppercasedSymbol := strings.ToUpper(symbolNoHyphen)
-
-		asks, bids, err := w.client.MarketOrders(uppercasedSymbol)
-		if err != nil {
-			return market.OrderBook{}, err
-		}
-		var ob market.OrderBook
-		ob.Symbol = symbol
-		ob.Timestamp = time.Now().UTC()
-		for _, a := range asks {
-			price, _ := strconv.ParseFloat(string(a.Price), 64)
-			qty, _ := strconv.ParseFloat(string(a.Quantity), 64)
-			ob.Asks = append(ob.Asks, [2]float64{price, qty})
-		}
-		for _, b := range bids {
-			price, _ := strconv.ParseFloat(string(b.Price), 64)
-			qty, _ := strconv.ParseFloat(string(b.Quantity), 64)
-			ob.Bids = append(ob.Bids, [2]float64{price, qty})
-		}
-		return ob, nil
-	}
-}
-
-func (w *WallexExchange) FetchTick(ctx context.Context, symbol string) (market.Tick, error) {
-	select {
-	case <-ctx.Done():
-		log.Printf("Exchange | %s FetchTick timeout", w.Name())
-		return market.Tick{}, ctx.Err()
-
-	default:
-		symbolNoHyphen := strings.ReplaceAll(symbol, "-", "")
-		uppercasedSymbol := strings.ToUpper(symbolNoHyphen)
-
-		trades, err := w.client.MarketTrades(uppercasedSymbol)
-		if err != nil || len(trades) == 0 {
-			return market.Tick{}, err
-		}
-		last := trades[len(trades)-1]
-		price, _ := strconv.ParseFloat(string(last.Price), 64)
-		qty, _ := strconv.ParseFloat(string(last.Quantity), 64)
-
-		return market.Tick{
-			Symbol:    symbol,
-			Price:     price,
-			Quantity:  qty,
-			Side:      "", // Wallex may not provide side; TODO: map if available
-			Timestamp: last.Timestamp.UTC(),
-		}, nil
-	}
-}
-
-func (w *WallexExchange) FetchTicks(ctx context.Context, symbol string, from, to time.Time) ([]market.Tick, error) {
-	select {
-	case <-ctx.Done():
-		log.Printf("Exchange %s FetchTicks timeout", w.Name())
-		return nil, ctx.Err()
-
-	default:
-		symbolNoHyphen := strings.ReplaceAll(symbol, "-", "")
-		uppercasedSymbol := strings.ToUpper(symbolNoHyphen)
-
-		trades, err := w.client.MarketTrades(uppercasedSymbol)
-		if err != nil {
-			return nil, err
-		}
-		var ticks []market.Tick
-		for _, t := range trades {
-			if t.Timestamp.UTC().Before(from) || t.Timestamp.UTC().After(to) {
-				continue
-			}
-			price, _ := strconv.ParseFloat(string(t.Price), 64)
-			qty, _ := strconv.ParseFloat(string(t.Quantity), 64)
-			ticks = append(ticks, market.Tick{
-				Symbol:    symbol,
-				Price:     price,
-				Quantity:  qty,
-				Side:      "", // Wallex may not provide side; TODO: map if available
-				Timestamp: t.Timestamp.UTC(),
-			})
-		}
-		return ticks, nil
-	}
-}
-
-func (w *WallexExchange) SubmitOrder(ctx context.Context, req order.OrderRequest) (order.OrderResponse, error) {
+func (w *WallexExchange) SubmitOrder(ctx context.Context, req OrderRequest) (Order, error) {
 	select {
 	case <-ctx.Done():
 		log.Printf("Exchange | %s SubmitOrder timeout", w.Name())
-		return order.OrderResponse{}, ctx.Err()
+		return Order{}, ctx.Err()
 
 	default:
 		price := strconv.FormatFloat(req.Price, 'f', 8, 64)
 		qty := strconv.FormatFloat(req.Quantity, 'f', 8, 64)
 
-		symbolNoHyphen := strings.ReplaceAll(req.Symbol, "-", "")
-		uppercasedSymbol := strings.ToUpper(symbolNoHyphen)
+		trimmedSymbol := trimSymbol(req.Symbol)
 		uppercasedType := strings.ToUpper(req.Type)
 		uppercasedSide := strings.ToUpper(req.Side)
 
 		params := &wallex.OrderParams{
-			Symbol:   uppercasedSymbol,
+			Symbol:   trimmedSymbol,
 			Type:     uppercasedType,
 			Side:     uppercasedSide,
 			Price:    wallex.Number(price),
@@ -250,10 +164,10 @@ func (w *WallexExchange) SubmitOrder(ctx context.Context, req order.OrderRequest
 		}
 		resp, err := w.client.PlaceOrder(params)
 		if err != nil {
-			return order.OrderResponse{}, err
+			return Order{}, err
 		}
 
-		return order.OrderResponse{
+		return Order{
 			OrderID:   resp.ClientOrderID,
 			Status:    strings.ToUpper(resp.Status),
 			FilledQty: float64Ptr(resp.ExecutedQty),
@@ -264,12 +178,13 @@ func (w *WallexExchange) SubmitOrder(ctx context.Context, req order.OrderRequest
 			Type:      req.Type,
 			Price:     req.Price,
 			Quantity:  req.Quantity,
+			UpdatedAt: resp.CreatedAt,
 		}, nil
 	}
 }
 
-func (w *WallexExchange) SubmitOrderWithRetry(ctx context.Context, req order.OrderRequest, maxAttempts int, delay time.Duration) (order.OrderResponse, error) {
-	var resp order.OrderResponse
+func (w *WallexExchange) SubmitOrderWithRetry(ctx context.Context, req OrderRequest, maxAttempts int, delay time.Duration) (Order, error) {
+	var resp Order
 	var err error
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		resp, err = w.SubmitOrder(ctx, req)
@@ -295,16 +210,16 @@ func (w *WallexExchange) CancelOrder(ctx context.Context, orderID string) error 
 	}
 }
 
-func (w *WallexExchange) GetOrderStatus(ctx context.Context, orderID string) (order.OrderResponse, error) {
+func (w *WallexExchange) GetOrderStatus(ctx context.Context, orderID string) (Order, error) {
 	select {
 	case <-ctx.Done():
 		log.Printf("Exchange | %s GetOrderStatus timeout", w.Name())
-		return order.OrderResponse{}, ctx.Err()
+		return Order{}, ctx.Err()
 
 	default:
 		resp, err := w.client.Order(orderID)
 		if err != nil {
-			return order.OrderResponse{}, err
+			return Order{}, err
 		}
 
 		symbol := ""
@@ -319,7 +234,7 @@ func (w *WallexExchange) GetOrderStatus(ctx context.Context, orderID string) (or
 		lowercasedSide := strings.ToLower(resp.Side)
 		lowercasedType := strings.ToLower(resp.Type)
 
-		return order.OrderResponse{
+		return Order{
 			OrderID:   resp.ClientOrderID,
 			Status:    strings.ToUpper(resp.Status),
 			FilledQty: float64Ptr(resp.ExecutedQty),
@@ -336,7 +251,7 @@ func (w *WallexExchange) GetOrderStatus(ctx context.Context, orderID string) (or
 }
 
 // FetchBalances retrieves the current balance of all assets from the Wallex exchange
-func (w *WallexExchange) FetchBalances(ctx context.Context) (map[string]market.Balance, error) {
+func (w *WallexExchange) FetchBalances(ctx context.Context) (map[string]Balance, error) {
 	select {
 	case <-ctx.Done():
 		log.Printf("Exchange | %s FetchBalances timeout", w.Name())
@@ -356,14 +271,14 @@ func (w *WallexExchange) FetchBalances(ctx context.Context) (map[string]market.B
 			return nil, fmt.Errorf("FetchBalances failed: %w", err)
 		}
 
-		balances := make(map[string]market.Balance)
+		balances := make(map[string]Balance)
 		for asset, wb := range wallexBalances {
 			// Parse the balance values from wallex.Number to float64
 			available, _ := strconv.ParseFloat(string(wb.Value), 64)
 			locked, _ := strconv.ParseFloat(string(wb.Locked), 64)
 			total := available + locked
 
-			balances[asset] = market.Balance{
+			balances[asset] = Balance{
 				Asset:     asset,
 				Available: available,
 				Locked:    locked,
