@@ -9,6 +9,9 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/amirphl/simple-trader/internal/db"
+	"github.com/amirphl/simple-trader/internal/tfutils"
 )
 
 type Candle struct {
@@ -21,6 +24,13 @@ type Candle struct {
 	Symbol    string    `json:"symbol"`
 	Timeframe string    `json:"timeframe"`
 	Source    string    `json:"source"`
+}
+
+// IsComplete checks if a candle is complete (not the current minute)
+func (c *Candle) IsComplete() bool {
+	now := time.Now().UTC()
+	candleEnd := c.Timestamp.Add(tfutils.GetTimeframeDuration(c.Timeframe))
+	return now.After(candleEnd)
 }
 
 // Validate checks if a candle has valid data
@@ -52,41 +62,34 @@ func (c *Candle) Validate() error {
 	return nil
 }
 
-// IsComplete checks if a candle is complete (not the current minute)
-func (c *Candle) IsComplete() bool {
-	now := time.Now().UTC()
-	candleEnd := c.Timestamp.Add(GetTimeframeDuration(c.Timeframe))
-	return now.After(candleEnd)
-}
-
 // GetAggregationPath returns the path of timeframes needed to aggregate from source to target
 func GetAggregationPath(sourceTf, targetTf string) ([]string, error) {
-	if !IsValidTimeframe(sourceTf) || !IsValidTimeframe(targetTf) {
+	if !tfutils.IsValidTimeframe(sourceTf) || !tfutils.IsValidTimeframe(targetTf) {
 		return nil, fmt.Errorf("invalid timeframe: source=%s, target=%s", sourceTf, targetTf)
 	}
 
-	sourceDur := GetTimeframeDuration(sourceTf)
-	targetDur := GetTimeframeDuration(targetTf)
+	sourceDur := tfutils.GetTimeframeDuration(sourceTf)
+	targetDur := tfutils.GetTimeframeDuration(targetTf)
 
 	if sourceDur >= targetDur {
 		return nil, fmt.Errorf("source timeframe must be smaller than target timeframe")
 	}
 
 	// Pre-sort timeframes by duration for more efficient lookup
-	timeframes := GetSupportedTimeframes()
+	timeframes := tfutils.GetSupportedTimeframes()
 	sort.Slice(timeframes, func(i, j int) bool {
-		return GetTimeframeDuration(timeframes[i]) < GetTimeframeDuration(timeframes[j])
+		return tfutils.GetTimeframeDuration(timeframes[i]) < tfutils.GetTimeframeDuration(timeframes[j])
 	})
 
 	// Find the path of timeframes needed
 	var path []string
 	current := sourceTf
-	for GetTimeframeDuration(current) < targetDur {
+	for tfutils.GetTimeframeDuration(current) < targetDur {
 		// Find the next larger timeframe
 		found := false
 		for _, timeframe := range timeframes {
-			tfDuration := GetTimeframeDuration(timeframe)
-			if tfDuration > GetTimeframeDuration(current) && tfDuration <= targetDur {
+			tfDuration := tfutils.GetTimeframeDuration(timeframe)
+			if tfDuration > tfutils.GetTimeframeDuration(current) && tfDuration <= targetDur {
 				path = append(path, timeframe)
 				current = timeframe
 				found = true
@@ -99,30 +102,6 @@ func GetAggregationPath(sourceTf, targetTf string) ([]string, error) {
 	}
 
 	return path, nil
-}
-
-// Storage interface for saving and retrieving candles.
-type Storage interface {
-	SaveCandle(ctx context.Context, candle *Candle) error
-	SaveCandles(ctx context.Context, candles []Candle) error
-	SaveConstructedCandles(ctx context.Context, candles []Candle) error
-	GetCandle(ctx context.Context, symbol, timeframe string, timestamp time.Time, source string) (*Candle, error)
-	GetCandles(ctx context.Context, symbol, timeframe, source string, start, end time.Time) ([]Candle, error)
-	GetCandlesV2(ctx context.Context, timeframe string, start, end time.Time) ([]Candle, error)
-	GetRawCandles(ctx context.Context, symbol, timeframe string, start, end time.Time) ([]Candle, error)
-	GetLatestCandle(ctx context.Context, symbol, timeframe string) (*Candle, error)
-	GetLatestCandleInRange(ctx context.Context, symbol, timeframe string, start, end time.Time) (*Candle, error)
-	GetLatestConstructedCandle(ctx context.Context, symbol, timeframe string) (*Candle, error)
-	DeleteCandles(ctx context.Context, symbol, timeframe string, before time.Time) error
-	DeleteCandlesInRange(ctx context.Context, symbol, timeframe, source string, start, end time.Time) error
-	DeleteConstructedCandles(ctx context.Context, symbol, timeframe string, before time.Time) error
-	GetCandleCount(ctx context.Context, symbol, timeframe string, start, end time.Time) (int, error)
-	GetConstructedCandleCount(ctx context.Context, symbol, timeframe string, start, end time.Time) (int, error)
-	UpdateCandle(ctx context.Context, candle Candle) error
-	UpdateCandles(ctx context.Context, candle []Candle) error
-	GetAggregationStats(ctx context.Context, symbol string) (map[string]any, error)
-	GetMissingCandleRanges(ctx context.Context, symbol string, start, end time.Time) ([]struct{ Start, End time.Time }, error)
-	GetCandleSourceStats(ctx context.Context, symbol string, start, end time.Time) (map[string]any, error)
 }
 
 // Aggregator interface for candle aggregation
@@ -150,11 +129,11 @@ type Ingester interface {
 }
 
 type DefaultAggregator struct {
-	storage Storage
+	storage db.Storage
 }
 
 // NewAggregator creates a new aggregator
-func NewAggregator(storage Storage) Aggregator {
+func NewAggregator(storage db.Storage) Aggregator {
 	return &DefaultAggregator{
 		storage: storage,
 	}
@@ -166,7 +145,7 @@ func (a *DefaultAggregator) Aggregate(candles []Candle, timeframe string) ([]Can
 		return nil, nil
 	}
 
-	dur, err := ParseTimeframe(timeframe)
+	dur, err := tfutils.ParseTimeframe(timeframe)
 	if err != nil {
 		return nil, fmt.Errorf("invalid timeframe %s: %w", timeframe, err)
 	}
@@ -178,7 +157,7 @@ func (a *DefaultAggregator) Aggregate(candles []Candle, timeframe string) ([]Can
 
 	firstCandleSymbol := candles[0].Symbol
 	firstCandleTimeframe := candles[0].Timeframe
-	firstCandleDur, err := ParseTimeframe(firstCandleTimeframe)
+	firstCandleDur, err := tfutils.ParseTimeframe(firstCandleTimeframe)
 	if err != nil {
 		return nil, fmt.Errorf("invalid timeframe %s: %w", firstCandleTimeframe, err)
 	}
@@ -277,12 +256,12 @@ func (a *DefaultAggregator) Aggregate1mTimeRange(ctx context.Context, symbol str
 	}
 
 	// Aggregate to target timeframe
-	return a.AggregateFrom1m(oneMCandles, targetTimeframe)
+	return a.AggregateFrom1m(DBCandlesToCandles(oneMCandles), targetTimeframe)
 }
 
 // DefaultIngester handles real-time candle ingestion and aggregation
 type DefaultIngester struct {
-	storage     Storage
+	storage     db.Storage
 	aggregator  Aggregator
 	cache       map[string]map[string]*Candle // symbol -> timeframe -> latest candle
 	subscribers []chan []Candle               // TODO: Lifetime management
@@ -290,7 +269,7 @@ type DefaultIngester struct {
 }
 
 // NewCandleIngester creates a new ingester with configuration
-func NewCandleIngester(storage Storage) Ingester {
+func NewCandleIngester(storage db.Storage) Ingester {
 	return &DefaultIngester{
 		storage:    storage,
 		aggregator: NewAggregator(storage),
@@ -304,7 +283,7 @@ func (ci *DefaultIngester) IngestCandle(ctx context.Context, c Candle) error {
 		return fmt.Errorf("invalid candle: %w", err)
 	}
 
-	dur := GetTimeframeDuration(c.Timeframe)
+	dur := tfutils.GetTimeframeDuration(c.Timeframe)
 	if dur == 0 {
 		return nil
 	}
@@ -314,7 +293,7 @@ func (ci *DefaultIngester) IngestCandle(ctx context.Context, c Candle) error {
 	defer ci.mu.Unlock()
 
 	// Save the original candle
-	if err := ci.storage.SaveCandles(ctx, []Candle{c}); err != nil {
+	if err := ci.storage.SaveCandles(ctx, CandlesToDbCandles([]Candle{c})); err != nil {
 		return fmt.Errorf("failed to save candle: %w", err)
 	}
 
@@ -386,7 +365,7 @@ func (ci *DefaultIngester) IngestRaw1mCandles(ctx context.Context, candles []Can
 	}
 
 	// Save raw 1m candles in one batch operation
-	if err := ci.storage.SaveCandles(ctx, oneMCandles); err != nil {
+	if err := ci.storage.SaveCandles(ctx, CandlesToDbCandles(oneMCandles)); err != nil {
 		return fmt.Errorf("failed to save raw 1m candles: %w", err)
 	}
 
@@ -446,18 +425,18 @@ func (ci *DefaultIngester) AggregateSymbolToHigherTimeframes(ctx context.Context
 	}
 
 	// Aggregate to all higher timeframes
-	higherTimeframes := GetAggregationTimeframes()
+	higherTimeframes := tfutils.GetAggregationTimeframes()
 	// Prepare batch updates
 	var newCandles []Candle
 
 	for _, timeframe := range higherTimeframes {
-		dur := GetTimeframeDuration(timeframe)
+		dur := tfutils.GetTimeframeDuration(timeframe)
 		if dur == 0 {
 			continue
 		}
 
 		// Aggregate candles for this bucket
-		aggregated, err := ci.aggregator.AggregateFrom1m(allOneMins, timeframe)
+		aggregated, err := ci.aggregator.AggregateFrom1m(DBCandlesToCandles(allOneMins), timeframe)
 		if err != nil {
 			return fmt.Errorf("failed to aggregate to %s for bucket %v: %w", timeframe, timeframe, err)
 		}
@@ -477,7 +456,7 @@ func (ci *DefaultIngester) AggregateSymbolToHigherTimeframes(ctx context.Context
 
 	// NOTE: Very important: In case of conflict, it updates the candle.
 	if len(newCandles) > 0 {
-		if err := ci.storage.SaveConstructedCandles(ctx, newCandles); err != nil {
+		if err := ci.storage.SaveConstructedCandles(ctx, CandlesToDbCandles(newCandles)); err != nil {
 			return fmt.Errorf("failed to save constructed candles: %w", err)
 		}
 	}
@@ -506,19 +485,19 @@ func (ci *DefaultIngester) BulkAggregateFrom1m(ctx context.Context, symbol strin
 	}
 
 	// Aggregate to all higher timeframes
-	higherTimeframes := GetAggregationTimeframes()
+	higherTimeframes := tfutils.GetAggregationTimeframes()
 
 	// Use a map to collect all constructed candles for batch saving
 	allConstructedCandles := make([]Candle, 0)
 
 	for _, timeframe := range higherTimeframes {
 		// Skip invalid timeframes
-		if GetTimeframeDuration(timeframe) == 0 {
+		if tfutils.GetTimeframeDuration(timeframe) == 0 {
 			continue
 		}
 
 		// Aggregate candles for this timeframe
-		aggregated, err := ci.aggregator.AggregateFrom1m(oneMCandles, timeframe)
+		aggregated, err := ci.aggregator.AggregateFrom1m(DBCandlesToCandles(oneMCandles), timeframe)
 		if err != nil {
 			return fmt.Errorf("failed to aggregate to %s: %w", timeframe, err)
 		}
@@ -543,7 +522,7 @@ func (ci *DefaultIngester) BulkAggregateFrom1m(ctx context.Context, symbol strin
 
 	// Save all constructed candles in one batch operation
 	if len(allConstructedCandles) > 0 {
-		if err := ci.storage.SaveConstructedCandles(ctx, allConstructedCandles); err != nil {
+		if err := ci.storage.SaveConstructedCandles(ctx, CandlesToDbCandles(allConstructedCandles)); err != nil {
 			return fmt.Errorf("failed to save constructed candles: %w", err)
 		}
 	}
@@ -576,7 +555,7 @@ func (ci *DefaultIngester) BulkAggregateAllSymbolsFrom1m(ctx context.Context, st
 	// Group candles by symbol
 	symbolCandles := make(map[string][]Candle)
 	for _, c := range allCandles {
-		symbolCandles[c.Symbol] = append(symbolCandles[c.Symbol], c)
+		symbolCandles[c.Symbol] = append(symbolCandles[c.Symbol], DBCandleToCandle(c))
 	}
 
 	// Process each symbol's candles in parallel using goroutines
@@ -584,7 +563,7 @@ func (ci *DefaultIngester) BulkAggregateAllSymbolsFrom1m(ctx context.Context, st
 	errorCh := make(chan error, len(symbolCandles))
 
 	// Higher timeframes to aggregate to
-	higherTimeframes := GetAggregationTimeframes()
+	higherTimeframes := tfutils.GetAggregationTimeframes()
 
 	// Process each symbol
 	for symbol, candles := range symbolCandles {
@@ -598,7 +577,7 @@ func (ci *DefaultIngester) BulkAggregateAllSymbolsFrom1m(ctx context.Context, st
 
 			for _, timeframe := range higherTimeframes {
 				// Skip invalid timeframes
-				if GetTimeframeDuration(timeframe) == 0 {
+				if tfutils.GetTimeframeDuration(timeframe) == 0 {
 					continue
 				}
 
@@ -631,7 +610,7 @@ func (ci *DefaultIngester) BulkAggregateAllSymbolsFrom1m(ctx context.Context, st
 
 			// Save all constructed candles for this symbol in one batch operation
 			if len(allConstructedCandles) > 0 {
-				if err := ci.storage.SaveConstructedCandles(ctx, allConstructedCandles); err != nil {
+				if err := ci.storage.SaveConstructedCandles(ctx, CandlesToDbCandles(allConstructedCandles)); err != nil {
 					errorCh <- fmt.Errorf("failed to save constructed candles for %s: %w", symbol, err)
 					return
 				}
@@ -679,14 +658,16 @@ func (ci *DefaultIngester) GetLatestCandle(ctx context.Context, symbol, timefram
 		return nil, err
 	}
 
+	cc := DBCandleToCandle(*c)
 	if c != nil {
 		if ci.cache[symbol] == nil {
 			ci.cache[symbol] = make(map[string]*Candle)
 		}
-		ci.cache[symbol][timeframe] = c
+
+		ci.cache[symbol][timeframe] = &cc
 	}
 
-	return c, nil
+	return &cc, nil
 }
 
 // CleanupOldData removes old candles to prevent database bloat
@@ -727,85 +708,6 @@ func (ci *DefaultIngester) GetAggregationStats(ctx context.Context, symbol strin
 	return ci.storage.GetAggregationStats(ctx, symbol)
 }
 
-// ParseTimeframe parses timeframe string (e.g., "5m", "1h") to time.Duration
-func ParseTimeframe(timeframe string) (time.Duration, error) {
-	switch timeframe {
-	case "1m":
-		return time.Minute, nil
-	case "5m":
-		return 5 * time.Minute, nil
-	case "15m":
-		return 15 * time.Minute, nil
-	case "30m":
-		return 30 * time.Minute, nil
-	case "1h":
-		return time.Hour, nil
-	case "4h":
-		return 4 * time.Hour, nil
-	case "1d":
-		return 24 * time.Hour, nil
-	default:
-		return 0, errors.New("unsupported timeframe")
-	}
-}
-
-// GetTimeframeDuration returns the duration for a given timeframe
-func GetTimeframeDuration(timeframe string) time.Duration {
-	switch timeframe {
-	case "1m":
-		return time.Minute
-	case "5m":
-		return 5 * time.Minute
-	case "15m":
-		return 15 * time.Minute
-	case "30m":
-		return 30 * time.Minute
-	case "1h":
-		return time.Hour
-	case "4h":
-		return 4 * time.Hour
-	case "1d":
-		return 24 * time.Hour
-	default:
-		return 0
-	}
-}
-
-func TimeframeMinutes(timeframe string) int {
-	switch timeframe {
-	case "1m":
-		return 1
-	case "5m":
-		return 5
-	case "15m":
-		return 15
-	case "30m":
-		return 30
-	case "1h":
-		return 60
-	case "4h":
-		return 4 * 60
-	case "1d":
-		return 24 * 4 * 60
-	default:
-		return 0
-	}
-}
-
-// GetSupportedTimeframes returns all supported timeframes
-func GetSupportedTimeframes() []string {
-	return []string{"1m", "5m", "15m", "30m", "1h", "4h", "1d"}
-}
-
-func GetAggregationTimeframes() []string {
-	return []string{"5m", "15m", "30m", "1h", "4h", "1d"}
-}
-
-// IsValidTimeframe checks if a timeframe is supported
-func IsValidTimeframe(timeframe string) bool {
-	return GetTimeframeDuration(timeframe) > 0
-}
-
 // Helper functions
 func max(a, b float64) float64 {
 	if a > b {
@@ -819,43 +721,4 @@ func min(a, b float64) float64 {
 		return a
 	}
 	return b
-}
-
-// IsConstructed returns true if the candle was constructed (aggregated)
-func (c *Candle) IsConstructed() bool {
-	return c.Source == "constructed"
-}
-
-// IsSynthesized returns true if the candle was synthesized
-func (c *Candle) IsSynthesized() bool {
-	return c.Source == "synthetic"
-}
-
-// IsRaw returns true if the candle is raw (from exchange)
-func (c *Candle) IsRaw() bool {
-	return c.Source != "constructed"
-}
-
-// GetSourceType returns the type of candle source
-func (c *Candle) GetSourceType() string {
-	if c.IsConstructed() {
-		return "constructed"
-	}
-	if c.IsSynthesized() {
-		return "synthetic"
-	}
-	return "raw"
-}
-
-// SetConstructed marks the candle as constructed
-func (c *Candle) SetConstructed() {
-	c.Source = "constructed"
-}
-
-// SetRaw marks the candle as raw with the given source
-func (c *Candle) SetRaw(source string) {
-	if source == "" {
-		source = "unknown"
-	}
-	c.Source = source
 }

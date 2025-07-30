@@ -9,6 +9,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/amirphl/simple-trader/internal/tfutils"
 )
 
 // Exchange interface for fetching candles from different exchanges
@@ -260,7 +262,7 @@ func (is *DefaultIngestionService) fetchAndIngestCandles(symbol string) error {
 
 	for _, c := range candles {
 		// Truncate timestamp to remove seconds
-		dur := GetTimeframeDuration(timeframe)
+		dur := tfutils.GetTimeframeDuration(timeframe)
 		c.Timestamp = c.Timestamp.Truncate(dur)
 		c.Source = is.cfg.Exchange.Name()
 
@@ -423,7 +425,7 @@ func (is *DefaultIngestionService) cleanupOldData() error {
 	}
 
 	// Get all timeframes that need cleanup
-	timeframes := GetSupportedTimeframes()
+	timeframes := tfutils.GetSupportedTimeframes()
 
 	// Track errors but continue with other symbols/timeframes
 	var errors []error
@@ -510,7 +512,7 @@ func (is *DefaultIngestionService) GetIngestionStats() map[string]map[string]any
 	for _, symbol := range is.cfg.Symbols {
 		stats[symbol] = make(map[string]any)
 
-		for _, timeframe := range GetSupportedTimeframes() {
+		for _, timeframe := range tfutils.GetSupportedTimeframes() {
 			latest, err := is.ingester.GetLatestCandle(ctx, symbol, timeframe)
 			if err != nil {
 				stats[symbol][timeframe] = map[string]any{

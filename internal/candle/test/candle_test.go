@@ -426,7 +426,7 @@ func TestDefaultAggregator_Aggregate1mTimeRange(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		err = db.SaveCandles(ctx, oneMinCandles)
+		err = db.SaveCandles(ctx, candle.CandlesToDbCandles(oneMinCandles))
 		require.NoError(t, err)
 
 		// Aggregate to 15m
@@ -533,7 +533,7 @@ func TestDefaultAggregator_Aggregate1mTimeRange(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		err = db.SaveCandles(ctx, boundaryCandles)
+		err = db.SaveCandles(ctx, candle.CandlesToDbCandles(boundaryCandles))
 		require.NoError(t, err)
 
 		aggregated, err := aggregator.Aggregate1mTimeRange(ctx, "BOUNDARY-TEST", boundaryStart, boundaryEnd, "15m")
@@ -589,7 +589,7 @@ func TestDefaultAggregator_Aggregate1mTimeRange(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		err = db.SaveCandles(ctx, gappedCandles)
+		err = db.SaveCandles(ctx, candle.CandlesToDbCandles(gappedCandles))
 		require.NoError(t, err)
 
 		aggregated, err := aggregator.Aggregate1mTimeRange(ctx, "GAPPED-DATA", gapStart, gapStart.Add(45*time.Minute), "15m")
