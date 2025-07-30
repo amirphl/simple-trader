@@ -10,3 +10,4 @@ multi_symbol_backtest_data.json
 comprehensive_metrics.html
 comprehensive_metrics.json
 spec.json
+.aider*

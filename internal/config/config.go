@@ -59,7 +59,7 @@ type Config struct {
 	TakeProfitPercent   float64               `yaml:"take_profit_percent"`
 	MaxDailyLoss        float64               `yaml:"max_daily_loss"`
 	LimitSpread         float64               `yaml:"limit_spread"`
-	Balance             float64               `yaml:"balance"`
+	InitialBalance      float64               `yaml:"initial_balance"`
 	TelegramToken       string                `yaml:"telegram_token"`
 	TelegramChatID      string                `yaml:"telegram_chat_id"`
 	NotificationRetries int                   `yaml:"notification_retries"`
@@ -87,7 +87,7 @@ type RiskParams struct {
 	TakeProfitPercent   float64 `yaml:"take_profit_percent" json:"take_profit_percent"`
 	MaxDailyLoss        float64 `yaml:"max_daily_loss" json:"max_daily_loss"`
 	LimitSpread         float64 `yaml:"limit_spread" json:"limit_spread"`
-	Balance             float64 `yaml:"balance" json:"balance"`
+	InitialBalance      float64 `yaml:"initial_balance" json:"initial_balance"`
 }
 
 // GetRiskParams returns risk parameters for a specific strategy
@@ -107,7 +107,7 @@ func GetRiskParams(cfg Config, stratName string) RiskParams {
 		TakeProfitPercent:   cfg.TakeProfitPercent,
 		MaxDailyLoss:        cfg.MaxDailyLoss,
 		LimitSpread:         cfg.LimitSpread,
-		Balance:             cfg.Balance,
+		InitialBalance:      cfg.InitialBalance,
 	}
 }
 
@@ -131,7 +131,7 @@ func LoadConfig() (Config, error) {
 	takeProfitPercent := flag.Float64("take-profit-percent", 0.0, "Take profit percent (e.g., 2.0 for 2%)")
 	maxDailyLoss := flag.Float64("max-daily-loss", 0.0, "Max daily loss in account currency (e.g., 100.0)")
 	limitSpread := flag.Float64("limit-spread", 0.0, "Limit order spread as percent (e.g., 0.1 for 0.1%)")
-	balance := flag.Float64("balance", 0.0, "Balance in account currency (e.g., 100.0)")
+	initialBalance := flag.Float64("initial-balance", 0.0, "Initial balance in account currency (e.g., 100.0)")
 	riskMapFlag := flag.String("risk-map", "", "Comma-separated strategy:risk:stoploss:trailing triples (e.g., rsi:1.0:2.0:0.5)")
 	commissionPercent := flag.Float64("commission-percent", 0.1, "Commission percent (e.g., 0.1 for 0.1%)")
 	slippagePercent := flag.Float64("slippage-percent", 0.05, "Slippage percent (e.g., 0.05 for 0.05%)")
@@ -200,7 +200,7 @@ func LoadConfig() (Config, error) {
 				return Config{}, fmt.Errorf("invalid limit spread value for strategy %s: %w", stratName, err)
 			}
 
-			balance, err := strconv.ParseFloat(parts[7], 64)
+			initialbalance, err := strconv.ParseFloat(parts[7], 64)
 			if err != nil {
 				return Config{}, fmt.Errorf("invalid balance value for strategy %s: %w", stratName, err)
 			}
@@ -212,7 +212,7 @@ func LoadConfig() (Config, error) {
 				TakeProfitPercent:   tp,
 				MaxDailyLoss:        maxDailyLoss,
 				LimitSpread:         limitSpread,
-				Balance:             balance,
+				InitialBalance:      initialbalance,
 			}
 		}
 	}
@@ -254,7 +254,7 @@ func LoadConfig() (Config, error) {
 		TakeProfitPercent:   *takeProfitPercent,
 		MaxDailyLoss:        *maxDailyLoss,
 		LimitSpread:         *limitSpread,
-		Balance:             *balance,
+		InitialBalance:      *initialBalance,
 		Symbols:             strings.Split(*symbols, ","),
 		Strategies:          strings.Split(*strategies, ","),
 		RiskMap:             riskMap,
