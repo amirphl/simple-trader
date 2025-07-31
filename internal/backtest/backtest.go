@@ -24,6 +24,7 @@ import (
 	"github.com/amirphl/simple-trader/internal/db"
 	"github.com/amirphl/simple-trader/internal/indicator"
 	"github.com/amirphl/simple-trader/internal/strategy"
+	"github.com/amirphl/simple-trader/internal/tfutils"
 )
 
 // runBacktest handles the backtest mode
@@ -142,7 +143,7 @@ func loadBacktestCandles(
 		// Save processed candles to database
 		if len(processedCandles) > 0 {
 			saveCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-			err = storage.SaveCandles(saveCtx, processedCandles)
+			err = storage.SaveCandles(saveCtx, candle.CandlesToDbCandles(processedCandles))
 			cancel()
 
 			if err != nil {
@@ -163,7 +164,7 @@ func loadBacktestCandles(
 	var filtered []candle.Candle
 	for _, c := range candles {
 		if c.Timestamp.Before(to) {
-			filtered = append(filtered, c)
+			filtered = append(filtered, candle.DBCandleToCandle(c))
 		}
 	}
 
@@ -455,7 +456,7 @@ func processCandles(candles []candle.Candle, symbol, timeframe string, start, to
 	candleMap := make(map[time.Time]candle.Candle)
 	for _, c := range candles {
 		// Truncate timestamp to timeframe
-		duration := candle.GetTimeframeDuration(timeframe)
+		duration := tfutils.GetTimeframeDuration(timeframe)
 		c.Timestamp = c.Timestamp.Truncate(duration)
 
 		// Only keep the first occurrence of each timestamp
@@ -483,7 +484,7 @@ func processCandles(candles []candle.Candle, symbol, timeframe string, start, to
 	}
 
 	var completeCandles []candle.Candle
-	duration := candle.GetTimeframeDuration(timeframe)
+	duration := tfutils.GetTimeframeDuration(timeframe)
 
 	// Start from the first candle's timestamp
 	currentTime := trimmedCandles[0].Timestamp

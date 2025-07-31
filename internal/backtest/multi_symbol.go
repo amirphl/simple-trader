@@ -251,14 +251,14 @@ func RunMultiSymbolBacktest(
 		case "Engulfing Heikin Ashi":
 			strat = strategy.NewEngulfingHeikinAshi(symbol, storage)
 		case "Stochastic Heikin Ashi":
-			strat = strategy.NewStochasticHeikinAshi(symbol, storage, 24, 10, 3)
+			strat = strategy.NewStochasticHeikinAshi(symbol, storage)
 		case "Four Stochastic Heikin Ashi":
 			strat = strategy.NewFourStochasticHeikinAshi(symbol, storage)
 		case "rsi":
 			strat = strategy.NewRSIStrategy(symbol, 14, 70, 30, storage)
 		default:
 			log.Printf("Unknown strategy: %s, using StochasticHeikinAshi", strategyName)
-			strat = strategy.NewStochasticHeikinAshi(symbol, storage, 24, 10, 3)
+			strat = strategy.NewStochasticHeikinAshi(symbol, storage)
 		}
 
 		// Load candles for this symbol
