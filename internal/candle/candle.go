@@ -658,16 +658,17 @@ func (ci *DefaultIngester) GetLatestCandle(ctx context.Context, symbol, timefram
 		return nil, err
 	}
 
-	cc := DBCandleToCandle(*c)
 	if c != nil {
+		cc := DBCandleToCandle(*c)
 		if ci.cache[symbol] == nil {
 			ci.cache[symbol] = make(map[string]*Candle)
 		}
 
 		ci.cache[symbol][timeframe] = &cc
+		return &cc, nil
 	}
 
-	return &cc, nil
+	return nil, nil
 }
 
 // CleanupOldData removes old candles to prevent database bloat
