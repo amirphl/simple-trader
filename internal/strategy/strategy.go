@@ -6,12 +6,8 @@ import (
 
 	"github.com/amirphl/simple-trader/internal/candle"
 	"github.com/amirphl/simple-trader/internal/config"
+	"github.com/amirphl/simple-trader/internal/db"
 )
-
-// Storage interface defines methods for retrieving candle data
-type Storage interface {
-	GetCandles(ctx context.Context, symbol, timeframe, source string, start, end time.Time) ([]candle.Candle, error)
-}
 
 // Strategy is the interface for all trading strategies.
 type Strategy interface {
@@ -43,7 +39,7 @@ type Signal struct {
 }
 
 // TODO:
-func New(cfg config.Config, storage Storage) []Strategy {
+func New(cfg config.Config, storage db.Storage) []Strategy {
 	strats := []Strategy{}
 
 	for _, stratName := range cfg.Strategies {

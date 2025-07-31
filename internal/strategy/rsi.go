@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/amirphl/simple-trader/internal/candle"
+	"github.com/amirphl/simple-trader/internal/db"
 	"github.com/amirphl/simple-trader/internal/indicator"
 )
 
@@ -19,7 +20,7 @@ type RSIStrategy struct {
 	Oversold   float64
 	prices     []float64
 
-	Storage Storage
+	Storage db.Storage
 
 	lastCandle     *candle.Candle
 	lastRSI        float64
@@ -28,7 +29,7 @@ type RSIStrategy struct {
 }
 
 // NewRSIStrategy creates a new RSI strategy with the given parameters
-func NewRSIStrategy(symbol string, period int, overbought, oversold float64, storage Storage) *RSIStrategy {
+func NewRSIStrategy(symbol string, period int, overbought, oversold float64, storage db.Storage) *RSIStrategy {
 	// Keep a reasonable history size - 10x the period is usually sufficient
 	maxHistorySize := period * 10
 	if maxHistorySize < 1000 {

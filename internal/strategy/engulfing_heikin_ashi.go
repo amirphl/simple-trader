@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/amirphl/simple-trader/internal/candle"
+	"github.com/amirphl/simple-trader/internal/db"
 )
 
 func abs(x float64) float64 {
@@ -22,7 +23,7 @@ type EngulfingHeikinAshi struct {
 	candles           []candle.Candle
 	heikenAshiCandles []candle.Candle
 
-	Storage Storage
+	Storage db.Storage
 
 	initialized bool
 	maxHistory  int // Maximum number of candles to keep in memory
@@ -36,7 +37,7 @@ type EngulfingHeikinAshi struct {
 	stateMachine *StateMachine
 }
 
-func NewEngulfingHeikinAshi(symbol string, storage Storage) *EngulfingHeikinAshi {
+func NewEngulfingHeikinAshi(symbol string, storage db.Storage) *EngulfingHeikinAshi {
 	return &EngulfingHeikinAshi{
 		symbol:       symbol,
 		Storage:      storage,
@@ -145,9 +146,10 @@ func (s *EngulfingHeikinAshi) OnCandles(ctx context.Context, oneHourCandles []ca
 				return historicalCandles[i].Timestamp.Before(historicalCandles[j].Timestamp)
 			})
 
-			s.candles = append(s.candles, historicalCandles...)
+			cc := candle.DBCandlesToCandles(historicalCandles)
+			s.candles = append(s.candles, cc...)
 
-			s.heikenAshiCandles = candle.GenerateHeikenAshiCandles(historicalCandles)
+			s.heikenAshiCandles = candle.GenerateHeikenAshiCandles(cc)
 		}
 	}
 

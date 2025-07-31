@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/amirphl/simple-trader/internal/candle"
+	"github.com/amirphl/simple-trader/internal/db"
 	"github.com/amirphl/simple-trader/internal/indicator"
 )
 
@@ -18,7 +19,7 @@ type StochasticHeikinAshi struct {
 	heikenAshiCandles []candle.Candle
 	stochasticResult  *indicator.StochasticResult
 
-	Storage Storage
+	Storage db.Storage
 
 	initialized bool
 	maxHistory  int // Maximum number of candles to keep in memory
@@ -36,7 +37,7 @@ type StochasticHeikinAshi struct {
 	stateMachine *StateMachine
 }
 
-func NewStochasticHeikinAshi(symbol string, storage Storage) *StochasticHeikinAshi {
+func NewStochasticHeikinAshi(symbol string, storage db.Storage) *StochasticHeikinAshi {
 	return &StochasticHeikinAshi{
 		symbol:  symbol,
 		Storage: storage,
@@ -198,11 +199,12 @@ func (s *StochasticHeikinAshi) OnCandles(ctx context.Context, oneHourCandles []c
 				return historicalCandles[i].Timestamp.Before(historicalCandles[j].Timestamp)
 			})
 
-			s.candles = append(s.candles, historicalCandles...)
+			cc := candle.DBCandlesToCandles(historicalCandles)
+			s.candles = append(s.candles, cc...)
 
-			s.heikenAshiCandles = candle.GenerateHeikenAshiCandles(historicalCandles)
+			s.heikenAshiCandles = candle.GenerateHeikenAshiCandles(cc)
 
-			stochasticResult, err := indicator.CalculateStochastic(historicalCandles, s.periodK, s.smoothK, s.periodD)
+			stochasticResult, err := indicator.CalculateStochastic(cc, s.periodK, s.smoothK, s.periodD)
 			if err != nil {
 				log.Printf("Strategy | [%s Stochastic Heikin Ashi] Error calculating stochastic: %v\n", s.symbol, err)
 			} else {

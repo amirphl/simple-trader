@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/amirphl/simple-trader/internal/candle"
+	"github.com/amirphl/simple-trader/internal/db"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
@@ -15,9 +16,9 @@ type MockStorage struct {
 	mock.Mock
 }
 
-func (m *MockStorage) GetCandles(ctx context.Context, symbol, timeframe, source string, start, end time.Time) ([]candle.Candle, error) {
+func (m *MockStorage) GetCandles(ctx context.Context, symbol, timeframe, source string, start, end time.Time) ([]db.Candle, error) {
 	args := m.Called(ctx, symbol, timeframe, source, start, end)
-	return args.Get(0).([]candle.Candle), args.Error(1)
+	return args.Get(0).([]db.Candle), args.Error(1)
 }
 
 func TestNewStochasticHeikinAshi(t *testing.T) {

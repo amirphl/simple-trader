@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/amirphl/simple-trader/internal/candle"
+	"github.com/amirphl/simple-trader/internal/db"
 	"github.com/amirphl/simple-trader/internal/indicator"
 )
 
@@ -25,7 +26,7 @@ type FourStochasticHeikinAshi struct {
 	stochastic60  *indicator.StochasticResult // Orange - length: 60, k: 3, d: 3
 	stochastic100 *indicator.StochasticResult // Green - length: 100, k: 3, d: 3
 
-	Storage Storage
+	Storage db.Storage
 
 	initialized bool
 	maxHistory  int // Maximum number of candles to keep in memory
@@ -39,7 +40,7 @@ type FourStochasticHeikinAshi struct {
 }
 
 // NewFourStochasticHeikinAshi creates a new four stochastic strategy
-func NewFourStochasticHeikinAshi(symbol string, storage Storage) *FourStochasticHeikinAshi {
+func NewFourStochasticHeikinAshi(symbol string, storage db.Storage) *FourStochasticHeikinAshi {
 	return &FourStochasticHeikinAshi{
 		symbol:  symbol,
 		Storage: storage,
@@ -245,33 +246,34 @@ func (s *FourStochasticHeikinAshi) OnCandles(ctx context.Context, oneHourCandles
 				return historicalCandles[i].Timestamp.Before(historicalCandles[j].Timestamp)
 			})
 
-			s.candles = append(s.candles, historicalCandles...)
+			cc := candle.DBCandlesToCandles(historicalCandles)
+			s.candles = append(s.candles, cc...)
 
-			s.heikenAshiCandles = candle.GenerateHeikenAshiCandles(historicalCandles)
+			s.heikenAshiCandles = candle.GenerateHeikenAshiCandles(cc)
 
 			// Calculate all four stochastic indicators
-			stoch20, err := indicator.CalculateStochastic(historicalCandles, 20, 3, 3)
+			stoch20, err := indicator.CalculateStochastic(cc, 20, 3, 3)
 			if err != nil {
 				log.Printf("Strategy | [%s Four Stochastic Heikin Ashi] Error calculating stochastic 20: %v\n", s.symbol, err)
 			} else {
 				s.stochastic20 = stoch20
 			}
 
-			stoch40, err := indicator.CalculateStochastic(historicalCandles, 40, 3, 3)
+			stoch40, err := indicator.CalculateStochastic(cc, 40, 3, 3)
 			if err != nil {
 				log.Printf("Strategy | [%s Four Stochastic Heikin Ashi] Error calculating stochastic 40: %v\n", s.symbol, err)
 			} else {
 				s.stochastic40 = stoch40
 			}
 
-			stoch60, err := indicator.CalculateStochastic(historicalCandles, 60, 3, 3)
+			stoch60, err := indicator.CalculateStochastic(cc, 60, 3, 3)
 			if err != nil {
 				log.Printf("Strategy | [%s Four Stochastic Heikin Ashi] Error calculating stochastic 60: %v\n", s.symbol, err)
 			} else {
 				s.stochastic60 = stoch60
 			}
 
-			stoch100, err := indicator.CalculateStochastic(historicalCandles, 100, 3, 3)
+			stoch100, err := indicator.CalculateStochastic(cc, 100, 3, 3)
 			if err != nil {
 				log.Printf("Strategy | [%s Four Stochastic Heikin Ashi] Error calculating stochastic 100: %v\n", s.symbol, err)
 			} else {
