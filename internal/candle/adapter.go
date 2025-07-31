@@ -1,7 +1,10 @@
 // Package candle adapter
 package candle
 
-import "github.com/amirphl/simple-trader/internal/db"
+import (
+	"github.com/amirphl/simple-trader/internal/db"
+	"github.com/amirphl/simple-trader/internal/exchange"
+)
 
 func DBCandleToCandle(dbCandle db.Candle) Candle {
 	return Candle{
@@ -45,4 +48,26 @@ func CandlesToDbCandles(candles []Candle) []db.Candle {
 		dbCandles[i] = CandleToDbCandle(candle)
 	}
 	return dbCandles
+}
+
+func ExchangeCandleToCandle(candle exchange.Candle) Candle {
+	return Candle{
+		Timestamp: candle.Timestamp,
+		Open:      candle.Open,
+		High:      candle.High,
+		Low:       candle.Low,
+		Close:     candle.Close,
+		Volume:    candle.Volume,
+		Symbol:    candle.Symbol,
+		Timeframe: candle.Timeframe,
+		Source:    candle.Source,
+	}
+}
+
+func ExchangeCandlesToCandles(candles []exchange.Candle) []Candle {
+	cc := make([]Candle, len(candles))
+	for i, candle := range candles {
+		cc[i] = ExchangeCandleToCandle(candle)
+	}
+	return cc
 }

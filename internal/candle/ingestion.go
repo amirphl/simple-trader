@@ -10,14 +10,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/amirphl/simple-trader/internal/exchange"
 	"github.com/amirphl/simple-trader/internal/tfutils"
 )
-
-// Exchange interface for fetching candles from different exchanges
-type Exchange interface {
-	Name() string
-	FetchCandles(ctx context.Context, symbol string, timeframe string, start, end time.Time) ([]Candle, error)
-}
 
 type IngestionService interface {
 	Start() error
@@ -38,7 +33,7 @@ type DefaultIngestionService struct {
 // IngestionConfig holds configuration for the ingestion service
 type IngestionConfig struct {
 	Symbols             []string
-	Exchange            Exchange
+	Exchange            exchange.Exchange
 	FetchCycle          time.Duration
 	RetentionDays       int
 	MaxRetries          int
@@ -50,7 +45,7 @@ type IngestionConfig struct {
 }
 
 // DefaultIngestionConfig returns a default configuration
-func DefaultIngestionConfig(symbols []string, exchange Exchange) IngestionConfig {
+func DefaultIngestionConfig(symbols []string, exchange exchange.Exchange) IngestionConfig {
 	return IngestionConfig{
 		Symbols:             symbols,
 		Exchange:            exchange,
@@ -339,7 +334,7 @@ func (is *DefaultIngestionService) fetchAndIngestCandles(symbol string) error {
 
 // fetchCandlesWithRetry fetches candles with exponential backoff retry logic
 func (is *DefaultIngestionService) fetchCandlesWithRetry(ctx context.Context, symbol, timeframe string, start, end time.Time) ([]Candle, error) {
-	var candles []Candle
+	var candles []exchange.Candle
 	var err error
 
 	baseDelay := is.cfg.RetryDelay
@@ -354,7 +349,7 @@ func (is *DefaultIngestionService) fetchCandlesWithRetry(ctx context.Context, sy
 
 			candles, err = is.cfg.Exchange.FetchCandles(ctx, symbol, timeframe, start, end)
 			if err == nil {
-				return candles, nil
+				return ExchangeCandlesToCandles(candles), nil
 			}
 
 			// Don't sleep after the last attempt
