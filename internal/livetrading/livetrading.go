@@ -15,26 +15,11 @@ import (
 	"github.com/amirphl/simple-trader/internal/config"
 	"github.com/amirphl/simple-trader/internal/db"
 	"github.com/amirphl/simple-trader/internal/exchange"
-	"github.com/amirphl/simple-trader/internal/journal"
 	"github.com/amirphl/simple-trader/internal/notifier"
 	"github.com/amirphl/simple-trader/internal/position"
 	"github.com/amirphl/simple-trader/internal/strategy"
+	"github.com/amirphl/simple-trader/internal/tfutils"
 )
-
-// Helper to adapt WallexTrade to position.Tick interface
-func wallexTradeToTick(trade exchange.WallexTrade) position.Tick {
-	price, _ := strconv.ParseFloat(trade.Price, 64)
-	ts := trade.Timestamp
-	return &simpleTick{price: price, timestamp: ts}
-}
-
-type simpleTick struct {
-	price     float64
-	timestamp time.Time
-}
-
-func (t *simpleTick) Price() float64       { return t.price }
-func (t *simpleTick) Timestamp() time.Time { return t.timestamp }
 
 // runLiveTrading handles the live trading mode
 func RunLiveTrading(
@@ -170,7 +155,7 @@ func orderStatusChecker(ctx context.Context, storage db.Storage, ex exchange.Exc
 				case "FILLED":
 					log.Printf("orderStatusChecker | Order %s filled", o.OrderID)
 					// TODO: Tx
-					storage.LogEvent(ctx, journal.Event{
+					storage.LogEvent(ctx, db.Event{
 						Time:        time.Now(),
 						Type:        "order",
 						Description: "status_check_order_filled",
@@ -182,7 +167,7 @@ func orderStatusChecker(ctx context.Context, storage db.Storage, ex exchange.Exc
 				case "CANCELED", "EXPIRED", "REJECTED":
 					log.Printf("orderStatusChecker | Order %s %s", o.OrderID, orderResp.Status)
 					// TODO: Tx
-					storage.LogEvent(ctx, journal.Event{
+					storage.LogEvent(ctx, db.Event{
 						Time:        time.Now(),
 						Type:        "order",
 						Description: "status_check_order_canceled_or_expired",
@@ -299,7 +284,7 @@ func runTradingLoop(
 				// Get latest market cap data if available
 				marketCap, _ := marketCapState.Get(symbol)
 
-				pos.OnTick(ctx, wallexTradeToTick(tick), posDepthState, marketCap)
+				pos.OnTick(ctx, exchange.WallexTradeToTick(tick, symbol), posDepthState, marketCap)
 			}
 		}
 	}()
@@ -312,7 +297,7 @@ func runTradingLoop(
 		lastDay := time.Now().Day()
 		dailyPnL := 0.0
 		tradingDisabled := false
-		dur := candle.GetTimeframeDuration(strat.Timeframe())
+		dur := tfutils.GetTimeframeDuration(strat.Timeframe())
 		statusTicker := time.NewTicker(30 * time.Second)
 		defer statusTicker.Stop()
 		var lastProcessed time.Time
@@ -326,7 +311,7 @@ func runTradingLoop(
 					tradingDisabled = false
 					dailyPnL = 0.0
 					lastDay = currentDay
-					storage.LogEvent(ctx, journal.Event{
+					storage.LogEvent(ctx, db.Event{
 						Time:        time.Now(),
 						Type:        "state",
 						Description: "new_trading_day",
@@ -339,7 +324,7 @@ func runTradingLoop(
 				if cfg.MaxDailyLoss > 0 && dailyPnL <= -cfg.MaxDailyLoss {
 					if !tradingDisabled {
 						log.Printf("runTradingLoop | [%s] Trading disabled due to max daily loss reached", strat.Name())
-						storage.LogEvent(ctx, journal.Event{
+						storage.LogEvent(ctx, db.Event{
 							Time:        time.Now(),
 							Type:        "state",
 							Description: "trading_disabled_max_daily_loss",
@@ -373,12 +358,27 @@ func runTradingLoop(
 				if len(candles) == 0 {
 					continue
 				}
-				signal, err := strat.OnCandles(ctx, candles)
+
+				// Create market depth state for this signal
+				posDepthState := make(map[string]exchange.OrderBook)
+				// Get latest market depth data if available from exchange state
+				buyDepth, buyOk := depthState.Get(symbol, "buyDepth")
+				sellDepth, sellOk := depthState.Get(symbol, "sellDepth")
+				if buyOk && buyDepth != nil {
+					posDepthState[exchange.GetBuyDepthKey(symbol)] = *buyDepth
+				}
+				if sellOk && sellDepth != nil {
+					posDepthState[exchange.GetSellDepthKey(symbol)] = *sellDepth
+				}
+				// Get latest market cap data if available
+				marketCap, _ := marketCapState.Get(symbol)
+
+				signal, err := strat.OnCandles(ctx, candle.DBCandlesToCandles(candles))
 				if err != nil {
 					log.Printf("runTradingLoop | [%s] Error processing candles: %v", strat.Name(), err)
 					continue
 				}
-				pos.OnSignal(ctx, signal)
+				pos.OnSignal(ctx, signal, posDepthState, marketCap)
 				lastProcessed = candles[len(candles)-1].Timestamp
 			}
 		}
