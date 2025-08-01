@@ -224,7 +224,7 @@ func runTradingLoop(
 	log.Printf("runTradingLoop | Starting trading loop with %s strategy", strat.Name())
 
 	// Load position manager
-	pos, err := position.Load(strat.Name(), strat.Symbol(), storage, ex, notifier)
+	pos, err := position.Load(ctx, strat.Name(), strat.Symbol(), storage, ex, notifier)
 	if err != nil {
 		log.Printf("runTradingLoop | Failed to start trading loop with %s strategy: %v", strat.Name(), err)
 		return err
@@ -243,13 +243,13 @@ func runTradingLoop(
 	}
 
 	// Subscribe to the websocket channel for this strategy
-	strategyID := fmt.Sprintf("%s-%s", strat.Name(), symbol)
-	tickCh, err := websocketChan.Subscribe(strategyID, 100)
-	if err != nil {
-		log.Printf("runTradingLoop | Failed to subscribe to websocket for %s: %v", strategyID, err)
-		return fmt.Errorf("failed to subscribe to websocket for %s: %w", strategyID, err)
-	}
-	defer websocketChan.Unsubscribe(strategyID)
+	// strategyID := fmt.Sprintf("%s-%s", strat.Name(), symbol)
+	// tickCh, err := websocketChan.Subscribe(strategyID, 100)
+	// if err != nil {
+	// 	log.Printf("runTradingLoop | Failed to subscribe to websocket for %s: %v", strategyID, err)
+	// 	return fmt.Errorf("failed to subscribe to websocket for %s: %w", strategyID, err)
+	// }
+	// defer websocketChan.Unsubscribe(strategyID)
 
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -261,11 +261,45 @@ func runTradingLoop(
 			select {
 			case <-ctx.Done():
 				return
-			case tick, ok := <-tickCh:
-				if !ok {
-					log.Printf("runTradingLoop | [%s] Tick channel closed", strat.Name())
-					return
+			// case tick, ok := <-tickCh:
+			// 	if !ok {
+			// 		log.Printf("runTradingLoop | [%s] Tick channel closed", strat.Name())
+			// 		return
+			// 	}
+			// 	// Create market depth state for this tick
+			// 	posDepthState := make(map[string]exchange.OrderBook)
+
+			// 	// Get latest market depth data if available from exchange state
+			// 	buyDepth, buyOk := depthState.Get(symbol, "buyDepth")
+			// 	sellDepth, sellOk := depthState.Get(symbol, "sellDepth")
+
+			// 	if buyOk && buyDepth != nil {
+			// 		posDepthState[exchange.GetBuyDepthKey(symbol)] = *buyDepth
+			// 	}
+
+			// 	if sellOk && sellDepth != nil {
+			// 		posDepthState[exchange.GetSellDepthKey(symbol)] = *sellDepth
+			// 	}
+
+			// 	// Get latest market cap data if available
+			// 	marketCap, _ := marketCapState.Get(symbol)
+
+			// 	pos.OnTick(ctx, exchange.ToTick(tick, symbol), posDepthState, marketCap)
+			// }
+			default:
+				howMuchSleep := 1 * time.Second
+
+				if !websocketChan.HasFreshTick() {
+					time.Sleep(howMuchSleep)
+					continue
 				}
+
+				tick, _ := websocketChan.GetLastTick()
+				if tick == nil {
+					time.Sleep(howMuchSleep)
+					continue
+				}
+
 				// Create market depth state for this tick
 				posDepthState := make(map[string]exchange.OrderBook)
 
@@ -284,7 +318,7 @@ func runTradingLoop(
 				// Get latest market cap data if available
 				marketCap, _ := marketCapState.Get(symbol)
 
-				pos.OnTick(ctx, exchange.WallexTradeToTick(tick, symbol), posDepthState, marketCap)
+				pos.OnTick(ctx, *tick, posDepthState, marketCap)
 			}
 		}
 	}()
@@ -483,7 +517,7 @@ func dataLogger(ctx context.Context, symbols []string, tickChans map[string]<-ch
 }
 
 // formatTradeData formats trade data with market depth and market cap information
-func formatTradeData(trade exchange.WallexTrade, symbol string, buyDepth *exchange.OrderBook, sellDepth *exchange.OrderBook, marketCap *exchange.MarketCapData) string {
+func formatTradeData(trade exchange.WallexTrade, symbol string, buyDepth *exchange.OrderBook, sellDepth *exchange.OrderBook, marketCap *exchange.MarketCap) string {
 	// Extract best prices from order books
 	var bestBuyPrice, bestSellPrice string
 	if buyDepth != nil && len(*buyDepth) > 0 {
