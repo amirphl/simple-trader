@@ -95,8 +95,8 @@ func New(cfg config.Config, strategyName, symbol string, storage db.Storage, exc
 
 	// Set order configuration
 	pos.OrderSpec.Type = cfg.OrderType
-	pos.OrderSpec.MaxAttempts = 2
-	pos.OrderSpec.Delay = time.Second * 2
+	pos.OrderSpec.MaxAttempts = 3
+	pos.OrderSpec.Delay = time.Millisecond * 100
 
 	return pos
 }
@@ -187,6 +187,7 @@ func (p *position) rollbackState(b []byte) {
 		return
 	}
 
+	p.ID = backup.ID
 	p.Side = backup.Side
 	p.Entry = backup.Entry
 	p.Size = backup.Size
@@ -229,10 +230,11 @@ type Trade struct {
 func (p *position) save(ctx context.Context) error {
 	// Convert position to db.Position
 	dbPos := p.toDBPosition()
-	dbPos.ID = 0
 
 	// Save to database
 	if p.Storage != nil {
+		// Reset ID for new position
+		dbPos.ID = 0
 		id, err := p.Storage.SavePosition(ctx, dbPos)
 		if err != nil {
 			return fmt.Errorf("failed to save position to database [%s %s]: %w", p.StrategyName, p.Symbol, err)
@@ -247,7 +249,6 @@ func (p *position) save(ctx context.Context) error {
 func (p *position) update(ctx context.Context) error {
 	// Convert position to db.Position
 	dbPos := p.toDBPosition()
-	dbPos.ID = p.ID
 
 	// Update in database
 	if p.Storage != nil {
@@ -750,6 +751,7 @@ func (p *position) calculateOptimalOrderParams(signal strategy.Signal, riskAmoun
 func (p *position) createExitOrder(price float64) exchange.OrderRequest {
 	// TODO: Better price management for ensuring full execution (using a function like calculateOptimalOrderParams)
 	// TODO: Handle other order types
+	// TODO: Mitigate risk of partial fill
 
 	side := p.getExitSide()
 
@@ -761,17 +763,17 @@ func (p *position) createExitOrder(price float64) exchange.OrderRequest {
 		Quantity: p.Size,
 	}
 
-	if p.OrderSpec.Type == "limit" {
-		orderReq.Price = price
-		// TODO: Apply spread for better execution outside of this function
-		if p.RiskParams.LimitSpread > 0 {
-			if side == "sell" {
-				orderReq.Price = price * (1 - p.RiskParams.LimitSpread/100)
-			} else {
-				orderReq.Price = price * (1 + p.RiskParams.LimitSpread/100)
-			}
-		}
-	}
+	// if p.OrderSpec.Type == "limit" {
+	// 	orderReq.Price = price
+	// 	// TODO: Apply spread for better execution outside of this function
+	// 	if p.RiskParams.LimitSpread > 0 {
+	// 		if side == "sell" {
+	// 			orderReq.Price = price * (1 - p.RiskParams.LimitSpread/100)
+	// 		} else {
+	// 			orderReq.Price = price * (1 + p.RiskParams.LimitSpread/100)
+	// 		}
+	// 	}
+	// }
 
 	return orderReq
 }
