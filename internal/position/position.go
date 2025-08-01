@@ -3,12 +3,10 @@ package position
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
 	"math"
-	"os"
 	"strconv"
 	"sync"
 	"time"
@@ -16,27 +14,14 @@ import (
 	"github.com/amirphl/simple-trader/internal/config"
 	"github.com/amirphl/simple-trader/internal/db"
 	"github.com/amirphl/simple-trader/internal/exchange"
-	"github.com/amirphl/simple-trader/internal/journal"
+
 	"github.com/amirphl/simple-trader/internal/notifier"
-	"github.com/amirphl/simple-trader/internal/order"
 	"github.com/amirphl/simple-trader/internal/strategy"
 )
 
-type Storage interface {
-	GetDB() *sql.DB
-	SaveOrder(ctx context.Context, order order.OrderResponse) error
-	LogEvent(ctx context.Context, event journal.Event) error
-}
-
-// Tick represents a market tick (price update)
-type Tick interface {
-	Price() float64
-	Timestamp() time.Time
-}
-
 // executeWithTransaction executes a function with proper transaction management
 // If a transaction exists in context, it uses that. Otherwise, it creates a new one.
-func executeWithTransaction(ctx context.Context, storage Storage, fn func(context.Context) error) error {
+func executeWithTransaction(ctx context.Context, storage db.Storage, fn func(context.Context) error) error {
 	// Check if transaction exists in context
 	if tx := db.GetTransaction(ctx); tx != nil {
 		// Use existing transaction
@@ -71,9 +56,10 @@ func executeWithTransaction(ctx context.Context, storage Storage, fn func(contex
 }
 
 type Position interface {
-	OnSignal(ctx context.Context, signal strategy.Signal)
-	OnTick(ctx context.Context, tick Tick, depthState map[string]exchange.OrderBook, marketCapState *exchange.MarketCapData)
-	Stats() (map[string]interface{}, error)
+	OnSignal(ctx context.Context, signal strategy.Signal, depthState map[string]exchange.OrderBook, marketCapState *exchange.MarketCap)
+	OnTick(ctx context.Context, tick exchange.Tick, depthState map[string]exchange.OrderBook, marketCapState *exchange.MarketCap)
+	Stats() (map[string]any, error)
+	GetLastPNL() float64
 	DailyPnL() (float64, error)
 	IsActive() bool
 }
@@ -81,7 +67,7 @@ type Position interface {
 // TODO: Transactional updates, atomicity, order status check, commission, slippage, exchange ctx, etc.
 
 // New creates a new position manager
-func New(cfg config.Config, strategyName, symbol string, storage Storage, exchange exchange.Exchange, notifier notifier.Notifier) Position {
+func New(cfg config.Config, strategyName, symbol string, storage db.Storage, exchange exchange.Exchange, notifier notifier.Notifier) Position {
 	// Get risk parameters for this strategy
 	riskParams := config.GetRiskParams(cfg, strategyName)
 
@@ -99,6 +85,8 @@ func New(cfg config.Config, strategyName, symbol string, storage Storage, exchan
 		Storage:  storage,
 		Notifier: notifier,
 
+		Balance: riskParams.InitialBalance,
+
 		LiveWinPnls:     make([]float64, 0),
 		LiveLossPnls:    make([]float64, 0),
 		LiveEquityCurve: make([]float64, 0),
@@ -113,38 +101,11 @@ func New(cfg config.Config, strategyName, symbol string, storage Storage, exchan
 	return pos
 }
 
-// positionState represents a backup of position state for rollback
-type positionState struct {
-	Side            string
-	Entry           float64
-	Size            float64
-	OrderID         string
-	Time            time.Time
-	Active          bool
-	LastPNL         float64
-	MeanPNL         float64
-	StdPNL          float64
-	Sharpe          float64
-	Expectancy      float64
-	LiveEquity      float64
-	LiveMaxEquity   float64
-	LiveMaxDrawdown float64
-	LiveWins        int64
-	LiveLosses      int64
-	LiveTrades      int64
-	LiveWinRate     float64
-	LiveTradeLog    []Trade
-	LiveEquityCurve []float64
-	LiveWinPnls     []float64
-	LiveLossPnls    []float64
-	ProfitFactor    float64
-	TrailingStop    float64
-	RiskParams      config.RiskParams
-	TradingDisabled bool
-}
-
 // position represents a trading position with risk management and statistics
 type position struct {
+	// Database ID
+	ID int64 `json:"id"`
+
 	// Core position data
 	StrategyName string    `json:"strategy_name"`
 	Symbol       string    `json:"symbol"`
@@ -170,8 +131,10 @@ type position struct {
 
 	// Dependencies (not serialized)
 	Exchange exchange.Exchange `json:"-"`
-	Storage  Storage           `json:"-"`
+	Storage  db.Storage        `json:"-"`
 	Notifier notifier.Notifier `json:"-"`
+
+	Balance float64 `json:"balance"`
 
 	// Statistics
 	LastPNL      float64 `json:"acc_pnl"`
@@ -197,49 +160,40 @@ type position struct {
 	LiveEquityCurve []float64 `json:"live_equity_curve"`
 	LiveTradeLog    []Trade   `json:"live_trade_log"`
 
+	// Market data cache for optimal order calculations
+	depthState         map[string]exchange.OrderBook `json:"-"`
+	lastMarketCap      *exchange.MarketCap           `json:"-"`
+	lastMarketDataTime time.Time                     `json:"-"`
+
 	mu sync.RWMutex // Added mutex for thread safety
 }
 
 // backupState creates a backup of the current position state
-func (p *position) backupState() positionState {
-	return positionState{
-		Side:            p.Side,
-		Entry:           p.Entry,
-		Size:            p.Size,
-		OrderID:         p.OrderID,
-		Time:            p.Time,
-		Active:          p.Active,
-		LastPNL:         p.LastPNL,
-		MeanPNL:         p.MeanPNL,
-		StdPNL:          p.StdPNL,
-		Sharpe:          p.Sharpe,
-		Expectancy:      p.Expectancy,
-		LiveEquity:      p.LiveEquity,
-		LiveMaxEquity:   p.LiveMaxEquity,
-		LiveMaxDrawdown: p.LiveMaxDrawdown,
-		LiveWins:        p.LiveWins,
-		LiveLosses:      p.LiveLosses,
-		LiveTrades:      p.LiveTrades,
-		LiveWinRate:     p.LiveWinRate,
-		LiveTradeLog:    p.LiveTradeLog,
-		LiveEquityCurve: p.LiveEquityCurve,
-		LiveWinPnls:     p.LiveWinPnls,
-		LiveLossPnls:    p.LiveLossPnls,
-		ProfitFactor:    p.ProfitFactor,
-		TrailingStop:    p.TrailingStop,
-		RiskParams:      p.RiskParams,
-		TradingDisabled: p.TradingDisabled,
+func (p *position) backupState() []byte {
+	// serialize p and return it
+	json, err := json.Marshal(p)
+	if err != nil {
+		return nil
 	}
+	return json
 }
 
 // rollbackState restores the position state from backup
-func (p *position) rollbackState(backup positionState) {
+func (p *position) rollbackState(b []byte) {
+	// deserialize backup
+	var backup position
+	err := json.Unmarshal(b, &backup)
+	if err != nil {
+		return
+	}
+
 	p.Side = backup.Side
 	p.Entry = backup.Entry
 	p.Size = backup.Size
 	p.OrderID = backup.OrderID
 	p.Time = backup.Time
 	p.Active = backup.Active
+	p.Balance = backup.Balance
 	p.LastPNL = backup.LastPNL
 	p.MeanPNL = backup.MeanPNL
 	p.StdPNL = backup.StdPNL
@@ -271,46 +225,227 @@ type Trade struct {
 	ExitTime  time.Time `json:"exit_time"`
 }
 
-// Save persists the position to file with error handling
-func (p *position) Save() error {
-	// TODO: Save in database
-	p.mu.RLock()
-	defer p.mu.RUnlock()
+// Save persists the position to database with error handling
+func (p *position) save(ctx context.Context) error {
+	// Convert position to db.Position
+	dbPos := p.toDBPosition()
+	dbPos.ID = 0
 
-	data, err := json.MarshalIndent(p, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal position [%s %s]: %w", p.StrategyName, p.Symbol, err)
-	}
-
-	if err := os.WriteFile(fmt.Sprintf("%s-%s.json", p.StrategyName, p.Symbol), data, 0o644); err != nil {
-		return fmt.Errorf("failed to write position file [%s %s]: %w", p.StrategyName, p.Symbol, err)
+	// Save to database
+	if p.Storage != nil {
+		id, err := p.Storage.SavePosition(ctx, dbPos)
+		if err != nil {
+			return fmt.Errorf("failed to save position to database [%s %s]: %w", p.StrategyName, p.Symbol, err)
+		}
+		// Store the generated ID
+		p.ID = id
 	}
 
 	return nil
 }
 
-// Load loads a position from file with proper error handling
-func Load(stratName, symbol string, storage Storage, exchange exchange.Exchange, notifier notifier.Notifier) (Position, error) {
-	// TODO: Load from database
-	var pos position
+func (p *position) update(ctx context.Context) error {
+	// Convert position to db.Position
+	dbPos := p.toDBPosition()
+	dbPos.ID = p.ID
 
-	data, err := os.ReadFile(fmt.Sprintf("%s-%s.json", stratName, symbol))
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("position file not found [%s %s]", stratName, symbol)
+	// Update in database
+	if p.Storage != nil {
+		if err := p.Storage.UpdatePosition(ctx, dbPos); err != nil {
+			return fmt.Errorf("failed to update position in database [%s %s]: %w", p.StrategyName, p.Symbol, err)
 		}
-		return nil, fmt.Errorf("failed to read position file [%s %s]: %w", stratName, symbol, err)
 	}
 
-	if err := json.Unmarshal(data, &pos); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal position [%s %s]: %w", stratName, symbol, err)
+	return nil
+}
+
+// Load loads a position from database with proper error handling
+// TODO: Provide orderbook and marketcap data to load function
+func Load(ctx context.Context, stratName, symbol string, storage db.Storage, exchange exchange.Exchange, notifier notifier.Notifier) (Position, error) {
+	if storage == nil {
+		return nil, fmt.Errorf("storage is required to load position")
 	}
 
-	pos.Exchange = exchange
-	pos.Storage = storage
-	pos.Notifier = notifier
+	dbPos, err := storage.GetPosition(ctx, stratName, symbol)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load position from database [%s %s]: %w", stratName, symbol, err)
+	}
 
-	return &pos, nil
+	if dbPos == nil {
+		return nil, fmt.Errorf("position not found in database [%s %s]", stratName, symbol)
+	}
+
+	// Convert db.Position to position
+	pos := fromDBPosition(*dbPos, storage, exchange, notifier)
+
+	return pos, nil
+}
+
+// toDBPosition converts position for database storage
+func (p *position) toDBPosition() db.Position {
+	// Convert Trade structs to TradeData
+	tradeLog := make([]db.Trade, len(p.LiveTradeLog))
+	for i, trade := range p.LiveTradeLog {
+		tradeLog[i] = db.Trade{
+			Entry:     trade.Entry,
+			Exit:      trade.Exit,
+			PnL:       trade.PnL,
+			EntryTime: trade.EntryTime,
+			ExitTime:  trade.ExitTime,
+		}
+	}
+
+	// Convert RiskParams to map
+	riskParams := map[string]any{
+		"initial_balance":       p.RiskParams.InitialBalance,
+		"risk_percent":          p.RiskParams.RiskPercent,
+		"stop_loss_percent":     p.RiskParams.StopLossPercent,
+		"take_profit_percent":   p.RiskParams.TakeProfitPercent,
+		"trailing_stop_percent": p.RiskParams.TrailingStopPercent,
+		"max_daily_loss":        p.RiskParams.MaxDailyLoss,
+		"limit_spread":          p.RiskParams.LimitSpread,
+	}
+
+	// Convert OrderSpec to map
+	orderSpec := map[string]any{
+		"type":         p.OrderSpec.Type,
+		"max_attempts": p.OrderSpec.MaxAttempts,
+		"delay":        p.OrderSpec.Delay.String(),
+	}
+
+	return db.Position{
+		ID:              p.ID,
+		StrategyName:    p.StrategyName,
+		Symbol:          p.Symbol,
+		Side:            p.Side,
+		Entry:           p.Entry,
+		Size:            p.Size,
+		OrderID:         p.OrderID,
+		Time:            p.Time,
+		Active:          p.Active,
+		TradingDisabled: p.TradingDisabled,
+		Balance:         p.Balance,
+		LastPNL:         p.LastPNL,
+		MeanPNL:         p.MeanPNL,
+		StdPNL:          p.StdPNL,
+		Sharpe:          p.Sharpe,
+		Expectancy:      p.Expectancy,
+		TrailingStop:    p.TrailingStop,
+		LiveEquity:      p.LiveEquity,
+		LiveMaxEquity:   p.LiveMaxEquity,
+		LiveMaxDrawdown: p.LiveMaxDrawdown,
+		LiveWins:        p.LiveWins,
+		LiveLosses:      p.LiveLosses,
+		LiveTrades:      p.LiveTrades,
+		LiveWinRate:     p.LiveWinRate,
+		ProfitFactor:    p.ProfitFactor,
+		LiveWinPnls:     p.LiveWinPnls,
+		LiveLossPnls:    p.LiveLossPnls,
+		LiveEquityCurve: p.LiveEquityCurve,
+		LiveTradeLog:    tradeLog,
+		RiskParams:      riskParams,
+		OrderSpec:       orderSpec,
+		CreatedAt:       time.Now(),
+		UpdatedAt:       time.Now(),
+	}
+}
+
+// fromDBPosition converts db.Position to position
+func fromDBPosition(dbPos db.Position, storage db.Storage, exchange exchange.Exchange, notifier notifier.Notifier) *position {
+	// Convert TradeData back to Trade
+	tradeLog := make([]Trade, len(dbPos.LiveTradeLog))
+	for i, tradeData := range dbPos.LiveTradeLog {
+		tradeLog[i] = Trade{
+			Entry:     tradeData.Entry,
+			Exit:      tradeData.Exit,
+			PnL:       tradeData.PnL,
+			EntryTime: tradeData.EntryTime,
+			ExitTime:  tradeData.ExitTime,
+		}
+	}
+
+	// Convert RiskParams from map
+	riskParams := config.RiskParams{}
+	if initialBalance, ok := dbPos.RiskParams["initial_balance"].(float64); ok {
+		riskParams.InitialBalance = initialBalance
+	}
+	if riskPercent, ok := dbPos.RiskParams["risk_percent"].(float64); ok {
+		riskParams.RiskPercent = riskPercent
+	}
+	if stopLossPercent, ok := dbPos.RiskParams["stop_loss_percent"].(float64); ok {
+		riskParams.StopLossPercent = stopLossPercent
+	}
+	if takeProfitPercent, ok := dbPos.RiskParams["take_profit_percent"].(float64); ok {
+		riskParams.TakeProfitPercent = takeProfitPercent
+	}
+	if trailingStopPercent, ok := dbPos.RiskParams["trailing_stop_percent"].(float64); ok {
+		riskParams.TrailingStopPercent = trailingStopPercent
+	}
+	if maxDailyLoss, ok := dbPos.RiskParams["max_daily_loss"].(float64); ok {
+		riskParams.MaxDailyLoss = maxDailyLoss
+	}
+	if limitSpread, ok := dbPos.RiskParams["limit_spread"].(float64); ok {
+		riskParams.LimitSpread = limitSpread
+	}
+
+	// Convert OrderSpec from map
+	var orderType string
+	var maxAttempts int
+	var delay time.Duration
+	if typeStr, ok := dbPos.OrderSpec["type"].(string); ok {
+		orderType = typeStr
+	}
+	if maxAttemptsVal, ok := dbPos.OrderSpec["max_attempts"].(float64); ok {
+		maxAttempts = int(maxAttemptsVal)
+	}
+	if delayStr, ok := dbPos.OrderSpec["delay"].(string); ok {
+		if parsedDelay, err := time.ParseDuration(delayStr); err == nil {
+			delay = parsedDelay
+		}
+	}
+
+	pos := &position{
+		ID:              dbPos.ID,
+		StrategyName:    dbPos.StrategyName,
+		Symbol:          dbPos.Symbol,
+		Side:            dbPos.Side,
+		Entry:           dbPos.Entry,
+		Size:            dbPos.Size,
+		OrderID:         dbPos.OrderID,
+		Time:            dbPos.Time,
+		Active:          dbPos.Active,
+		TradingDisabled: dbPos.TradingDisabled,
+		Balance:         dbPos.Balance,
+		LastPNL:         dbPos.LastPNL,
+		MeanPNL:         dbPos.MeanPNL,
+		StdPNL:          dbPos.StdPNL,
+		Sharpe:          dbPos.Sharpe,
+		Expectancy:      dbPos.Expectancy,
+		TrailingStop:    dbPos.TrailingStop,
+		LiveEquity:      dbPos.LiveEquity,
+		LiveMaxEquity:   dbPos.LiveMaxEquity,
+		LiveMaxDrawdown: dbPos.LiveMaxDrawdown,
+		LiveWins:        dbPos.LiveWins,
+		LiveLosses:      dbPos.LiveLosses,
+		LiveTrades:      dbPos.LiveTrades,
+		LiveWinRate:     dbPos.LiveWinRate,
+		ProfitFactor:    dbPos.ProfitFactor,
+		LiveWinPnls:     dbPos.LiveWinPnls,
+		LiveLossPnls:    dbPos.LiveLossPnls,
+		LiveEquityCurve: dbPos.LiveEquityCurve,
+		LiveTradeLog:    tradeLog,
+		RiskParams:      riskParams,
+		Exchange:        exchange,
+		Storage:         storage,
+		Notifier:        notifier,
+	}
+
+	// Set OrderSpec
+	pos.OrderSpec.Type = orderType
+	pos.OrderSpec.MaxAttempts = maxAttempts
+	pos.OrderSpec.Delay = delay
+
+	return pos
 }
 
 // IsActive returns whether the position is active (thread-safe)
@@ -334,7 +469,7 @@ func (p *position) DailyPnL() (float64, error) {
 
 	// Calculate daily PnL from trades that occurred today
 	var dailyPnL float64
-	today := time.Now().Truncate(24 * time.Hour)
+	today := time.Now().UTC().Truncate(24 * time.Hour)
 
 	for _, trade := range p.LiveTradeLog {
 		if trade.ExitTime.After(today) || trade.ExitTime.Equal(today) {
@@ -345,82 +480,62 @@ func (p *position) DailyPnL() (float64, error) {
 	return dailyPnL, nil
 }
 
-// executeStopLoss executes a stop loss order atomically with error handling
-func (p *position) executeStopLoss(ctx context.Context, price float64) error {
-	orderReq := p.createExitOrder(price, "stop_loss")
+// exit executes an exit order atomically with error handling
+func (p *position) exit(ctx context.Context, price float64, reason string) error {
+	orderReq := p.createExitOrder(price)
 	orderResp, err := p.Exchange.SubmitOrderWithRetry(ctx, orderReq, p.OrderSpec.MaxAttempts, p.OrderSpec.Delay)
 	if err != nil {
-		p.handleOrderError(ctx, err, "stop_loss_order")
-		return fmt.Errorf("failed to submit stop loss order: %w", err)
+		p.handleOrderError(ctx, err, reason)
+		return fmt.Errorf("failed to submit [%s] order: %w", reason, err)
 	}
 
 	// Update position state
-	p.handleExitSuccess(ctx, orderResp, "Stop Loss")
-	p.onPositionClose(orderResp.AvgPrice)
+	p.handleExitSuccess(ctx, orderResp, reason)
+	p.onPositionClose(ctx, orderResp.AvgPrice)
 	p.updateLiveStats()
 
 	return nil
 }
 
-// executeTakeProfit executes a take profit order atomically with error handling
-func (p *position) executeTakeProfit(ctx context.Context, price float64) error {
-	orderReq := p.createExitOrder(price, "take_profit")
-	orderResp, err := p.Exchange.SubmitOrderWithRetry(ctx, orderReq, p.OrderSpec.MaxAttempts, p.OrderSpec.Delay)
+// enter executes an entry order atomically with error handling
+func (p *position) enter(ctx context.Context, signal strategy.Signal) error {
+	// Fetch current exchange balances
+	balances, err := p.Exchange.FetchBalances(ctx)
 	if err != nil {
-		p.handleOrderError(ctx, err, "take_profit_order")
-		return fmt.Errorf("failed to submit take profit order: %w", err)
-	}
-	// Update position state
-	p.handleExitSuccess(ctx, orderResp, "Take Profit")
-	p.onPositionClose(orderResp.AvgPrice)
-	p.updateLiveStats()
-
-	return nil
-}
-
-// executeTrailingStop executes a trailing stop order atomically with error handling
-func (p *position) executeTrailingStop(ctx context.Context, price float64) error {
-	orderReq := p.createExitOrder(price, "trailing_stop")
-	orderResp, err := p.Exchange.SubmitOrderWithRetry(ctx, orderReq, p.OrderSpec.MaxAttempts, p.OrderSpec.Delay)
-	if err != nil {
-		p.handleOrderError(ctx, err, "trailing_stop_order")
-		return fmt.Errorf("failed to submit trailing stop order: %w", err)
+		return fmt.Errorf("failed to fetch balances: %w", err)
 	}
 
-	// Update position state
-	p.handleExitSuccess(ctx, orderResp, "Trailing Stop")
-	p.onPositionClose(orderResp.AvgPrice)
-	p.updateLiveStats()
-
-	return nil
-}
-
-// executeManualExit executes a manual exit order atomically with error handling
-func (p *position) executeManualExit(ctx context.Context, price float64) error {
-	orderReq := p.createExitOrder(price, "manual_exit")
-	orderResp, err := p.Exchange.SubmitOrderWithRetry(ctx, orderReq, p.OrderSpec.MaxAttempts, p.OrderSpec.Delay)
-	if err != nil {
-		p.handleOrderError(ctx, err, "manual_exit_order")
-		return fmt.Errorf("failed to submit manual exit order: %w", err)
+	// Extract quote currency from symbol (e.g., "ETH/DAI" -> "DAI")
+	quoteCurrency := exchange.ExtractQuoteCurrency(p.Symbol)
+	if quoteCurrency == "" {
+		return fmt.Errorf("invalid symbol format: %s", p.Symbol)
 	}
 
-	// Update position state
-	p.handleExitSuccess(ctx, orderResp, "Manual Exit")
-	p.onPositionClose(orderResp.AvgPrice)
-	p.updateLiveStats()
-
-	return nil
-}
-
-// executeEntry executes an entry order atomically with error handling
-func (p *position) executeEntry(ctx context.Context, signal strategy.Signal) error {
-	// Check if we have enough balance
-	if p.RiskParams.Balance <= 0 {
-		return fmt.Errorf("insufficient balance: %.2f", p.RiskParams.Balance)
+	// Get available quote currency balance
+	quoteBalance, exists := balances[quoteCurrency]
+	if !exists {
+		return fmt.Errorf("quote currency %s not found in balances", quoteCurrency)
 	}
 
-	orderSize := p.RiskParams.Balance * p.RiskParams.RiskPercent / 100
-	// TODO: check with max loss
+	// Calculate balance to spend based on risk management
+	availableBalance := quoteBalance.Available
+	initialBalance := p.RiskParams.InitialBalance
+	currentBalance := p.Balance
+
+	// Calculate the minimum of available quote currency, initial balance, and current balance
+	balanceToSpend := min(availableBalance, initialBalance, currentBalance)
+
+	// Apply risk percentage
+	riskAmount := balanceToSpend * p.RiskParams.RiskPercent / 100
+
+	// Check if we have enough balance to enter the position
+	if riskAmount <= 0 {
+		return fmt.Errorf("insufficient balance to enter position: available=%.2f, initial=%.2f, current=%.2f, risk_amount=%.2f",
+			availableBalance, initialBalance, currentBalance, riskAmount)
+	}
+
+	log.Printf("Position | [%s %s] Entering position with balance: available=%.2f, initial=%.2f, current=%.2f, risk_amount=%.2f",
+		p.Symbol, p.StrategyName, availableBalance, initialBalance, currentBalance, riskAmount)
 
 	// Support both long and short positions based on signal
 	side := "buy"
@@ -428,38 +543,227 @@ func (p *position) executeEntry(ctx context.Context, signal strategy.Signal) err
 		side = "sell"
 	}
 
-	// TODO: Better price management for guaranteed full execution
-	// TODO : Decide using market cap and orderbook
-	orderReq := p.createEntryOrder(signal.TriggerPrice, orderSize, side)
+	// Calculate optimal order price and quantity using stored market data
+	optimalPrice, optimalQuantity, err := p.calculateOptimalOrderParams(signal, riskAmount, side)
+	if err != nil {
+		return fmt.Errorf("failed to calculate optimal order parameters: %w", err)
+	}
+
+	// Create entry order with calculated optimal parameters
+	orderReq := p.createEntryOrder(optimalPrice, optimalQuantity, side)
 	orderResp, err := p.Exchange.SubmitOrderWithRetry(ctx, orderReq, p.OrderSpec.MaxAttempts, p.OrderSpec.Delay)
 	if err != nil {
 		p.handleOrderError(ctx, err, "entry_order_submission")
 		return fmt.Errorf("failed to submit entry order: %w", err)
 	}
 
-	p.handleEntrySuccess(ctx, orderResp, orderReq.Quantity, side)
+	p.handleEntrySuccess(ctx, orderResp, side)
 
 	return nil
 }
 
+// updateMarketData updates the stored market data for optimal order calculations
+func (p *position) updateMarketData(depthState map[string]exchange.OrderBook, marketCapState *exchange.MarketCap) {
+	// Store order book data
+	if depthState != nil {
+		p.depthState = depthState
+		p.lastMarketDataTime = time.Now()
+	}
+
+	// Store market cap data
+	if marketCapState != nil {
+		p.lastMarketCap = marketCapState
+	}
+}
+
+// getMarketDataAge returns the age of the stored market data
+func (p *position) getMarketDataAge() time.Duration {
+	return time.Since(p.lastMarketDataTime)
+}
+
+// calculateOptimalOrderParams calculates optimal price and quantity for order entry
+// using stored market cap data, order book information, and slippage calculations
+func (p *position) calculateOptimalOrderParams(signal strategy.Signal, riskAmount float64, side string) (float64, float64, error) {
+	var optimalPrice float64
+	var optimalQuantity float64
+
+	// Use stored order book data or fall back to signal price
+	if p.depthState == nil {
+		log.Printf("Position | [%s %s] No stored order book data available, using signal price", p.Symbol, p.StrategyName)
+		optimalPrice = signal.TriggerPrice
+		optimalQuantity = riskAmount / signal.TriggerPrice
+		return optimalPrice, optimalQuantity, nil
+	}
+
+	// Calculate slippage-adjusted price
+	slippagePercent := p.RiskParams.LimitSpread // Use limit spread as slippage
+	// if slippagePercent <= 0 {
+	// 	slippagePercent = 0.1 // Default 0.1% slippage
+	// }
+
+	if side == "buy" {
+		// For buy orders, use ask price (lowest sell price)
+		sellDepth, sellExists := p.depthState[exchange.GetSellDepthKey(p.Symbol)]
+		if !sellExists || len(sellDepth) == 0 {
+			log.Printf("Position | [%s %s] No asks in order book, using signal price", p.Symbol, p.StrategyName)
+			optimalPrice = signal.TriggerPrice
+			optimalQuantity = riskAmount / signal.TriggerPrice
+			return optimalPrice, optimalQuantity, nil
+		}
+
+		// Find the lowest ask price (best ask)
+		var bestAskPrice float64
+		foundBestAsk := false
+
+		for priceStr, _ := range sellDepth {
+			price, err := strconv.ParseFloat(priceStr, 64)
+			if err != nil {
+				continue
+			}
+			if !foundBestAsk || price < bestAskPrice {
+				bestAskPrice = price
+				foundBestAsk = true
+			}
+		}
+
+		if !foundBestAsk {
+			log.Printf("Position | [%s %s] No valid ask prices found, using signal price", p.Symbol, p.StrategyName)
+			optimalPrice = signal.TriggerPrice
+			optimalQuantity = riskAmount / signal.TriggerPrice
+			return optimalPrice, optimalQuantity, nil
+		}
+
+		// Calculate total available quantity within slippage range
+		totalAvailable := 0.0
+		for priceStr, entry := range sellDepth {
+			price, err := strconv.ParseFloat(priceStr, 64)
+			if err != nil {
+				continue
+			}
+			if price <= bestAskPrice*(1+slippagePercent/100) {
+				totalAvailable += entry.Quantity
+			} else {
+				break
+			}
+		}
+
+		// Calculate optimal price with slippage
+		optimalPrice = bestAskPrice * (1 + slippagePercent/100)
+		optimalQuantity = totalAvailable
+
+		log.Printf("Position | [%s %s] Buy order: ask_price=%.2f, slippage_price=%.2f, available_qty=%.6f",
+			p.Symbol, p.StrategyName, bestAskPrice, optimalPrice, optimalQuantity)
+
+	} else {
+		// For sell orders, use bid price (highest buy price)
+		buyDepth, buyExists := p.depthState[exchange.GetBuyDepthKey(p.Symbol)]
+		if !buyExists || len(buyDepth) == 0 {
+			log.Printf("Position | [%s %s] No bids in order book, using signal price", p.Symbol, p.StrategyName)
+			optimalPrice = signal.TriggerPrice
+			optimalQuantity = riskAmount / signal.TriggerPrice
+			return optimalPrice, optimalQuantity, nil
+		}
+
+		// Find the highest bid price (best bid)
+		var bestBidPrice float64
+		foundBestBid := false
+
+		for priceStr, _ := range buyDepth {
+			price, err := strconv.ParseFloat(priceStr, 64)
+			if err != nil {
+				continue
+			}
+			if !foundBestBid || price > bestBidPrice {
+				bestBidPrice = price
+				foundBestBid = true
+			}
+		}
+
+		if !foundBestBid {
+			log.Printf("Position | [%s %s] No valid bid prices found, using signal price", p.Symbol, p.StrategyName)
+			optimalPrice = signal.TriggerPrice
+			optimalQuantity = riskAmount / signal.TriggerPrice
+			return optimalPrice, optimalQuantity, nil
+		}
+
+		// Calculate total available quantity within slippage range
+		totalAvailable := 0.0
+		for priceStr, entry := range buyDepth {
+			price, err := strconv.ParseFloat(priceStr, 64)
+			if err != nil {
+				continue
+			}
+			if price >= bestBidPrice*(1-slippagePercent/100) {
+				totalAvailable += entry.Quantity
+			} else {
+				break
+			}
+		}
+
+		// Calculate optimal price with slippage
+		optimalPrice = bestBidPrice * (1 - slippagePercent/100)
+		optimalQuantity = totalAvailable
+
+		log.Printf("Position | [%s %s] Sell order: bid_price=%.2f, slippage_price=%.2f, available_qty=%.6f",
+			p.Symbol, p.StrategyName, bestBidPrice, optimalPrice, optimalQuantity)
+	}
+
+	// Calculate order quantity based on risk amount and optimal price
+	orderQuantity := riskAmount / optimalPrice
+
+	// Check if we have enough liquidity
+	if orderQuantity > optimalQuantity {
+		log.Printf("Position | [%s %s] Warning: Order quantity (%.6f) exceeds available liquidity (%.6f), reducing quantity",
+			p.Symbol, p.StrategyName, orderQuantity, optimalQuantity)
+		orderQuantity = optimalQuantity * 0.95 // Use 95% of available liquidity for safety
+	}
+
+	// Validate minimum order size (if exchange has requirements)
+	if orderQuantity <= 0 {
+		return 0, 0, fmt.Errorf("calculated order quantity is zero or negative: %.6f", orderQuantity)
+	}
+
+	// Validate against market cap data if available
+	if p.lastMarketCap != nil && p.lastMarketCap.LastPrice != "" {
+		if marketCapPrice, err := strconv.ParseFloat(p.lastMarketCap.LastPrice, 64); err == nil {
+			priceDiff := math.Abs(optimalPrice-marketCapPrice) / marketCapPrice
+			if priceDiff > 0.01 { // 1% threshold
+				log.Printf("Position | [%s %s] Warning: Calculated price (%.2f) differs significantly from market cap price (%.2f), diff=%.2f%%",
+					p.Symbol, p.StrategyName, optimalPrice, marketCapPrice, priceDiff*100)
+			}
+		}
+	}
+
+	// Log market data age for debugging
+	if !p.lastMarketDataTime.IsZero() {
+		age := p.getMarketDataAge()
+		log.Printf("Position | [%s %s] Using market data from %v ago", p.Symbol, p.StrategyName, age)
+	}
+
+	log.Printf("Position | [%s %s] Final order params: price=%.2f, quantity=%.6f, risk_amount=%.2f",
+		p.Symbol, p.StrategyName, optimalPrice, orderQuantity, riskAmount)
+
+	return optimalPrice, orderQuantity, nil
+}
+
 // createExitOrder creates an exit order based on position side
-func (p *position) createExitOrder(price float64, orderType string) order.OrderRequest {
-	// TODO: Better price management for ensuring full execution
+func (p *position) createExitOrder(price float64) exchange.OrderRequest {
+	// TODO: Better price management for ensuring full execution (using a function like calculateOptimalOrderParams)
 	// TODO: Handle other order types
 
 	side := p.getExitSide()
 
-	orderReq := order.OrderRequest{
+	orderReq := exchange.OrderRequest{
 		Symbol:   p.Symbol,
 		Side:     side,
-		Type:     p.OrderSpec.Type,
+		Type:     "market",
 		Price:    0,
 		Quantity: p.Size,
 	}
 
 	if p.OrderSpec.Type == "limit" {
 		orderReq.Price = price
-		// Apply spread for better execution
+		// TODO: Apply spread for better execution outside of this function
 		if p.RiskParams.LimitSpread > 0 {
 			if side == "sell" {
 				orderReq.Price = price * (1 - p.RiskParams.LimitSpread/100)
@@ -473,61 +777,70 @@ func (p *position) createExitOrder(price float64, orderType string) order.OrderR
 }
 
 // createEntryOrder creates an entry order (buy or sell for futures)
-func (p *position) createEntryOrder(price, orderSize float64, side string) order.OrderRequest {
-	var orderReq order.OrderRequest
+func (p *position) createEntryOrder(price, orderSize float64, side string) exchange.OrderRequest {
+	// TODO: Check caller passed optimal price and optimal quantity
+	var orderReq exchange.OrderRequest
 
 	switch p.OrderSpec.Type {
 	case "limit":
-		orderReq = order.OrderRequest{
+		orderReq = exchange.OrderRequest{
 			Symbol:   p.Symbol,
 			Side:     side,
 			Type:     "limit",
 			Price:    price,
 			Quantity: orderSize,
-		}
-		if p.RiskParams.LimitSpread > 0 {
-			if side == "buy" {
-				orderReq.Price = price * (1 - p.RiskParams.LimitSpread/100)
-			} else {
-				orderReq.Price = price * (1 + p.RiskParams.LimitSpread/100)
-			}
 		}
 	case "stop-limit":
-		orderReq = order.OrderRequest{
+		orderReq = exchange.OrderRequest{
 			Symbol:    p.Symbol,
 			Side:      side,
 			Type:      "stop-limit",
 			Price:     price,
-			StopPrice: price * 1.001, // TODO: Better stop price management
+			StopPrice: price, // TODO: Set proper value
 			Quantity:  orderSize,
 		}
+		// TODO: Set proper value
+		if side == "buy" {
+			orderReq.StopPrice = price * (1 + p.RiskParams.LimitSpread/100)
+		} else {
+			orderReq.StopPrice = price * (1 - p.RiskParams.LimitSpread/100)
+		}
 	case "oco":
-		limitOrder := order.OrderRequest{
+		// TODO: Set proper value
+		limitOrder := exchange.OrderRequest{
 			Symbol:   p.Symbol,
 			Side:     side,
 			Type:     "limit",
 			Price:    price,
 			Quantity: orderSize,
 		}
-		stopOrder := order.OrderRequest{
+		// TODO: Set proper value
+		stopOrder := exchange.OrderRequest{
 			Symbol:    p.Symbol,
 			Side:      side,
 			Type:      "stop-limit",
 			Price:     price,
-			StopPrice: price * 1.001,
+			StopPrice: price, // TODO: Set proper value
 			Quantity:  orderSize,
 		}
-		orderReq = order.OrderRequest{
+		// TODO: Set proper value
+		if side == "buy" {
+			stopOrder.StopPrice = price * (1 - p.RiskParams.LimitSpread/100)
+		} else {
+			stopOrder.StopPrice = price * (1 + p.RiskParams.LimitSpread/100)
+		}
+		// TODO: Set proper value
+		orderReq = exchange.OrderRequest{
 			Symbol:      p.Symbol,
 			Side:        side,
 			Type:        "limit",
 			Price:       price,
 			Quantity:    orderSize,
 			AlgoType:    "OCO",
-			ChildOrders: []order.OrderRequest{limitOrder, stopOrder},
+			ChildOrders: []exchange.OrderRequest{limitOrder, stopOrder},
 		}
 	default:
-		orderReq = order.OrderRequest{
+		orderReq = exchange.OrderRequest{
 			Symbol:   p.Symbol,
 			Side:     side,
 			Type:     "market",
@@ -540,20 +853,20 @@ func (p *position) createEntryOrder(price, orderSize float64, side string) order
 }
 
 // handleEntrySuccess handles successful entry order execution (buy or sell)
-func (p *position) handleEntrySuccess(ctx context.Context, orderResp order.OrderResponse, orderSize float64, side string) {
-	log.Printf("Position | [%s %s] Entry order submitted: %+v", p.Symbol, p.StrategyName, orderResp)
+func (p *position) handleEntrySuccess(ctx context.Context, order exchange.Order, side string) {
+	log.Printf("Position | [%s %s] Entry order submitted: %+v", p.Symbol, p.StrategyName, order)
 
 	if p.Storage != nil {
-		err := p.Storage.SaveOrder(ctx, orderResp)
+		err := p.Storage.SaveOrder(ctx, exchange.OrderToDBOrder(order))
 		if err != nil {
 			log.Printf("Position | [%s %s] Error saving order: %v", p.Symbol, p.StrategyName, err)
 		}
 
-		err = p.Storage.LogEvent(ctx, journal.Event{
+		err = p.Storage.LogEvent(ctx, db.Event{
 			Time:        time.Now(),
 			Type:        "order",
 			Description: "entry_order_submitted",
-			Data:        map[string]any{"symbol": p.Symbol, "strategy_name": p.StrategyName, "order": orderResp},
+			Data:        map[string]any{"symbol": p.Symbol, "strategy_name": p.StrategyName, "order": order},
 		})
 		if err != nil {
 			log.Printf("Position | [%s %s] Error logging event: %v", p.Symbol, p.StrategyName, err)
@@ -562,17 +875,24 @@ func (p *position) handleEntrySuccess(ctx context.Context, orderResp order.Order
 
 	// Update position
 	p.Side = side
-	p.Entry = orderResp.AvgPrice
-	p.Size = orderSize
-	p.OrderID = orderResp.OrderID
+	p.Entry = order.AvgPrice
+	p.Size = order.Quantity
+	p.OrderID = order.OrderID
 	p.Active = true
 	p.Time = time.Now()
 
 	// NOTE: Don't update balance here. It's updated in onPositionClose.
 
+	// Automatically update the position in database when it becomes active
+	if p.Storage != nil {
+		if err := p.save(ctx); err != nil {
+			log.Printf("Position | [%s %s] Warning: Failed to update active position in database: %v", p.StrategyName, p.Symbol, err)
+		}
+	}
+
 	if p.Notifier != nil {
 		msg := fmt.Sprintf("[ORDER FILLED]\nSide: %s\nSymbol: %s\nQty: %.4f\nAvgPrice: %.2f\nType: %s\nOrderID: %s\nEvent: Manual\nTime: %s",
-			side, p.Symbol, orderSize, orderResp.AvgPrice, p.OrderSpec.Type, orderResp.OrderID, time.Now().Format(time.RFC3339))
+			side, p.Symbol, order.Quantity, order.AvgPrice, p.OrderSpec.Type, order.OrderID, time.Now().Format(time.RFC3339))
 		err := p.Notifier.SendWithRetry(msg)
 		if err != nil {
 			log.Printf("Position | [%s %s] Error sending notification: %v", p.Symbol, p.StrategyName, err)
@@ -581,14 +901,14 @@ func (p *position) handleEntrySuccess(ctx context.Context, orderResp order.Order
 }
 
 // handleOrderError handles order execution errors
-func (p *position) handleOrderError(ctx context.Context, err error, description string) {
-	log.Printf("Position | [%s %s] %s failed: %v", p.Symbol, p.StrategyName, description, err)
+func (p *position) handleOrderError(ctx context.Context, err error, desc string) {
+	log.Printf("Position | [%s %s] %s failed: %v", p.Symbol, p.StrategyName, desc, err)
 
 	if p.Storage != nil {
-		err := p.Storage.LogEvent(ctx, journal.Event{
+		err := p.Storage.LogEvent(ctx, db.Event{
 			Time:        time.Now(),
 			Type:        "error",
-			Description: description,
+			Description: desc,
 			Data:        map[string]any{"symbol": p.Symbol, "strategy_name": p.StrategyName, "error": err.Error()},
 		})
 		if err != nil {
@@ -597,7 +917,7 @@ func (p *position) handleOrderError(ctx context.Context, err error, description 
 	}
 
 	if p.Notifier != nil {
-		msg := fmt.Sprintf("ERROR: %s: %v", description, err)
+		msg := fmt.Sprintf("ERROR: %s: %v", desc, err)
 		err := p.Notifier.SendWithRetry(msg)
 		if err != nil {
 			log.Printf("Position | [%s %s] Error sending notification: %v", p.Symbol, p.StrategyName, err)
@@ -606,19 +926,19 @@ func (p *position) handleOrderError(ctx context.Context, err error, description 
 }
 
 // handleExitSuccess handles successful exit order execution
-func (p *position) handleExitSuccess(ctx context.Context, orderResp order.OrderResponse, event string) {
-	log.Printf("Position | [%s %s] %s triggered, order submitted: %+v", p.Symbol, p.StrategyName, event, orderResp)
+func (p *position) handleExitSuccess(ctx context.Context, order exchange.Order, event string) {
+	log.Printf("Position | [%s %s] %s triggered, order submitted: %+v", p.Symbol, p.StrategyName, event, order)
 
 	if p.Storage != nil {
-		err := p.Storage.SaveOrder(ctx, orderResp)
+		err := p.Storage.SaveOrder(ctx, exchange.OrderToDBOrder(order))
 		if err != nil {
 			log.Printf("Position | [%s %s] Error saving order: %v", p.Symbol, p.StrategyName, err)
 		}
-		err = p.Storage.LogEvent(ctx, journal.Event{
+		err = p.Storage.LogEvent(ctx, db.Event{
 			Time:        time.Now(),
 			Type:        "order",
 			Description: fmt.Sprintf("%s_triggered", event),
-			Data:        map[string]any{"symbol": p.Symbol, "strategy_name": p.StrategyName, "order": orderResp},
+			Data:        map[string]any{"symbol": p.Symbol, "strategy_name": p.StrategyName, "order": order},
 		})
 		if err != nil {
 			log.Printf("Position | [%s %s] Error saving order: %v", p.Symbol, p.StrategyName, err)
@@ -627,7 +947,7 @@ func (p *position) handleExitSuccess(ctx context.Context, orderResp order.OrderR
 
 	if p.Notifier != nil {
 		msg := fmt.Sprintf("[ORDER FILLED]\nSide: %s\nSymbol: %s\nQty: %.4f\nAvgPrice: %.2f\nType: %s\nOrderID: %s\nEvent: %s\nPnL: %.2f\nTime: %s",
-			p.getExitSide(), p.Symbol, p.Size, orderResp.AvgPrice, p.OrderSpec.Type, orderResp.OrderID, event, p.LastPNL, time.Now().Format(time.RFC3339))
+			p.getExitSide(), p.Symbol, p.Size, order.AvgPrice, p.OrderSpec.Type, order.OrderID, event, p.LastPNL, time.Now().Format(time.RFC3339))
 		err := p.Notifier.SendWithRetry(msg)
 		if err != nil {
 			log.Printf("Position | [%s %s] Error sending notification: %v", p.Symbol, p.StrategyName, err)
@@ -652,13 +972,13 @@ func (p *position) getExitSide() string {
 	return "buy"
 }
 
-// onPositionClose handles position closing logic
-func (p *position) onPositionClose(exitPrice float64) {
+// onPositionClose handles position closing logic and updates database
+func (p *position) onPositionClose(ctx context.Context, exitPrice float64) {
 	p.LastPNL = p.calculatePNL(exitPrice)
 
 	p.Active = false
 	// Update balance with PNL
-	p.RiskParams.Balance += p.LastPNL
+	p.Balance += p.LastPNL
 
 	// Add to trade log
 	p.LiveTradeLog = append(p.LiveTradeLog, Trade{
@@ -668,6 +988,16 @@ func (p *position) onPositionClose(exitPrice float64) {
 		EntryTime: p.Time,
 		ExitTime:  time.Now(),
 	})
+
+	// Automatically update the position in database
+	if p.Storage != nil {
+		if err := p.update(ctx); err != nil {
+			log.Printf("Position | [%s %s] Warning: Failed to update closed position in database: %v", p.StrategyName, p.Symbol, err)
+		}
+	}
+
+	// Reset ID for next position
+	p.ID = 0
 }
 
 // updateLiveStats updates live trading statistics
@@ -801,15 +1131,16 @@ func (p *position) sendSignalNotification(ctx context.Context, signal strategy.S
 	}
 
 	posStr := "unknown"
-	if signal.Position == strategy.Hold {
+	switch signal.Position {
+	case strategy.Hold:
 		posStr = "hold"
-	} else if signal.Position == strategy.LongBullish {
+	case strategy.LongBullish:
 		posStr = "long bullish"
-	} else if signal.Position == strategy.LongBearish {
+	case strategy.LongBearish:
 		posStr = "long bearish"
-	} else if signal.Position == strategy.ShortBullish {
+	case strategy.ShortBullish:
 		posStr = "short bullish"
-	} else if signal.Position == strategy.ShortBearish {
+	case strategy.ShortBearish:
 		posStr = "short bearish"
 	}
 
@@ -820,7 +1151,7 @@ func (p *position) sendSignalNotification(ctx context.Context, signal strategy.S
 		log.Printf("Position | [%s %s] Notification failed: %v", p.Symbol, signal.StrategyName, err)
 
 		if p.Storage != nil {
-			err = p.Storage.LogEvent(ctx, journal.Event{
+			err = p.Storage.LogEvent(ctx, db.Event{
 				Time:        time.Now(),
 				Type:        "error",
 				Description: "notification",
@@ -831,26 +1162,6 @@ func (p *position) sendSignalNotification(ctx context.Context, signal strategy.S
 			}
 		}
 	}
-}
-
-// flush saves trade logs and equity curves to persistent storage
-func (p *position) flush() error {
-	if p.Storage == nil {
-		return nil
-	}
-
-	// Save trade log
-	// p.DB.SaveTradeLog(p.Symbol, "timeframe", p.LiveTradeLog)
-
-	// Save equity curve
-	// p.DB.SaveEquityCurve(p.Symbol, "timeframe", p.LiveEquityCurve)
-
-	// Save position state
-	if err := p.Save(); err != nil {
-		return fmt.Errorf("failed to save position: %w", err)
-	}
-
-	return nil
 }
 
 // ResetDailyStats resets daily trading statistics
@@ -908,50 +1219,15 @@ func (p *position) Stats() (map[string]interface{}, error) {
 }
 
 // OnTick processes a new tick with optional market depth and market cap information
-func (p *position) OnTick(ctx context.Context, tick Tick, depthState map[string]exchange.OrderBook, marketCapState *exchange.MarketCapData) {
-	if tick == nil {
-		log.Printf("Position | [%s %s] Received nil tick, ignoring", p.Symbol, p.StrategyName)
-		return
-	}
-
+func (p *position) OnTick(ctx context.Context, tick exchange.Tick, depthState map[string]exchange.OrderBook, marketCapState *exchange.MarketCap) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
+	// Update stored market data
+	p.updateMarketData(depthState, marketCapState)
+
 	if !p.Active || p.TradingDisabled {
 		return
-	}
-
-	// Store market depth for later use if provided
-	var bestBuyPrice, bestSellPrice float64
-	if depthState != nil {
-		// Process market depth data
-		buyBook, ok := depthState[exchange.GetBuyDepthKey(p.Symbol)]
-		if ok {
-			// Get best buy price (highest price in buy book)
-			for _, entry := range buyBook {
-				if price, err := strconv.ParseFloat(entry.Price, 64); err == nil {
-					if price > bestBuyPrice {
-						bestBuyPrice = price
-					}
-				}
-			}
-			log.Printf("Position | [%s %s] Best buy price: %.8f", p.Symbol, p.StrategyName, bestBuyPrice)
-		}
-
-		sellBook, ok := depthState[exchange.GetSellDepthKey(p.Symbol)]
-		if ok {
-			// Get best sell price (lowest price in sell book)
-			first := true
-			for _, entry := range sellBook {
-				if price, err := strconv.ParseFloat(entry.Price, 64); err == nil {
-					if first || price < bestSellPrice {
-						bestSellPrice = price
-						first = false
-					}
-				}
-			}
-			log.Printf("Position | [%s %s] Best sell price: %.8f", p.Symbol, p.StrategyName, bestSellPrice)
-		}
 	}
 
 	// Process market cap data if provided
@@ -966,13 +1242,12 @@ func (p *position) OnTick(ctx context.Context, tick Tick, depthState map[string]
 	}
 
 	// Use tick price or market cap price (if available and within reasonable bounds)
-	price := tick.Price()
 	if marketCapPrice > 0 {
 		// If market cap price is within 1% of tick price, we can use it for validation
-		priceDiff := math.Abs(price-marketCapPrice) / price
+		priceDiff := math.Abs(tick.Price-marketCapPrice) / tick.Price
 		if priceDiff > 0.01 {
 			log.Printf("Position | [%s %s] Warning: Tick price (%.2f) differs significantly from market cap price (%.2f)",
-				p.Symbol, p.StrategyName, price, marketCapPrice)
+				p.Symbol, p.StrategyName, tick.Price, marketCapPrice)
 		}
 	}
 
@@ -982,16 +1257,16 @@ func (p *position) OnTick(ctx context.Context, tick Tick, depthState map[string]
 	// Execute with transaction management
 	err := executeWithTransaction(ctx, p.Storage, func(txCtx context.Context) error {
 		// Use tick.Price for all stop/take/trailing logic
-		if p.shouldTriggerStopLoss(price) {
-			return p.executeStopLoss(txCtx, price)
+		if p.shouldTriggerStopLoss(tick.Price) {
+			return p.exit(txCtx, tick.Price, "stop_loss")
 		}
-		if p.shouldTriggerTakeProfit(price) {
-			return p.executeTakeProfit(txCtx, price)
+		if p.shouldTriggerTakeProfit(tick.Price) {
+			return p.exit(txCtx, tick.Price, "take_profit")
 		}
 		if p.RiskParams.TrailingStopPercent > 0 {
-			p.updateTrailingStop(price)
-			if p.shouldTriggerTrailingStop(price) {
-				return p.executeTrailingStop(txCtx, price)
+			p.updateTrailingStop(tick.Price)
+			if p.shouldTriggerTrailingStop(tick.Price) {
+				return p.exit(txCtx, tick.Price, "trailing_stop")
 			}
 		}
 		return nil
@@ -1004,11 +1279,11 @@ func (p *position) OnTick(ctx context.Context, tick Tick, depthState map[string]
 
 		// Log the error
 		if p.Storage != nil {
-			p.Storage.LogEvent(ctx, journal.Event{
+			p.Storage.LogEvent(ctx, db.Event{
 				Time:        time.Now(),
 				Type:        "error",
 				Description: "tick_processing_failed",
-				Data:        map[string]any{"symbol": p.Symbol, "strategy_name": p.StrategyName, "error": err.Error(), "price": price},
+				Data:        map[string]any{"symbol": p.Symbol, "strategy_name": p.StrategyName, "error": err.Error(), "price": tick.Price},
 			})
 		}
 		return
@@ -1016,9 +1291,12 @@ func (p *position) OnTick(ctx context.Context, tick Tick, depthState map[string]
 }
 
 // OnSignal processes a new signal for open/close logic (lower frequency)
-func (p *position) OnSignal(ctx context.Context, signal strategy.Signal) {
+func (p *position) OnSignal(ctx context.Context, signal strategy.Signal, depthState map[string]exchange.OrderBook, marketCapState *exchange.MarketCap) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+
+	// Update stored market data
+	p.updateMarketData(depthState, marketCapState)
 
 	// If its new trading day, reset daily stats
 	if time.Now().Day() != p.Time.Day() {
@@ -1032,7 +1310,6 @@ func (p *position) OnSignal(ctx context.Context, signal strategy.Signal) {
 
 	// Validate signal
 	if signal.Position == strategy.Hold {
-		log.Printf("Position | [%s %s] Received empty signal action, ignoring", p.Symbol, p.StrategyName)
 		return
 	}
 
@@ -1045,12 +1322,12 @@ func (p *position) OnSignal(ctx context.Context, signal strategy.Signal) {
 		if p.Active {
 			// Manual close (sell signal)
 			if (signal.Position == strategy.LongBearish && p.Side == "buy") || (signal.Position == strategy.ShortBullish && p.Side == "sell") {
-				return p.executeManualExit(txCtx, signal.TriggerPrice)
+				return p.exit(txCtx, signal.TriggerPrice, "manual_exit")
 			}
 		} else {
 			// Open position (buy signal)
 			if signal.Position == strategy.LongBullish || signal.Position == strategy.ShortBearish {
-				return p.executeEntry(txCtx, signal)
+				return p.enter(txCtx, signal)
 			}
 		}
 		return nil
@@ -1063,7 +1340,7 @@ func (p *position) OnSignal(ctx context.Context, signal strategy.Signal) {
 
 		// Log the error
 		if p.Storage != nil {
-			p.Storage.LogEvent(ctx, journal.Event{
+			p.Storage.LogEvent(ctx, db.Event{
 				Time:        time.Now(),
 				Type:        "error",
 				Description: "signal_processing_failed",
@@ -1072,8 +1349,9 @@ func (p *position) OnSignal(ctx context.Context, signal strategy.Signal) {
 		}
 		return
 	}
+
 	// Send signal notification
-	p.sendSignalNotification(ctx, signal)
+	// p.sendSignalNotification(ctx, signal)
 }
 
 // --- Tick-based stop/take/trailing logic ---
@@ -1125,4 +1403,16 @@ func (p *position) shouldTriggerTrailingStop(price float64) bool {
 		trailingStopPrice := p.Entry - p.TrailingStop + (p.Entry * p.RiskParams.TrailingStopPercent / 100)
 		return price >= trailingStopPrice
 	}
+}
+
+// min returns the minimum of three float64 values
+func min(a, b, c float64) float64 {
+	min := a
+	if b < min {
+		min = b
+	}
+	if c < min {
+		min = c
+	}
+	return min
 }
