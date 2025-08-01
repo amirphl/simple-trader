@@ -54,25 +54,14 @@ func retry(attempts int, delay time.Duration, fn func() error) error {
 	return errors.New("all retry attempts failed")
 }
 
-func trimTimeframe(timeframe string) string {
-	trimmedTimeframe := strings.TrimSuffix(timeframe, "m")
-	return trimmedTimeframe
-}
-
-func trimSymbol(symbol string) string {
-	symbolNoHyphen := strings.ReplaceAll(symbol, "-", "")
-	uppercasedSymbol := strings.ToUpper(symbolNoHyphen)
-	return uppercasedSymbol
-}
-
 func (w *WallexExchange) FetchCandles(ctx context.Context, symbol string, timeframe string, start, end time.Time) ([]Candle, error) {
 	// Validate timeframe
 	if !tfutils.IsValidTimeframe(timeframe) {
 		return nil, fmt.Errorf("unsupported timeframe: %s", timeframe)
 	}
 
-	trimmedTimeframe := trimTimeframe(timeframe)
-	trimmedSymbol := trimSymbol(symbol)
+	normalizedTimeframe := NormalizedTimeframe(timeframe)
+	normalizedSymbol := NormalizeSymbol(symbol)
 
 	var wallexCandles []*wallex.Candle
 
@@ -84,7 +73,7 @@ func (w *WallexExchange) FetchCandles(ctx context.Context, symbol string, timefr
 	default:
 		err := retry(3, 2*time.Second, func() error {
 			var err error
-			wallexCandles, err = w.client.Candles(trimmedSymbol, trimmedTimeframe, start, end)
+			wallexCandles, err = w.client.Candles(normalizedSymbol, normalizedTimeframe, start, end)
 			if err != nil {
 				return fmt.Errorf("fetching candles: %w", err)
 			}
@@ -151,12 +140,12 @@ func (w *WallexExchange) SubmitOrder(ctx context.Context, req OrderRequest) (Ord
 		price := strconv.FormatFloat(req.Price, 'f', 8, 64)
 		qty := strconv.FormatFloat(req.Quantity, 'f', 8, 64)
 
-		trimmedSymbol := trimSymbol(req.Symbol)
+		normalizedSymbol := NormalizeSymbol(req.Symbol)
 		uppercasedType := strings.ToUpper(req.Type)
 		uppercasedSide := strings.ToUpper(req.Side)
 
 		params := &wallex.OrderParams{
-			Symbol:   trimmedSymbol,
+			Symbol:   normalizedSymbol,
 			Type:     uppercasedType,
 			Side:     uppercasedSide,
 			Price:    wallex.Number(price),

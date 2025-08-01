@@ -50,8 +50,8 @@ type MarketDepthStateManager interface {
 
 // MarketCapStateManager interface for managing market cap state
 type MarketCapStateManager interface {
-	update(symbol string, data *MarketCapData)
-	Get(symbol string) (*MarketCapData, bool)
+	update(symbol string, data *MarketCap)
+	Get(symbol string) (*MarketCap, bool)
 }
 
 // WallexTrade represents a trade message from Wallex
@@ -229,6 +229,24 @@ func (w *WallexTradeChannel) setLastPong(t time.Time) {
 // NormalizeSymbol converts e.g. btc-usdt to BTCUSDT for Wallex API
 func NormalizeSymbol(symbol string) string {
 	return strings.ToUpper(strings.ReplaceAll(symbol, "-", ""))
+}
+
+func NormalizedTimeframe(timeframe string) string {
+	trimmedTimeframe := strings.TrimSuffix(timeframe, "m")
+	return trimmedTimeframe
+}
+
+// ExtractQuoteCurrency extracts the quote currency from a trading symbol
+// e.g., "ETH/DAI" -> "DAI", "BTC/USDT" -> "USDT"
+func ExtractQuoteCurrency(symbol string) string {
+	parts := strings.Split(symbol, "/")
+	if len(parts) != 2 {
+		parts = strings.Split(symbol, "-")
+		if len(parts) != 2 {
+			return ""
+		}
+	}
+	return parts[len(parts)-1]
 }
 
 // GetBuyDepthKey returns the normalized key for buy depth data
@@ -781,8 +799,8 @@ func (w *WallexDepthWatcher) logState(format string, args ...interface{}) {
 	log.Printf("WallexDepthWatcher | "+format, args...)
 }
 
-// MarketCapData represents the market cap data from Wallex
-type MarketCapData struct {
+// MarketCap represents the market cap data from Wallex
+type MarketCap struct {
 	Symbol         string  `json:"symbol"`
 	Ch24h          float64 `json:"24h_ch"`
 	Ch7d           float64 `json:"7d_ch"`
@@ -808,7 +826,7 @@ type MarketCapData struct {
 }
 
 // UnmarshalJSON custom unmarshaler to handle string fields that might come as numbers
-func (m *MarketCapData) UnmarshalJSON(data []byte) error {
+func (m *MarketCap) UnmarshalJSON(data []byte) error {
 	// Create a temporary struct to unmarshal into
 	type tempMarketCapData struct {
 		Symbol         string      `json:"symbol"`
@@ -889,18 +907,18 @@ func convertToString(v interface{}) string {
 // MarketCapState holds the latest market cap data for a symbol
 type MarketCapState struct {
 	mu    sync.RWMutex
-	state map[string]*MarketCapData // key: "SYMBOL"
+	state map[string]*MarketCap // key: "SYMBOL"
 }
 
 // NewMarketCapState creates a new MarketCapState
 func NewMarketCapState() MarketCapStateManager {
 	return &MarketCapState{
-		state: make(map[string]*MarketCapData),
+		state: make(map[string]*MarketCap),
 	}
 }
 
 // Update sets the latest market cap data for a symbol
-func (m *MarketCapState) update(symbol string, data *MarketCapData) {
+func (m *MarketCapState) update(symbol string, data *MarketCap) {
 	key := NormalizeSymbol(symbol)
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -908,7 +926,7 @@ func (m *MarketCapState) update(symbol string, data *MarketCapData) {
 }
 
 // Get returns the latest market cap data for a symbol
-func (m *MarketCapState) Get(symbol string) (*MarketCapData, bool) {
+func (m *MarketCapState) Get(symbol string) (*MarketCap, bool) {
 	key := NormalizeSymbol(symbol)
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -1094,7 +1112,7 @@ func (w *WallexMarketCapWatcher) connectAndStream(ctx context.Context) error {
 					if eventName == "Broadcaster" && channel == channelName {
 						// eventArray[2] is the market cap data
 						dataJSON, _ := json.Marshal(eventArray[2])
-						var marketCapData MarketCapData
+						var marketCapData MarketCap
 						if err := json.Unmarshal(dataJSON, &marketCapData); err != nil {
 							w.logState("Failed to parse market cap data: %v", err)
 							continue
