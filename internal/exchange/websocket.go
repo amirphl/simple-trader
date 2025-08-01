@@ -1,4 +1,11 @@
 // Package exchange
+//
+// WebSocket Implementation Notes:
+//   - Instead of broadcasting all ticks to subscribers (which can overwhelm them),
+//     we now store only the last tick and provide methods to retrieve it on demand.
+//   - Use GetLastTick() or GetLastTickAsTick() to get the most recent tick data.
+//   - Use HasFreshTick() to check if there's recent tick data available.
+//   - This approach prevents subscribers from being overwhelmed by high-frequency ticks.
 package exchange
 
 import (
@@ -20,6 +27,8 @@ type TradeChannel interface {
 	Subscribe(subscriberID string, bufferSize int) (<-chan WallexTrade, error)
 	Unsubscribe(subscriberID string) error
 	GetSubscriberCount() int
+	GetLastTick() (*Tick, time.Time)
+	HasFreshTick() bool
 	Close()
 	IsConnected() bool
 	Health() error
@@ -92,6 +101,10 @@ type WallexTradeChannel struct {
 	symbol      string
 	conn        *websocket.Conn
 	cancelFunc  context.CancelFunc
+
+	// Store only the last tick instead of broadcasting all ticks
+	lastTick     *WallexTrade
+	lastTickTime time.Time
 }
 
 // NewWallexTradeChannel creates a new trade channel manager
@@ -103,6 +116,7 @@ func NewWallexTradeChannel() TradeChannel {
 }
 
 // Subscribe adds a new subscriber and returns their channel
+// Note: Since we no longer broadcast all ticks, subscribers should use GetLastTick() to get the latest data
 func (w *WallexTradeChannel) Subscribe(subscriberID string, bufferSize int) (<-chan WallexTrade, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -121,7 +135,7 @@ func (w *WallexTradeChannel) Subscribe(subscriberID string, bufferSize int) (<-c
 	}
 	w.subscribers[subscriberID] = sub
 
-	log.Printf("WallexWebsocket | Subscriber %s added for symbol %s", subscriberID, w.symbol)
+	log.Printf("WallexWebsocket | Subscriber %s added for symbol %s (use GetLastTick() to get latest data)", subscriberID, w.symbol)
 	return sub.Chan, nil
 }
 
@@ -141,7 +155,44 @@ func (w *WallexTradeChannel) Unsubscribe(subscriberID string) error {
 	return nil
 }
 
+// updateLastTick stores the latest tick instead of broadcasting to all subscribers
+func (w *WallexTradeChannel) updateLastTick(trade WallexTrade) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	w.lastTick = &trade
+	w.lastTickTime = time.Now()
+}
+
+// GetLastTick returns the most recent tick data
+func (w *WallexTradeChannel) GetLastTick() (*Tick, time.Time) {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+
+	if w.lastTick == nil {
+		return nil, time.Time{}
+	}
+
+	// Convert to Tick format
+	tick := w.lastTick.ToTick(w.symbol)
+	return &tick, w.lastTickTime
+}
+
+// HasFreshTick returns true if there's tick data available and it's recent (within last 1 seconds)
+func (w *WallexTradeChannel) HasFreshTick() bool {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+
+	if w.lastTick == nil {
+		return false
+	}
+
+	// Consider tick fresh if it's within the last 1 seconds
+	return time.Since(w.lastTickTime) < 1*time.Second
+}
+
 // broadcast sends a trade to all subscribers (non-blocking)
+// This function is kept for backward compatibility but is no longer used
 func (w *WallexTradeChannel) broadcast(trade WallexTrade) {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
@@ -441,7 +492,9 @@ func (w *WallexTradeChannel) connectAndStream(ctx context.Context) error {
 						continue
 					}
 					// Broadcast to all subscribers
-					w.broadcast(trade)
+					// w.broadcast(trade)
+					// Store the latest tick instead of broadcasting to all subscribers
+					w.updateLastTick(trade)
 				}
 			}
 		}

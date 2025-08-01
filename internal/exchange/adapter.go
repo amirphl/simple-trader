@@ -7,11 +7,11 @@ import (
 	"github.com/amirphl/simple-trader/internal/db"
 )
 
-func WallexTradeToTick(trade WallexTrade, symbol string) Tick {
-	price, _ := strconv.ParseFloat(trade.Price, 64)
-	quantity, _ := strconv.ParseFloat(trade.Quantity, 64)
+func (w *WallexTrade) ToTick(symbol string) Tick {
+	price, _ := strconv.ParseFloat(w.Price, 64)
+	quantity, _ := strconv.ParseFloat(w.Quantity, 64)
 	side := "buy"
-	if !trade.IsBuyOrder {
+	if !w.IsBuyOrder {
 		side = "sell"
 	}
 
@@ -20,7 +20,7 @@ func WallexTradeToTick(trade WallexTrade, symbol string) Tick {
 		Price:     price,
 		Quantity:  quantity,
 		Side:      side,
-		Timestamp: trade.Timestamp,
+		Timestamp: w.Timestamp,
 	}
 }
 
