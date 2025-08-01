@@ -3,12 +3,22 @@ package utils
 
 import (
 	"log"
+	"os"
+	"sync"
 )
 
-func Info(msg string, args ...any) {
-	log.Printf("INFO: "+msg, args...)
-}
+var (
+	logger *log.Logger
+	once   sync.Once
+)
 
-func Error(msg string, args ...any) {
-	log.Printf("ERROR: "+msg, args...)
+func GetLogger() *log.Logger {
+	once.Do(func() {
+		file, err := os.OpenFile("simple-trader.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			log.Fatal(err)
+		}
+		logger = log.New(file, "Simple Trader: ", log.LstdFlags)
+	})
+	return logger
 }

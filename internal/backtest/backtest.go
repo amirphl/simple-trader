@@ -13,7 +13,6 @@ import (
 	"net/url"
 	"os"
 	"sort"
-	"strings"
 	"time"
 
 	"math/rand"
@@ -22,9 +21,11 @@ import (
 	"github.com/amirphl/simple-trader/internal/candle"
 	"github.com/amirphl/simple-trader/internal/config"
 	"github.com/amirphl/simple-trader/internal/db"
+	"github.com/amirphl/simple-trader/internal/exchange"
 	"github.com/amirphl/simple-trader/internal/indicator"
 	"github.com/amirphl/simple-trader/internal/strategy"
 	"github.com/amirphl/simple-trader/internal/tfutils"
+	"github.com/amirphl/simple-trader/internal/utils"
 )
 
 // runBacktest handles the backtest mode
@@ -41,7 +42,7 @@ func RunBacktest(
 			log.Fatalf("runBacktest | Error loading candles for backtest: %v", err)
 		}
 
-		log.Printf("runBacktest | Loaded %d candles for backtest [%s-%s]",
+		utils.GetLogger().Printf("runBacktest | Loaded %d candles for backtest [%s-%s]",
 			len(candles), cfg.BacktestFrom.Time.Format(time.RFC3339), cfg.BacktestTo.Time.Format(time.RFC3339))
 
 		backtestResults := runStrategyBacktest(strat, candles, cfg)
@@ -201,7 +202,7 @@ func downloadCandlesFromPublicAPIWithRetry(ctx context.Context, symbol, timefram
 	}
 
 	// Convert symbol to uppercase and format for API
-	apiSymbol := strings.ToUpper(strings.ReplaceAll(symbol, "-", ""))
+	apiSymbol := exchange.NormalizeSymbol(symbol)
 
 	// Calculate start and end timestamps in milliseconds
 	startMs := start.UnixNano() / int64(time.Millisecond)
@@ -669,13 +670,7 @@ func runStrategyBacktest(strat strategy.Strategy, candles []candle.Candle, cfg c
 	riskPerTrade := cfg.RiskPercent / 100.0
 
 	// Warmup period - ensure strategy has enough data before generating signals
-	warmupPeriod := 0
-	if s, ok := strat.(interface{ WarmupPeriod() int }); ok {
-		warmupPeriod = s.WarmupPeriod()
-	}
-	if warmupPeriod <= 0 {
-		warmupPeriod = 20 // Default warmup period if not specified
-	}
+	warmupPeriod := strat.WarmupPeriod()
 
 	// Process each candle
 	for i, c := range candles {
