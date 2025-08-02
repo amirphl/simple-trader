@@ -12,6 +12,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -103,8 +104,8 @@ type WallexTradeChannel struct {
 	cancelFunc  context.CancelFunc
 
 	// Store only the last tick instead of broadcasting all ticks
-	lastTick     *WallexTrade
-	lastTickTime time.Time
+	lastTrade     *WallexTrade
+	lastTradeTime time.Time
 }
 
 // NewWallexTradeChannel creates a new trade channel manager
@@ -160,8 +161,8 @@ func (w *WallexTradeChannel) updateLastTick(trade WallexTrade) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	w.lastTick = &trade
-	w.lastTickTime = time.Now()
+	w.lastTrade = &trade
+	w.lastTradeTime = time.Now()
 }
 
 // GetLastTick returns the most recent tick data
@@ -169,13 +170,13 @@ func (w *WallexTradeChannel) GetLastTick() (*Tick, time.Time) {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 
-	if w.lastTick == nil {
+	if w.lastTrade == nil {
 		return nil, time.Time{}
 	}
 
 	// Convert to Tick format
-	tick := w.lastTick.ToTick(w.symbol)
-	return &tick, w.lastTickTime
+	tick := w.lastTrade.ToTick(w.symbol)
+	return &tick, w.lastTradeTime
 }
 
 // HasFreshTick returns true if there's tick data available and it's recent (within last 1 seconds)
@@ -183,12 +184,12 @@ func (w *WallexTradeChannel) HasFreshTick() bool {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 
-	if w.lastTick == nil {
+	if w.lastTrade == nil {
 		return false
 	}
 
 	// Consider tick fresh if it's within the last 1 seconds
-	return time.Since(w.lastTickTime) < 1*time.Second
+	return time.Since(w.lastTradeTime) < 1*time.Second
 }
 
 // broadcast sends a trade to all subscribers (non-blocking)
@@ -545,6 +546,34 @@ func (o *OrderBookEntry) UnmarshalJSON(data []byte) error {
 
 // OrderBook represents the complete order book (buy or sell depth)
 type OrderBook map[string]OrderBookEntry
+
+func (o *OrderBook) BestBid() float64 {
+	bestBid := 0.0
+	for _, entry := range *o {
+		price, err := strconv.ParseFloat(entry.Price, 64)
+		if err != nil {
+			continue
+		}
+		if price > bestBid {
+			bestBid = price
+		}
+	}
+	return bestBid
+}
+
+func (o *OrderBook) BestAsk() float64 {
+	bestAsk := 0.0
+	for _, entry := range *o {
+		price, err := strconv.ParseFloat(entry.Price, 64)
+		if err != nil {
+			continue
+		}
+		if price < bestAsk {
+			bestAsk = price
+		}
+	}
+	return bestAsk
+}
 
 // MarketDepthState holds the latest order book state for a symbol/depth type.
 type MarketDepthState struct {

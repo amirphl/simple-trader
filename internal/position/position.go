@@ -60,7 +60,7 @@ type Position interface {
 	OnTick(ctx context.Context, tick exchange.Tick, depthState map[string]exchange.OrderBook, marketCapState *exchange.MarketCap)
 	Stats() (map[string]any, error)
 	GetLastPNL() float64
-	DailyPnL() (float64, error)
+	DailyPnL() float64
 	IsActive() bool
 }
 
@@ -464,7 +464,7 @@ func (p *position) GetLastPNL() float64 {
 }
 
 // DailyPnL returns the PnL for the current trading day
-func (p *position) DailyPnL() (float64, error) {
+func (p *position) DailyPnL() float64 {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
@@ -478,7 +478,7 @@ func (p *position) DailyPnL() (float64, error) {
 		}
 	}
 
-	return dailyPnL, nil
+	return dailyPnL
 }
 
 // exit executes an exit order atomically with error handling

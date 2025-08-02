@@ -71,7 +71,8 @@ func main() {
 	telegramNotifier := notifier.NewTelegramNotifier(cfg.TelegramToken, cfg.TelegramChatID, cfg.ProxyURL, cfg.NotificationRetries, cfg.NotificationDelay)
 
 	// Create exchange connection
-	wallexExchange := exchange.NewWallexExchange(cfg.WallexAPIKey, telegramNotifier)
+	// wallexExchange := exchange.NewWallexExchange(cfg.WallexAPIKey, telegramNotifier)
+	mockWallexExchange := exchange.NewMockWallexExchange(cfg.WallexAPIKey, telegramNotifier)
 
 	// Create strategies
 	strats := strategy.New(cfg, storage)
@@ -83,7 +84,7 @@ func main() {
 	// Handle different modes
 	switch cfg.Mode {
 	case "live":
-		livetrading.RunLiveTrading(ctx, cfg, strats, storage, wallexExchange, telegramNotifier)
+		livetrading.RunLiveTrading(ctx, cfg, strats, storage, mockWallexExchange, telegramNotifier)
 	case "backtest":
 		if cfg.MultiSymbolBacktest {
 			backtest.RunMultiSymbolBacktest(ctx, cfg, storage)

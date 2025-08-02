@@ -194,19 +194,14 @@ func monitorIngestionStats(ctx context.Context, ingestionSvc candle.IngestionSer
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			printIngestionStats(ingestionSvc)
-		}
-	}
-}
-
-// printIngestionStats prints the current ingestion statistics
-func printIngestionStats(ingestionSvc candle.IngestionService) {
-	stats := ingestionSvc.GetIngestionStats()
-	utils.GetLogger().Println("monitorIngestionStats | Candle Ingestion Stats:")
-	for symbol, symbolStats := range stats {
-		utils.GetLogger().Printf("  %s:", symbol)
-		for timeframe, timeframeStats := range symbolStats {
-			utils.GetLogger().Printf("    %s: %+v", timeframe, timeframeStats)
+			stats := ingestionSvc.GetIngestionStats()
+			utils.GetLogger().Println("monitorIngestionStats | Candle Ingestion Stats:")
+			for symbol, symbolStats := range stats {
+				utils.GetLogger().Printf("  %s:", symbol)
+				for timeframe, timeframeStats := range symbolStats {
+					utils.GetLogger().Printf("    %s: %+v", timeframe, timeframeStats)
+				}
+			}
 		}
 	}
 }
@@ -233,8 +228,9 @@ func runTradingLoop(
 	}
 
 	if pos.IsActive() {
-		utils.GetLogger().Printf("runTradingLoop | Position is active, stopping trading loop with %s strategy", strat.Name())
-		return fmt.Errorf("position is active, stopping trading loop with %s strategy", strat.Name())
+		utils.GetLogger().Printf("runTradingLoop | Position is active (but must be closed), %s strategy", strat.Name())
+		// TODO: Return error?
+		// return fmt.Errorf("position is active, stopping trading loop with %s strategy", strat.Name())
 	}
 
 	symbol := strat.Symbol()
@@ -259,6 +255,10 @@ func runTradingLoop(
 	// Goroutine for feeding ticks
 	go func() {
 		defer wg.Done()
+
+		ticker := time.NewTicker(1 * time.Second)
+		defer ticker.Stop()
+
 		for {
 			select {
 			case <-ctx.Done():
@@ -288,17 +288,13 @@ func runTradingLoop(
 
 			// 	pos.OnTick(ctx, exchange.ToTick(tick, symbol), posDepthState, marketCap)
 			// }
-			default:
-				howMuchSleep := 1 * time.Second
-
+			case <-ticker.C:
 				if !websocketChan.HasFreshTick() {
-					time.Sleep(howMuchSleep)
 					continue
 				}
 
 				tick, _ := websocketChan.GetLastTick()
 				if tick == nil {
-					time.Sleep(howMuchSleep)
 					continue
 				}
 
@@ -320,6 +316,8 @@ func runTradingLoop(
 				// Get latest market cap data if available
 				marketCap, _ := marketCapState.Get(symbol)
 
+				utils.GetLogger().Printf("runTradingLoop | [%s, %s] Tick: %+v, Best Ask: %+v, Best Bid: %+v, Last Price: %+v, Best Ask from sellDepth: %+v, Best Bid from buyDepth: %+v", strat.Name(), strat.Symbol(), tick, marketCap.AskPrice, marketCap.BidPrice, marketCap.LastPrice, buyDepth.BestAsk(), sellDepth.BestBid())
+
 				pos.OnTick(ctx, *tick, posDepthState, marketCap)
 			}
 		}
@@ -334,14 +332,15 @@ func runTradingLoop(
 		dailyPnL := 0.0
 		tradingDisabled := false
 		dur := tfutils.GetTimeframeDuration(strat.Timeframe())
-		statusTicker := time.NewTicker(30 * time.Second)
-		defer statusTicker.Stop()
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
 		var lastProcessed time.Time
+
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case <-statusTicker.C:
+			case <-ticker.C:
 				currentDay := time.Now().Day()
 				if currentDay != lastDay {
 					tradingDisabled = false
@@ -372,16 +371,11 @@ func runTradingLoop(
 						tradingDisabled = true
 					}
 				}
-				todayPnL, err := pos.DailyPnL()
-				if err != nil {
-					utils.GetLogger().Printf("runTradingLoop | [%s] Error getting daily PnL: %v", strat.Name(), err)
-				} else {
-					dailyPnL = todayPnL
-				}
+				dailyPnL = pos.DailyPnL()
 				now := time.Now().UTC()
 				var from time.Time
 				if lastProcessed.IsZero() {
-					from = now.AddDate(-1, 0, 0).Truncate(dur)
+					from = now.AddDate(0, 0, 7).Truncate(dur) // TODO:
 				} else {
 					from = lastProcessed.Add(time.Second)
 				}
@@ -414,6 +408,9 @@ func runTradingLoop(
 					utils.GetLogger().Printf("runTradingLoop | [%s] Error processing candles: %v", strat.Name(), err)
 					continue
 				}
+
+				utils.GetLogger().Printf("runTradingLoop | [%s, %s] TriggerPrice: %+v, Best Ask: %+v, Best Bid: %+v, Last Price: %+v, Best Ask from sellDepth: %+v, Best Bid from buyDepth: %+v", strat.Name(), strat.Symbol(), signal.TriggerPrice, marketCap.AskPrice, marketCap.BidPrice, marketCap.LastPrice, buyDepth.BestAsk(), sellDepth.BestBid())
+
 				pos.OnSignal(ctx, signal, posDepthState, marketCap)
 				lastProcessed = candles[len(candles)-1].Timestamp
 			}

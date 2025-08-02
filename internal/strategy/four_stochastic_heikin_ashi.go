@@ -75,7 +75,7 @@ func (s *FourStochasticHeikinAshi) Name() string { return "Four Stochastic Heiki
 func (s *FourStochasticHeikinAshi) Symbol() string { return s.symbol }
 
 // Timeframe returns the timeframe this strategy is configured for
-func (s *FourStochasticHeikinAshi) Timeframe() string { return "15m" }
+func (s *FourStochasticHeikinAshi) Timeframe() string { return "5m" }
 
 // trimCandles ensures we don't keep too many candles in memory
 func (s *FourStochasticHeikinAshi) trimCandles() {
