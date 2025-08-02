@@ -3,12 +3,12 @@ package strategy
 
 import (
 	"context"
-	"log"
 	"sort"
 	"time"
 
 	"github.com/amirphl/simple-trader/internal/candle"
 	"github.com/amirphl/simple-trader/internal/db"
+	"github.com/amirphl/simple-trader/internal/utils"
 )
 
 func abs(x float64) float64 {
@@ -130,16 +130,16 @@ func (s *EngulfingHeikinAshi) OnCandles(ctx context.Context, oneHourCandles []ca
 		endTime := filteredCandles[0].Timestamp.Truncate(time.Hour)
 		startTime := endTime.Add(-24 * time.Hour) // Just 24 hours should be enough
 
-		log.Printf("Strategy | [%s Engulfing Heikin Ashi] Fetching historical 1h candles from %s to %s\n",
+		utils.GetLogger().Printf("Strategy | [%s Engulfing Heikin Ashi] Fetching historical 1h candles from %s to %s\n",
 			s.symbol, startTime.Format(time.RFC3339), endTime.Format(time.RFC3339))
 
 		// Fetch historical 1h candles
 		historicalCandles, err := s.Storage.GetCandles(ctx, s.symbol, "1h", "", startTime, endTime)
 		if err != nil {
-			log.Printf("Strategy | [%s Engulfing Heikin Ashi] Error fetching historical candles from database: %v\n", s.symbol, err)
+			utils.GetLogger().Printf("Strategy | [%s Engulfing Heikin Ashi] Error fetching historical candles from database: %v\n", s.symbol, err)
 			// Continue with the current candles even if historical fetch fails
 		} else if len(historicalCandles) > 0 {
-			log.Printf("Strategy | [%s Engulfing Heikin Ashi] Loaded %d historical candles from database\n", s.symbol, len(historicalCandles))
+			utils.GetLogger().Printf("Strategy | [%s Engulfing Heikin Ashi] Loaded %d historical candles from database\n", s.symbol, len(historicalCandles))
 
 			// Sort historical candles by timestamp
 			sort.Slice(historicalCandles, func(i, j int) bool {

@@ -5,13 +5,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"sort"
 	"sync"
 	"time"
 
 	"github.com/amirphl/simple-trader/internal/db"
 	"github.com/amirphl/simple-trader/internal/tfutils"
+	"github.com/amirphl/simple-trader/internal/utils"
 )
 
 type Candle struct {
@@ -315,7 +315,7 @@ func (ci *DefaultIngester) IngestCandle(ctx context.Context, c Candle) error {
 			select {
 			case ch <- []Candle{c}:
 			default:
-				fmt.Println("Warning: subscriber channel is full, skipping")
+				utils.GetLogger().Println("Warning: subscriber channel is full, skipping")
 			}
 		}
 	}
@@ -345,7 +345,7 @@ func (ci *DefaultIngester) IngestRaw1mCandles(ctx context.Context, candles []Can
 
 		// Validate candle once here instead of multiple times later
 		if err := c.Validate(); err != nil {
-			log.Printf("Ingester | Skipping invalid candle: %v\n", err)
+			utils.GetLogger().Printf("Ingester | Skipping invalid candle: %v\n", err)
 			continue
 		}
 
@@ -388,9 +388,9 @@ func (ci *DefaultIngester) IngestRaw1mCandles(ctx context.Context, candles []Can
 		// Non-blocking send to avoid blocking on slow receivers
 		select {
 		case ch <- oneMCandles:
-			log.Printf("Ingester | Sent %d 1m candles to subscriber", len(oneMCandles))
+			utils.GetLogger().Printf("Ingester | Sent %d 1m candles to subscriber", len(oneMCandles))
 		default:
-			log.Println("Ingester | Warning: subscriber channel is full, skipping")
+			utils.GetLogger().Println("Ingester | Warning: subscriber channel is full, skipping")
 		}
 	}
 
@@ -517,7 +517,7 @@ func (ci *DefaultIngester) BulkAggregateFrom1m(ctx context.Context, symbol strin
 		ci.cache[symbol][timeframe] = &latestCandle
 
 		// Log the aggregation result
-		log.Printf("Aggregated %d %s constructed candles for %s\n", len(aggregated), timeframe, symbol)
+		utils.GetLogger().Printf("Aggregated %d %s constructed candles for %s\n", len(aggregated), timeframe, symbol)
 	}
 
 	// Save all constructed candles in one batch operation
@@ -605,7 +605,7 @@ func (ci *DefaultIngester) BulkAggregateAllSymbolsFrom1m(ctx context.Context, st
 				ci.mu.Unlock()
 
 				// Log the aggregation result
-				log.Printf("Ingester | Aggregated %d %s constructed candles for %s\n", len(aggregated), timeframe, symbol)
+				utils.GetLogger().Printf("Ingester | Aggregated %d %s constructed candles for %s\n", len(aggregated), timeframe, symbol)
 			}
 
 			// Save all constructed candles for this symbol in one batch operation

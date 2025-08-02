@@ -4,12 +4,12 @@ package config
 import (
 	"flag"
 	"fmt"
-	"log"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/amirphl/simple-trader/internal/utils"
 	"gopkg.in/yaml.v3"
 )
 
@@ -273,7 +273,8 @@ func LoadConfig() (Config, error) {
 func MustLoadConfig() Config {
 	cfg, err := LoadConfig()
 	if err != nil {
-		log.Fatalf("Failed to load configuration: %v", err)
+		// TODO: Return error
+		utils.GetLogger().Fatalf("Failed to load configuration: %v", err)
 	}
 	return cfg
 }

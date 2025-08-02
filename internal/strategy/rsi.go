@@ -3,13 +3,13 @@ package strategy
 
 import (
 	"context"
-	"log"
 	"sort"
 	"time"
 
 	"github.com/amirphl/simple-trader/internal/candle"
 	"github.com/amirphl/simple-trader/internal/db"
 	"github.com/amirphl/simple-trader/internal/indicator"
+	"github.com/amirphl/simple-trader/internal/utils"
 )
 
 // RSIStrategy implements a trading strategy based on the Relative Strength Index
@@ -68,13 +68,13 @@ func (s *RSIStrategy) trimPrices() {
 
 // OnCandles processes new candles and generates trading signals
 func (s *RSIStrategy) OnCandles(ctx context.Context, oneMinCandles []candle.Candle) (Signal, error) {
-	log.Printf("Strategy | [%s RSI] Received %d 1m candles", s.symbol, len(oneMinCandles))
+	utils.GetLogger().Printf("Strategy | [%s RSI] Received %d 1m candles", s.symbol, len(oneMinCandles))
 
 	// TODO: Handle duplicate candles
 	// TODO: Handle missing candles from last candle in db to first received candle (somewhat possible because of UTC)
 	// TODO: Handle missing candles inside oneMinCandles, validate, sort, truncate (impossible)
 	if len(oneMinCandles) == 0 {
-		log.Printf("Strategy | [%s RSI] No candles received", s.symbol)
+		utils.GetLogger().Printf("Strategy | [%s RSI] No candles received", s.symbol)
 		return Signal{
 			Time:         time.Now().UTC(),
 			Position:     Hold,
@@ -94,7 +94,7 @@ func (s *RSIStrategy) OnCandles(ctx context.Context, oneMinCandles []candle.Cand
 	}
 
 	if len(filteredCandles) == 0 {
-		log.Printf("Strategy | [%s RSI] No matching candles", s.symbol)
+		utils.GetLogger().Printf("Strategy | [%s RSI] No matching candles", s.symbol)
 		return Signal{
 			Time:         time.Now().UTC(),
 			Position:     Hold,
@@ -120,16 +120,16 @@ func (s *RSIStrategy) OnCandles(ctx context.Context, oneMinCandles []candle.Cand
 		endTime := filteredCandles[0].Timestamp.Truncate(time.Minute)
 		startTime := endTime.AddDate(-1, 0, 0) // 1 year before
 
-		log.Printf("Strategy | [%s RSI] Fetching historical 1m candles from %s to %s\n",
+		utils.GetLogger().Printf("Strategy | [%s RSI] Fetching historical 1m candles from %s to %s\n",
 			s.symbol, startTime.Format(time.RFC3339), endTime.Format(time.RFC3339))
 
 		// Fetch historical 1m candles
 		historicalCandles, err := s.Storage.GetCandles(ctx, s.symbol, "1m", "", startTime, endTime)
 		if err != nil {
-			log.Printf("Strategy | [%s RSI] Error fetching historical candles from database: %v\n", s.symbol, err)
+			utils.GetLogger().Printf("Strategy | [%s RSI] Error fetching historical candles from database: %v\n", s.symbol, err)
 			// Continue with the current candles even if historical fetch fails
 		} else if len(historicalCandles) > 0 {
-			log.Printf("Strategy | [%s RSI] Loaded %d historical candles from database\n", s.symbol, len(historicalCandles))
+			utils.GetLogger().Printf("Strategy | [%s RSI] Loaded %d historical candles from database\n", s.symbol, len(historicalCandles))
 
 			// Sort historical candles by timestamp
 			sort.Slice(historicalCandles, func(i, j int) bool {
@@ -156,7 +156,7 @@ func (s *RSIStrategy) OnCandles(ctx context.Context, oneMinCandles []candle.Cand
 
 	// Check if we have enough data for RSI calculation
 	if len(s.prices) <= s.Period {
-		log.Printf("Strategy | [%s RSI] Not enough data for RSI calculation", s.symbol)
+		utils.GetLogger().Printf("Strategy | [%s RSI] Not enough data for RSI calculation", s.symbol)
 		return Signal{
 			Time:         s.lastCandle.Timestamp,
 			Position:     Hold,
@@ -170,7 +170,7 @@ func (s *RSIStrategy) OnCandles(ctx context.Context, oneMinCandles []candle.Cand
 	// Use the more efficient CalculateLastRSI instead of calculating the entire array
 	rsi, err := indicator.CalculateLastRSI(s.prices, s.Period)
 	if err != nil {
-		log.Printf("Strategy | [%s RSI] Error calculating RSI: %v\n", s.symbol, err)
+		utils.GetLogger().Printf("Strategy | [%s RSI] Error calculating RSI: %v\n", s.symbol, err)
 		return Signal{
 			Time:         s.lastCandle.Timestamp,
 			Position:     Hold,
@@ -183,7 +183,7 @@ func (s *RSIStrategy) OnCandles(ctx context.Context, oneMinCandles []candle.Cand
 
 	if rsi > s.Oversold && s.lastRSI < s.Oversold && s.lastRSI != 0 {
 		s.lastRSI = rsi
-		log.Printf("Strategy | [%s RSI] Signal changed to BUY - RSI: %.2f (below %v), Price: %.2f\n",
+		utils.GetLogger().Printf("Strategy | [%s RSI] Signal changed to BUY - RSI: %.2f (below %v), Price: %.2f\n",
 			s.symbol, rsi, s.Oversold, s.lastCandle.Close)
 		return Signal{
 			Time:         s.lastCandle.Timestamp,
@@ -197,7 +197,7 @@ func (s *RSIStrategy) OnCandles(ctx context.Context, oneMinCandles []candle.Cand
 
 	if rsi > s.Overbought && s.lastRSI < s.Overbought && s.lastRSI != 0 {
 		s.lastRSI = rsi
-		log.Printf("Strategy | [%s RSI] Signal changed to SELL - RSI: %.2f (above %v), Price: %.2f\n",
+		utils.GetLogger().Printf("Strategy | [%s RSI] Signal changed to SELL - RSI: %.2f (above %v), Price: %.2f\n",
 			s.symbol, rsi, s.Overbought, s.lastCandle.Close)
 		return Signal{
 			Time:         s.lastCandle.Timestamp,
@@ -219,7 +219,7 @@ func (s *RSIStrategy) OnCandles(ctx context.Context, oneMinCandles []candle.Cand
 
 	// 	// Log signal change
 	// 	if !s.lastSignalWasBuy {
-	// 		log.Printf("[%s RSI] Signal changed to BUY - RSI: %.2f (below %v), Price: %.2f\n",
+	// 		utils.GetLogger().Printf("[%s RSI] Signal changed to BUY - RSI: %.2f (below %v), Price: %.2f\n",
 	// 			s.symbol, rsi, s.Oversold, lastCandle.Close)
 	// 		s.lastSignalWasBuy = true
 	// 	}
@@ -229,7 +229,7 @@ func (s *RSIStrategy) OnCandles(ctx context.Context, oneMinCandles []candle.Cand
 
 	// 	// Log signal change
 	// 	if s.lastSignalWasBuy {
-	// 		log.Printf("[%s RSI] Signal changed to SELL - RSI: %.2f (above %v), Price: %.2f\n",
+	// 		utils.GetLogger().Printf("[%s RSI] Signal changed to SELL - RSI: %.2f (above %v), Price: %.2f\n",
 	// 			s.symbol, rsi, s.Overbought, lastCandle.Close)
 	// 		s.lastSignalWasBuy = false
 	// 	}
@@ -238,7 +238,7 @@ func (s *RSIStrategy) OnCandles(ctx context.Context, oneMinCandles []candle.Cand
 	// 	reason = "RSI neutral"
 	// }
 
-	log.Printf("Strategy | [%s RSI] Holding - RSI: %.2f", s.symbol, rsi)
+	utils.GetLogger().Printf("Strategy | [%s RSI] Holding - RSI: %.2f", s.symbol, rsi)
 
 	return Signal{
 		Time:         s.lastCandle.Timestamp,

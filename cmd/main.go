@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"log"
 	"net/url"
 	"os"
 	"os/signal"
@@ -22,6 +21,7 @@ import (
 	"github.com/amirphl/simple-trader/internal/livetrading"
 	"github.com/amirphl/simple-trader/internal/notifier"
 	"github.com/amirphl/simple-trader/internal/strategy"
+	"github.com/amirphl/simple-trader/internal/utils"
 	"github.com/lib/pq"
 )
 
@@ -30,7 +30,7 @@ func main() {
 	rand.Seed(time.Now().UnixNano())
 
 	cfg := config.MustLoadConfig()
-	log.Println("Starting Simple Trader in mode:", cfg.Mode)
+	utils.GetLogger().Println("Starting Simple Trader in mode:", cfg.Mode)
 
 	// Set up context with cancellation
 	ctx, cancel := context.WithCancel(context.Background())
@@ -41,28 +41,31 @@ func main() {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		sig := <-sigCh
-		log.Printf("Received signal %v, shutting down...", sig)
+		utils.GetLogger().Printf("Received signal %v, shutting down...", sig)
 		cancel()
 	}()
 
 	// Run migrations if enabled
 	if cfg.RunMigration {
 		if err := runMigrations(ctx, cfg.DBConnStr); err != nil {
-			log.Fatalf("Failed to run migrations: %v", err)
+			// TODO: gracefull
+			utils.GetLogger().Fatalf("Failed to run migrations: %v", err)
 		}
 	}
 
 	// Initialize database connection
 	dbCfg, err := dbconfig.NewConfig(cfg.DBConnStr, cfg.DBMaxOpen, cfg.DBMaxIdle)
 	if err != nil {
-		log.Fatalf("Failed to create DB config: %v", err)
+		// TODO: gracefull
+		utils.GetLogger().Fatalf("Failed to create DB config: %v", err)
 	}
 
 	storage, err := db.New(*dbCfg)
 	if err != nil {
-		log.Fatalf("Failed to initialize database: %v", err)
+		// TODO: gracefull
+		utils.GetLogger().Fatalf("Failed to initialize database: %v", err)
 	}
-	log.Println("Connected to Postgres/TimescaleDB")
+	utils.GetLogger().Println("Connected to Postgres/TimescaleDB")
 
 	// Set up notification system
 	telegramNotifier := notifier.NewTelegramNotifier(cfg.TelegramToken, cfg.TelegramChatID, cfg.ProxyURL, cfg.NotificationRetries, cfg.NotificationDelay)
@@ -73,7 +76,8 @@ func main() {
 	// Create strategies
 	strats := strategy.New(cfg, storage)
 	if len(strats) == 0 {
-		log.Fatalf("No valid strategies configured. Check your configuration.")
+		// TODO: gracefull
+		utils.GetLogger().Fatalf("No valid strategies configured. Check your configuration.")
 	}
 
 	// Handle different modes
@@ -87,11 +91,12 @@ func main() {
 			backtest.RunBacktest(ctx, cfg, strats, storage)
 		}
 	default:
-		log.Fatalf("Unsupported mode: %s", cfg.Mode)
+		// TODO: gracefull
+		utils.GetLogger().Fatalf("Unsupported mode: %s", cfg.Mode)
 	}
 
 	<-sigCh
-	log.Println("Graceful shutdown initiated...")
+	utils.GetLogger().Println("Graceful shutdown initiated...")
 
 	// Allow some time for cleanup
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -99,12 +104,12 @@ func main() {
 
 	// Wait for context to be done (either timeout or cancel)
 	<-shutdownCtx.Done()
-	log.Println("Shutdown complete")
+	utils.GetLogger().Println("Shutdown complete")
 }
 
 // runMigrations creates the database if it doesn't exist and runs the schema.sql script
 func runMigrations(ctx context.Context, connStr string) error {
-	log.Println("Running database migrations...")
+	utils.GetLogger().Println("Running database migrations...")
 
 	// Parse connection string to extract database name
 	u, err := url.Parse(connStr)
@@ -148,7 +153,7 @@ func runMigrations(ctx context.Context, connStr string) error {
 
 	// Create the database if it doesn't exist
 	if !exists {
-		log.Printf("Creating database %s...", dbName)
+		utils.GetLogger().Printf("Creating database %s...", dbName)
 		_, err = baseDB.ExecContext(ctx, fmt.Sprintf("CREATE DATABASE %s", pq.QuoteIdentifier(dbName)))
 		if err != nil {
 			return fmt.Errorf("failed to create database: %w", err)
@@ -175,6 +180,6 @@ func runMigrations(ctx context.Context, connStr string) error {
 		return fmt.Errorf("failed to execute schema.sql: %w", err)
 	}
 
-	log.Println("Database migrations completed successfully")
+	utils.GetLogger().Println("Database migrations completed successfully")
 	return nil
 }

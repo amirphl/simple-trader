@@ -3,7 +3,6 @@ package candle
 import (
 	"context"
 	"fmt"
-	"log"
 	"math"
 	"math/rand"
 	"sort"
@@ -12,6 +11,7 @@ import (
 
 	"github.com/amirphl/simple-trader/internal/exchange"
 	"github.com/amirphl/simple-trader/internal/tfutils"
+	"github.com/amirphl/simple-trader/internal/utils"
 )
 
 type IngestionService interface {
@@ -71,7 +71,7 @@ func NewIngestionService(ctx context.Context, ingester Ingester, cfg IngestionCo
 
 // Start begins the ingestion service with proper error handling and synchronization
 func (is *DefaultIngestionService) Start() error {
-	log.Printf("IngestionService | Starting candle ingestion service with %d symbols", len(is.cfg.Symbols))
+	utils.GetLogger().Printf("IngestionService | Starting candle ingestion service with %d symbols", len(is.cfg.Symbols))
 
 	if is.cfg.Exchange == nil {
 		return fmt.Errorf("no exchange configured for ingestion service")
@@ -102,13 +102,13 @@ func (is *DefaultIngestionService) Start() error {
 		}()
 	}
 
-	log.Printf("IngestionService | Ingestion service started successfully")
+	utils.GetLogger().Printf("IngestionService | Ingestion service started successfully")
 	return nil
 }
 
 // Stop gracefully stops the ingestion service
 func (is *DefaultIngestionService) Stop() {
-	log.Printf("IngestionService | Stopping ingestion service...")
+	utils.GetLogger().Printf("IngestionService | Stopping ingestion service...")
 
 	// Create a timeout context for graceful shutdown
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -127,9 +127,9 @@ func (is *DefaultIngestionService) Stop() {
 	// Wait for either completion or timeout
 	select {
 	case <-done:
-		log.Printf("IngestionService | Ingestion service stopped gracefully")
+		utils.GetLogger().Printf("IngestionService | Ingestion service stopped gracefully")
 	case <-ctx.Done():
-		log.Printf("IngestionService | Ingestion service stop timed out")
+		utils.GetLogger().Printf("IngestionService | Ingestion service stop timed out")
 	}
 }
 
@@ -139,7 +139,7 @@ func (is *DefaultIngestionService) runIngestionLoop(symbol string) {
 	defer ticker.Stop()
 
 	const timeframe = "1m"
-	log.Printf("IngestionService | [%s %s] Starting ingestion loop", symbol, timeframe)
+	utils.GetLogger().Printf("IngestionService | [%s %s] Starting ingestion loop", symbol, timeframe)
 
 	// Track consecutive errors for backoff
 	// consecutiveErrors := 0
@@ -149,16 +149,16 @@ func (is *DefaultIngestionService) runIngestionLoop(symbol string) {
 	for {
 		select {
 		case <-is.ctx.Done():
-			log.Printf("IngestionService | [%s %s] Stopping ingestion loop", symbol, timeframe)
+			utils.GetLogger().Printf("IngestionService | [%s %s] Stopping ingestion loop", symbol, timeframe)
 			return
 		case <-ticker.C:
 			if err := is.fetchAndIngestCandles(symbol); err != nil {
-				log.Printf("IngestionService | [%s %s] Error in ingestion loop: %v", symbol, timeframe, err)
+				utils.GetLogger().Printf("IngestionService | [%s %s] Error in ingestion loop: %v", symbol, timeframe, err)
 			}
 
 			// if err != nil {
 			// 	consecutiveErrors++
-			// 	log.Printf("[%s %s] Error in ingestion loop (%d/%d consecutive): %v",
+			// 	utils.GetLogger().Printf("[%s %s] Error in ingestion loop (%d/%d consecutive): %v",
 			// 		symbol, timeframe, consecutiveErrors, maxConsecutiveErrors, err)
 			//
 			// 	// Apply exponential backoff for consecutive errors
@@ -167,7 +167,7 @@ func (is *DefaultIngestionService) runIngestionLoop(symbol string) {
 			// 			float64(baseBackoff)*math.Pow(2, float64(consecutiveErrors-maxConsecutiveErrors)),
 			// 			float64(2*time.Minute),
 			// 		))
-			// 		log.Printf("[%s %s] Too many consecutive errors, backing off for %v",
+			// 		utils.GetLogger().Printf("[%s %s] Too many consecutive errors, backing off for %v",
 			// 			symbol, timeframe, backoff)
 			//
 			// 		// Create a temporary timer for backoff
@@ -185,7 +185,7 @@ func (is *DefaultIngestionService) runIngestionLoop(symbol string) {
 			// } else {
 			// 	// Reset consecutive errors counter on success
 			// 	if consecutiveErrors > 0 {
-			// 		log.Printf("[%s %s] Ingestion recovered after %d errors",
+			// 		utils.GetLogger().Printf("[%s %s] Ingestion recovered after %d errors",
 			// 			symbol, timeframe, consecutiveErrors)
 			// 		consecutiveErrors = 0
 			// 	}
@@ -208,7 +208,7 @@ func deriveContextWithTimeout(parent context.Context) (context.Context, context.
 
 // fetchAndIngestCandles fetches candles from exchange and ingests them
 func (is *DefaultIngestionService) fetchAndIngestCandles(symbol string) error {
-	log.Printf("IngestionService | [%s] Fetching candles", symbol)
+	utils.GetLogger().Printf("IngestionService | [%s] Fetching candles", symbol)
 
 	const timeframe = "1m"
 
@@ -242,16 +242,16 @@ func (is *DefaultIngestionService) fetchAndIngestCandles(symbol string) error {
 
 	candles, err := is.fetchCandlesWithRetry(ctx, symbol, timeframe, start, end)
 	if err != nil {
-		log.Printf("IngestionService | [%s %s] Failed to fetch candles from %s: %v", symbol, timeframe, is.cfg.Exchange.Name(), err)
+		utils.GetLogger().Printf("IngestionService | [%s %s] Failed to fetch candles from %s: %v", symbol, timeframe, is.cfg.Exchange.Name(), err)
 		// NOTE: No need to generate fake candle
 		return err
 	}
 	if len(candles) == 0 {
-		log.Printf("IngestionService | [%s %s] No candles fetched from %s", symbol, timeframe, is.cfg.Exchange.Name())
+		utils.GetLogger().Printf("IngestionService | [%s %s] No candles fetched from %s", symbol, timeframe, is.cfg.Exchange.Name())
 		return nil
 	}
 
-	log.Printf("IngestionService | [%s %s] Fetched %d candles from %s", symbol, timeframe, len(candles), is.cfg.Exchange.Name())
+	utils.GetLogger().Printf("IngestionService | [%s %s] Fetched %d candles from %s", symbol, timeframe, len(candles), is.cfg.Exchange.Name())
 
 	candlesMap := make(map[time.Time]Candle)
 
@@ -264,7 +264,7 @@ func (is *DefaultIngestionService) fetchAndIngestCandles(symbol string) error {
 		// Validate all candles before ingestion
 		// TODO: not sorted, missing candles, same timeframe, same symbol, all are truncated, has duplicates
 		if err := c.Validate(); err != nil {
-			log.Printf("IngestionService | [%s %s] Invalid candle: %v", symbol, timeframe, err)
+			utils.GetLogger().Printf("IngestionService | [%s %s] Invalid candle: %v", symbol, timeframe, err)
 			return fmt.Errorf("invalid candle: %w", err)
 		}
 
@@ -308,7 +308,7 @@ func (is *DefaultIngestionService) fetchAndIngestCandles(symbol string) error {
 			}
 
 			completeCandles = append(completeCandles, syntheticCandle)
-			log.Printf("IngestionService | [%s %s] Generated synthetic candle for %v", symbol, timeframe, currentTime)
+			utils.GetLogger().Printf("IngestionService | [%s %s] Generated synthetic candle for %v", symbol, timeframe, currentTime)
 			syntheticCandles++
 		} else {
 			completeCandles = append(completeCandles, c)
@@ -322,10 +322,10 @@ func (is *DefaultIngestionService) fetchAndIngestCandles(symbol string) error {
 	// Ingest the complete set of candles (real + synthetic)
 	if len(completeCandles) > 0 {
 		if err := is.ingester.IngestRaw1mCandles(ctx, completeCandles); err != nil {
-			log.Printf("IngestionService | [%s %s] Failed to ingest candles: %v", symbol, timeframe, err)
+			utils.GetLogger().Printf("IngestionService | [%s %s] Failed to ingest candles: %v", symbol, timeframe, err)
 			return fmt.Errorf("failed to ingest candles: %w", err)
 		}
-		log.Printf("IngestionService | [%s %s] Successfully ingested %d candles (%d real, %d synthetic)",
+		utils.GetLogger().Printf("IngestionService | [%s %s] Successfully ingested %d candles (%d real, %d synthetic)",
 			symbol, timeframe, len(completeCandles), len(candles), syntheticCandles)
 	}
 
@@ -343,7 +343,7 @@ func (is *DefaultIngestionService) fetchCandlesWithRetry(ctx context.Context, sy
 	for attempt := 1; attempt <= is.cfg.MaxRetries; attempt++ {
 		select {
 		case <-is.ctx.Done():
-			log.Printf("IngestionService | [%s %s] Timeout fetching candles from %s", symbol, timeframe, is.cfg.Exchange.Name())
+			utils.GetLogger().Printf("IngestionService | [%s %s] Timeout fetching candles from %s", symbol, timeframe, is.cfg.Exchange.Name())
 			return nil, ctx.Err()
 		default:
 
@@ -367,7 +367,7 @@ func (is *DefaultIngestionService) fetchCandlesWithRetry(ctx context.Context, sy
 					backoffWithJitter = maxDelay
 				}
 
-				log.Printf("IngestionService | [%s %s] Fetch attempt %d failed, retrying in %v: %v",
+				utils.GetLogger().Printf("IngestionService | [%s %s] Fetch attempt %d failed, retrying in %v: %v",
 					symbol, timeframe, attempt, backoffWithJitter, err)
 				time.Sleep(backoffWithJitter)
 			}
@@ -382,27 +382,27 @@ func (is *DefaultIngestionService) runCleanupLoop() {
 	ticker := time.NewTicker(is.cfg.CleanupCycle)
 	defer ticker.Stop()
 
-	log.Printf("IngestionService | Starting cleanup loop with %d day retention", is.cfg.RetentionDays)
+	utils.GetLogger().Printf("IngestionService | Starting cleanup loop with %d day retention", is.cfg.RetentionDays)
 
 	// Run cleanup immediately on start instead of waiting for first tick
 	if err := is.cleanupOldData(); err != nil {
-		log.Printf("Initial cleanup failed: %v", err)
+		utils.GetLogger().Printf("Initial cleanup failed: %v", err)
 	}
 
 	for {
 		select {
 		case <-is.ctx.Done():
-			log.Printf("IngestionService | Stopping cleanup loop")
+			utils.GetLogger().Printf("IngestionService | Stopping cleanup loop")
 			return
 		case <-ticker.C:
 			startTime := time.Now()
-			log.Printf("IngestionService | Starting scheduled data cleanup...")
+			utils.GetLogger().Printf("IngestionService | Starting scheduled data cleanup...")
 
 			if err := is.cleanupOldData(); err != nil {
-				log.Printf("IngestionService | Error in cleanup loop: %v", err)
+				utils.GetLogger().Printf("IngestionService | Error in cleanup loop: %v", err)
 			} else {
 				duration := time.Since(startTime)
-				log.Printf("IngestionService | Cleanup completed successfully in %v", duration)
+				utils.GetLogger().Printf("IngestionService | Cleanup completed successfully in %v", duration)
 			}
 		}
 	}
@@ -415,7 +415,7 @@ func (is *DefaultIngestionService) cleanupOldData() error {
 	// TODO: Check logic
 
 	if is.cfg.RetentionDays <= 0 {
-		log.Printf("IngestionService | Skipping cleanup: RetentionDays is set to %d", is.cfg.RetentionDays)
+		utils.GetLogger().Printf("IngestionService | Skipping cleanup: RetentionDays is set to %d", is.cfg.RetentionDays)
 		return nil
 	}
 
@@ -467,18 +467,18 @@ func (is *DefaultIngestionService) cleanupOldData() error {
 						mu.Lock()
 						errors = append(errors, fmt.Errorf("[%s %s] cleanup failed: %w", sym, tf, err))
 						mu.Unlock()
-						log.Printf("IngestionService | [%s %s] Failed to cleanup old data: %v", sym, tf, err)
+						utils.GetLogger().Printf("IngestionService | [%s %s] Failed to cleanup old data: %v", sym, tf, err)
 					} else {
 						mu.Lock()
 						successCount++
 						mu.Unlock()
-						log.Printf("IngestionService | [%s %s] Successfully cleaned up old data", sym, tf)
+						utils.GetLogger().Printf("IngestionService | [%s %s] Successfully cleaned up old data", sym, tf)
 					}
 				case <-ctx.Done():
 					mu.Lock()
 					errors = append(errors, fmt.Errorf("[%s %s] cleanup timed out", sym, tf))
 					mu.Unlock()
-					log.Printf("IngestionService | [%s %s] Cleanup operation timed out", sym, tf)
+					utils.GetLogger().Printf("IngestionService | [%s %s] Cleanup operation timed out", sym, tf)
 				}
 			}()
 		}
@@ -489,11 +489,11 @@ func (is *DefaultIngestionService) cleanupOldData() error {
 
 	// Report results
 	if len(errors) > 0 {
-		log.Printf("IngestionService | Cleanup completed with %d successes and %d failures", successCount, len(errors))
+		utils.GetLogger().Printf("IngestionService | Cleanup completed with %d successes and %d failures", successCount, len(errors))
 		return fmt.Errorf("cleanup encountered %d errors: %v", len(errors), errors[0])
 	}
 
-	log.Printf("IngestionService | Cleanup completed successfully for %d symbol-timeframe combinations", successCount)
+	utils.GetLogger().Printf("IngestionService | Cleanup completed successfully for %d symbol-timeframe combinations", successCount)
 	return nil
 }
 

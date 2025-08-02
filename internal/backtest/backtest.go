@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"math"
 	"net/http"
 	"net/url"
@@ -39,7 +38,8 @@ func RunBacktest(
 		// Load candles for backtesting
 		candles, err := loadBacktestCandles(ctx, storage, strat.Symbol(), strat.Timeframe(), cfg.BacktestFrom.Time, cfg.BacktestTo.Time, cfg)
 		if err != nil {
-			log.Fatalf("runBacktest | Error loading candles for backtest: %v", err)
+			// TODO: Return error
+			utils.GetLogger().Fatalf("runBacktest | Error loading candles for backtest: %v", err)
 		}
 
 		utils.GetLogger().Printf("runBacktest | Loaded %d candles for backtest [%s-%s]",
@@ -84,7 +84,7 @@ func loadBacktestCandles(
 
 	// If no candles found in database, download from public API
 	if len(candles) == 0 {
-		log.Printf("loadBacktestCandles | No historical candles found in DB for %s, downloading from public API...", symbol)
+		utils.GetLogger().Printf("loadBacktestCandles | No historical candles found in DB for %s, downloading from public API...", symbol)
 
 		// Download candles in chunks to avoid hitting API limits
 		currTime := from
@@ -124,7 +124,7 @@ func loadBacktestCandles(
 					currTime.Format(time.RFC3339), next.Format(time.RFC3339), err)
 			}
 
-			log.Printf("loadBacktestCandles | Downloaded %d candles for %s from %s to %s",
+			utils.GetLogger().Printf("loadBacktestCandles | Downloaded %d candles for %s from %s to %s",
 				len(downloadedCandles), symbol, currTime.Format("2006-01-02"), next.Format("2006-01-02"))
 
 			// Add downloaded candles to our collection
@@ -151,7 +151,7 @@ func loadBacktestCandles(
 				return nil, fmt.Errorf("error saving candles to database: %w", err)
 			}
 
-			log.Printf("loadBacktestCandles | Saved %d processed candles to database", len(processedCandles))
+			utils.GetLogger().Printf("loadBacktestCandles | Saved %d processed candles to database", len(processedCandles))
 		}
 
 		// Load the saved candles
@@ -214,7 +214,7 @@ func downloadCandlesFromPublicAPIWithRetry(ctx context.Context, symbol, timefram
 		apiSymbol, interval, startMs, endMs,
 	)
 
-	log.Printf("downloadCandlesFromPublicAPI | API URL: %s", apiURL)
+	utils.GetLogger().Printf("downloadCandlesFromPublicAPI | API URL: %s", apiURL)
 
 	// Create HTTP client with timeout and optional proxy
 	transport := &http.Transport{}
@@ -224,7 +224,7 @@ func downloadCandlesFromPublicAPIWithRetry(ctx context.Context, symbol, timefram
 			return nil, fmt.Errorf("invalid proxy URL: %w", err)
 		}
 		transport.Proxy = http.ProxyURL(proxyParsed)
-		log.Printf("downloadCandlesFromPublicAPI | Using proxy: %s", proxyURL)
+		utils.GetLogger().Printf("downloadCandlesFromPublicAPI | Using proxy: %s", proxyURL)
 	}
 
 	client := &http.Client{
@@ -246,17 +246,17 @@ func downloadCandlesFromPublicAPIWithRetry(ctx context.Context, symbol, timefram
 		req.Header.Set("Accept", "application/json")
 
 		// Attempt request
-		log.Printf("downloadCandlesFromPublicAPI | Attempt %d/%d for %s", attempt+1, maxRetries, symbol)
+		utils.GetLogger().Printf("downloadCandlesFromPublicAPI | Attempt %d/%d for %s", attempt+1, maxRetries, symbol)
 
 		resp, err := client.Do(req)
 		if err != nil {
 			lastErr = fmt.Errorf("network error on attempt %d: %w", attempt+1, err)
-			log.Printf("downloadCandlesFromPublicAPI | %v", lastErr)
+			utils.GetLogger().Printf("downloadCandlesFromPublicAPI | %v", lastErr)
 
 			// Check if we should retry
 			if attempt < maxRetries-1 {
 				delay := calculateRetryDelay(attempt, baseDelay, maxDelay, backoffFactor, jitterRange)
-				log.Printf("downloadCandlesFromPublicAPI | Retrying in %v...", delay)
+				utils.GetLogger().Printf("downloadCandlesFromPublicAPI | Retrying in %v...", delay)
 
 				select {
 				case <-ctx.Done():
@@ -275,12 +275,12 @@ func downloadCandlesFromPublicAPIWithRetry(ctx context.Context, symbol, timefram
 			resp.Body.Close()
 
 			lastErr = fmt.Errorf("API error (status %d) on attempt %d: %s", resp.StatusCode, attempt+1, string(body))
-			log.Printf("downloadCandlesFromPublicAPI | %v", lastErr)
+			utils.GetLogger().Printf("downloadCandlesFromPublicAPI | %v", lastErr)
 
 			// Check if this is a retryable error
 			if isRetryableHTTPStatus(resp.StatusCode) && attempt < maxRetries-1 {
 				delay := calculateRetryDelay(attempt, baseDelay, maxDelay, backoffFactor, jitterRange)
-				log.Printf("downloadCandlesFromPublicAPI | Retrying in %v...", delay)
+				utils.GetLogger().Printf("downloadCandlesFromPublicAPI | Retrying in %v...", delay)
 
 				select {
 				case <-ctx.Done():
@@ -299,11 +299,11 @@ func downloadCandlesFromPublicAPIWithRetry(ctx context.Context, symbol, timefram
 
 		if err != nil {
 			lastErr = fmt.Errorf("error reading response body on attempt %d: %w", attempt+1, err)
-			log.Printf("downloadCandlesFromPublicAPI | %v", lastErr)
+			utils.GetLogger().Printf("downloadCandlesFromPublicAPI | %v", lastErr)
 
 			if attempt < maxRetries-1 {
 				delay := calculateRetryDelay(attempt, baseDelay, maxDelay, backoffFactor, jitterRange)
-				log.Printf("downloadCandlesFromPublicAPI | Retrying in %v...", delay)
+				utils.GetLogger().Printf("downloadCandlesFromPublicAPI | Retrying in %v...", delay)
 
 				select {
 				case <-ctx.Done():
@@ -319,11 +319,11 @@ func downloadCandlesFromPublicAPIWithRetry(ctx context.Context, symbol, timefram
 		var rawCandles [][]any
 		if err := json.Unmarshal(bodyBytes, &rawCandles); err != nil {
 			lastErr = fmt.Errorf("JSON decode error on attempt %d: %w", attempt+1, err)
-			log.Printf("downloadCandlesFromPublicAPI | %v", lastErr)
+			utils.GetLogger().Printf("downloadCandlesFromPublicAPI | %v", lastErr)
 
 			if attempt < maxRetries-1 {
 				delay := calculateRetryDelay(attempt, baseDelay, maxDelay, backoffFactor, jitterRange)
-				log.Printf("downloadCandlesFromPublicAPI | Retrying in %v...", delay)
+				utils.GetLogger().Printf("downloadCandlesFromPublicAPI | Retrying in %v...", delay)
 
 				select {
 				case <-ctx.Done():
@@ -350,11 +350,11 @@ func downloadCandlesFromPublicAPIWithRetry(ctx context.Context, symbol, timefram
 			case string:
 				timestamp, err = strconv.ParseInt(v, 10, 64)
 				if err != nil {
-					log.Printf("downloadCandlesFromPublicAPI | Error parsing timestamp string: %v", err)
+					utils.GetLogger().Printf("downloadCandlesFromPublicAPI | Error parsing timestamp string: %v", err)
 					continue
 				}
 			default:
-				log.Printf("downloadCandlesFromPublicAPI | Unexpected timestamp type: %T", v)
+				utils.GetLogger().Printf("downloadCandlesFromPublicAPI | Unexpected timestamp type: %T", v)
 				continue
 			}
 
@@ -366,12 +366,12 @@ func downloadCandlesFromPublicAPIWithRetry(ctx context.Context, symbol, timefram
 				case string:
 					f, err := strconv.ParseFloat(n, 64)
 					if err != nil {
-						log.Printf("downloadCandlesFromPublicAPI | Error parsing float string: %v", err)
+						utils.GetLogger().Printf("downloadCandlesFromPublicAPI | Error parsing float string: %v", err)
 						return 0
 					}
 					return f
 				default:
-					log.Printf("downloadCandlesFromPublicAPI | Unexpected number type: %T", n)
+					utils.GetLogger().Printf("downloadCandlesFromPublicAPI | Unexpected number type: %T", n)
 					return 0
 				}
 			}
@@ -397,7 +397,7 @@ func downloadCandlesFromPublicAPIWithRetry(ctx context.Context, symbol, timefram
 			candles = append(candles, c)
 		}
 
-		log.Printf("downloadCandlesFromPublicAPI | Successfully downloaded %d candles for %s on attempt %d", len(candles), symbol, attempt+1)
+		utils.GetLogger().Printf("downloadCandlesFromPublicAPI | Successfully downloaded %d candles for %s on attempt %d", len(candles), symbol, attempt+1)
 		return candles, nil
 	}
 
@@ -632,32 +632,32 @@ func runStrategyBacktest(strat strategy.Strategy, candles []candle.Candle, cfg c
 	// Calculate all 5 stochastics for charting
 	stoch14, err = indicator.CalculateStochastic(candles, 14, 3, 3)
 	if err != nil {
-		log.Printf("runStrategyBacktest | Error generating Stochastic 14: %v", err)
+		utils.GetLogger().Printf("runStrategyBacktest | Error generating Stochastic 14: %v", err)
 	}
 
 	stoch20, err = indicator.CalculateStochastic(candles, 20, 3, 3)
 	if err != nil {
-		log.Printf("runStrategyBacktest | Error generating Stochastic 20: %v", err)
+		utils.GetLogger().Printf("runStrategyBacktest | Error generating Stochastic 20: %v", err)
 	}
 
 	stoch40, err = indicator.CalculateStochastic(candles, 40, 3, 3)
 	if err != nil {
-		log.Printf("runStrategyBacktest | Error generating Stochastic 40: %v", err)
+		utils.GetLogger().Printf("runStrategyBacktest | Error generating Stochastic 40: %v", err)
 	}
 
 	stoch60, err = indicator.CalculateStochastic(candles, 60, 3, 3)
 	if err != nil {
-		log.Printf("runStrategyBacktest | Error generating Stochastic 60: %v", err)
+		utils.GetLogger().Printf("runStrategyBacktest | Error generating Stochastic 60: %v", err)
 	}
 
 	stoch80, err = indicator.CalculateStochastic(candles, 80, 3, 3)
 	if err != nil {
-		log.Printf("runStrategyBacktest | Error generating Stochastic 80: %v", err)
+		utils.GetLogger().Printf("runStrategyBacktest | Error generating Stochastic 80: %v", err)
 	}
 
 	stoch100, err = indicator.CalculateStochastic(candles, 100, 3, 3)
 	if err != nil {
-		log.Printf("runStrategyBacktest | Error generating Stochastic 100: %v", err)
+		utils.GetLogger().Printf("runStrategyBacktest | Error generating Stochastic 100: %v", err)
 	}
 
 	// Risk parameters
@@ -689,7 +689,7 @@ func runStrategyBacktest(strat strategy.Strategy, candles []candle.Candle, cfg c
 		cancel()
 
 		if err != nil {
-			log.Printf("runStrategyBacktest | Error getting signal for candle %s: %v", c.Timestamp.Format(time.RFC3339), err)
+			utils.GetLogger().Printf("runStrategyBacktest | Error getting signal for candle %s: %v", c.Timestamp.Format(time.RFC3339), err)
 			// Create a default hold signal if strategy fails
 			sig = strategy.Signal{
 				Time:         c.Timestamp,
@@ -1106,12 +1106,12 @@ func runStrategyBacktest(strat strategy.Strategy, candles []candle.Candle, cfg c
 	if err == nil {
 		err = json.NewEncoder(f).Encode(candlesWithSignals)
 		if err != nil {
-			log.Printf("Error encoding chart data for %s: %v", chartDataFile, err)
+			utils.GetLogger().Printf("Error encoding chart data for %s: %v", chartDataFile, err)
 		}
 		f.Close()
-		log.Printf("Saved chart data to %s", chartDataFile)
+		utils.GetLogger().Printf("Saved chart data to %s", chartDataFile)
 	} else {
-		log.Printf("Failed to save chart data: %v", err)
+		utils.GetLogger().Printf("Failed to save chart data: %v", err)
 	}
 
 	// Chart data is saved as JSON for external HTML chart
@@ -1230,27 +1230,27 @@ func calculatePerformanceMetrics(results *BacktestResults) {
 
 // printBacktestResults prints the results of a backtest
 func printBacktestResults(strat strategy.Strategy, results BacktestResults) {
-	log.Printf("Backtest Results (%s):\n", strat.Name())
-	log.Printf("  Trades=%d (Long=%d, Short=%d), Wins=%d, Losses=%d, WinRate=%.2f%%\n",
+	utils.GetLogger().Printf("Backtest Results (%s):\n", strat.Name())
+	utils.GetLogger().Printf("  Trades=%d (Long=%d, Short=%d), Wins=%d, Losses=%d, WinRate=%.2f%%\n",
 		results.Trades, results.LongTrades, results.ShortTrades, results.Wins, results.Losses, results.Metrics["win_rate"]*100)
-	log.Printf("  Starting Balance=%.2f, Final Equity=%.2f, Return=%.2f%%\n",
+	utils.GetLogger().Printf("  Starting Balance=%.2f, Final Equity=%.2f, Return=%.2f%%\n",
 		results.StartingBalance, results.Equity, results.Metrics["percent_return"])
-	log.Printf("  MaxDrawdown=%.2f, MaxConsecWins=%d, MaxConsecLosses=%d\n",
+	utils.GetLogger().Printf("  MaxDrawdown=%.2f, MaxConsecWins=%d, MaxConsecLosses=%d\n",
 		results.MaxDrawdown, results.MaxConsecWins, results.MaxConsecLosses)
-	log.Printf("  AvgWin=%.2f, AvgLoss=%.2f, ProfitFactor=%.2f\n",
+	utils.GetLogger().Printf("  AvgWin=%.2f, AvgLoss=%.2f, ProfitFactor=%.2f\n",
 		results.Metrics["avg_win"], results.Metrics["avg_loss"], results.Metrics["profit_factor"])
-	log.Printf("  Sharpe=%.2f, Expectancy=%.2f\n",
+	utils.GetLogger().Printf("  Sharpe=%.2f, Expectancy=%.2f\n",
 		results.Metrics["sharpe"], results.Metrics["expectancy"])
-	log.Printf("  Exit Types: Signal=%.1f%%, StopLoss=%.1f%%, TrailingStop=%.1f%%\n",
+	utils.GetLogger().Printf("  Exit Types: Signal=%.1f%%, StopLoss=%.1f%%, TrailingStop=%.1f%%\n",
 		results.Metrics["signal_exit_ratio"]*100,
 		results.Metrics["stop_loss_exit_ratio"]*100,
 		results.Metrics["trailing_stop_exit_ratio"]*100)
-	log.Printf("  Avg MAE=%.2f, Avg MFE=%.2f\n",
+	utils.GetLogger().Printf("  Avg MAE=%.2f, Avg MFE=%.2f\n",
 		results.Metrics["avg_mae"], results.Metrics["avg_mfe"])
 
 	// Print strategy-specific metrics
 	if len(results.Metrics) > 0 {
-		log.Println("  Strategy Metrics:")
+		utils.GetLogger().Println("  Strategy Metrics:")
 		for k, v := range results.Metrics {
 			// Skip metrics we've already printed
 			if k != "win_rate" && k != "avg_win" && k != "avg_loss" &&
@@ -1260,20 +1260,20 @@ func printBacktestResults(strat strategy.Strategy, results BacktestResults) {
 				k != "max_consecutive_losses" && k != "avg_mae" && k != "avg_mfe" &&
 				k != "signal_exit_ratio" && k != "stop_loss_exit_ratio" &&
 				k != "trailing_stop_exit_ratio" {
-				log.Printf("    %s: %.4f\n", k, v)
+				utils.GetLogger().Printf("    %s: %.4f\n", k, v)
 			}
 		}
 	}
 
 	// Print trade log summary
-	log.Println("Trade Log Summary (Last 10 trades):")
+	utils.GetLogger().Println("Trade Log Summary (Last 10 trades):")
 	maxTrades := 10 // Limit the number of trades to print
 	for i, t := range results.TradeLog {
 		if i >= maxTrades {
-			log.Printf("  ... and %d more trades\n", len(results.TradeLog)-maxTrades)
+			utils.GetLogger().Printf("  ... and %d more trades\n", len(results.TradeLog)-maxTrades)
 			break
 		}
-		log.Printf("  Trade %d: %s Entry=%.2f at %s, Exit=%.2f at %s, PnL=%.2f, Reason=%s\n",
+		utils.GetLogger().Printf("  Trade %d: %s Entry=%.2f at %s, Exit=%.2f at %s, PnL=%.2f, Reason=%s\n",
 			i+1, t.Side, t.Entry, t.EntryTime.Format(time.RFC3339),
 			t.Exit, t.ExitTime.Format(time.RFC3339), t.PnL, t.Reason)
 	}
@@ -1312,7 +1312,7 @@ func saveBacktestResults(results BacktestResults) {
 func saveCSV(filename string, rows [][]string) error {
 	f, err := os.Create(filename)
 	if err != nil {
-		log.Printf("Error creating CSV file %s: %v", filename, err)
+		utils.GetLogger().Printf("Error creating CSV file %s: %v", filename, err)
 		return err
 	}
 	defer f.Close()
@@ -1322,11 +1322,11 @@ func saveCSV(filename string, rows [][]string) error {
 
 	for _, row := range rows {
 		if err := w.Write(row); err != nil {
-			log.Printf("Error writing to CSV file %s: %v", filename, err)
+			utils.GetLogger().Printf("Error writing to CSV file %s: %v", filename, err)
 			return err
 		}
 	}
 
-	log.Printf("Saved results to %s", filename)
+	utils.GetLogger().Printf("Saved results to %s", filename)
 	return nil
 }

@@ -1,7 +1,7 @@
 package indicator
 
 import (
-	"fmt"
+	"log"
 	"math"
 	"strconv"
 	"testing"
@@ -17,12 +17,12 @@ func calculateAndPrintRSI(t *testing.T) {
 
 	result := CalculateRSI(prices, period)
 
-	fmt.Println("Extreme price changes RSI values:")
+	log.Println("Extreme price changes RSI values:")
 	for i, val := range result {
 		if !math.IsNaN(val) {
-			fmt.Printf("Index %d: %.2f\n", i, val)
+			log.Printf("Index %d: %.2f\n", i, val)
 		} else {
-			fmt.Printf("Index %d: NaN\n", i)
+			log.Printf("Index %d: NaN\n", i)
 		}
 	}
 }

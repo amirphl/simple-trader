@@ -93,7 +93,7 @@ func (sm *StateMachine) TransitionTo(newState State, condition string, signal Po
 	sm.lastTransition = now
 
 	// Log the transition
-	// log.Printf("Strategy | [%s State Machine] %s -> %s | Condition: %s | Signal: %s | Reason: %s",
+	// utils.GetLogger().Printf("Strategy | [%s State Machine] %s -> %s | Condition: %s | Signal: %s | Reason: %s",
 	// 	sm.symbol, oldState, newState, condition, signal, reason)
 }
 

@@ -109,16 +109,16 @@ package strategy
 // 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 // 		defer cancel()
 
-// 		log.Printf("[%s SMA] Fetching historical 1m candles from %s to %s\n",
+// 		utils.GetLogger().Printf("[%s SMA] Fetching historical 1m candles from %s to %s\n",
 // 			s.symbol, startTime.Format(time.RFC3339), endTime.Format(time.RFC3339))
 
 // 		// Fetch historical 1m candles
 // 		historicalCandles, err := s.Storage.GetCandles(ctx, s.symbol, "1m", "", startTime, endTime)
 // 		if err != nil {
-// 			log.Printf("[%s SMA] Error fetching historical candles: %v\n", s.symbol, err)
+// 			utils.GetLogger().Printf("[%s SMA] Error fetching historical candles: %v\n", s.symbol, err)
 // 			// Continue with the current candles even if historical fetch fails
 // 		} else if len(historicalCandles) > 0 {
-// 			log.Printf("[%s SMA] Loaded %d historical candles\n", s.symbol, len(historicalCandles))
+// 			utils.GetLogger().Printf("[%s SMA] Loaded %d historical candles\n", s.symbol, len(historicalCandles))
 
 // 			// Sort historical candles by timestamp
 // 			sort.Slice(historicalCandles, func(i, j int) bool {
@@ -159,7 +159,7 @@ package strategy
 // 	periods := []int{s.FastPeriod, s.SlowPeriod}
 // 	smaValues, err := indicator.CalculateMultipleLastSMA(s.prices, periods)
 // 	if err != nil {
-// 		log.Printf("[%s SMA] Error calculating SMA: %v\n", s.symbol, err)
+// 		utils.GetLogger().Printf("[%s SMA] Error calculating SMA: %v\n", s.symbol, err)
 // 		return Signal{
 // 			Time:         lastCandle.Timestamp,
 // 			Action:       "hold",
@@ -193,7 +193,7 @@ package strategy
 
 // 			// Log signal change
 // 			if !s.lastSignalWasBuy {
-// 				log.Printf("[%s SMA] Signal changed to BUY - Fast SMA: %.2f crossed above Slow SMA: %.2f, Price: %.2f\n",
+// 				utils.GetLogger().Printf("[%s SMA] Signal changed to BUY - Fast SMA: %.2f crossed above Slow SMA: %.2f, Price: %.2f\n",
 // 					s.symbol, fastSMA, slowSMA, lastCandle.Close)
 // 				s.lastSignalWasBuy = true
 // 			}
@@ -204,7 +204,7 @@ package strategy
 
 // 			// Log signal change
 // 			if s.lastSignalWasBuy {
-// 				log.Printf("[%s SMA] Signal changed to SELL - Fast SMA: %.2f crossed below Slow SMA: %.2f, Price: %.2f\n",
+// 				utils.GetLogger().Printf("[%s SMA] Signal changed to SELL - Fast SMA: %.2f crossed below Slow SMA: %.2f, Price: %.2f\n",
 // 					s.symbol, fastSMA, slowSMA, lastCandle.Close)
 // 				s.lastSignalWasBuy = false
 // 			}

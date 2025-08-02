@@ -4,10 +4,10 @@ package exchange
 import (
 	"context"
 	"fmt"
-	"log"
 	"time"
 
 	"github.com/amirphl/simple-trader/internal/notifier"
+	"github.com/amirphl/simple-trader/internal/utils"
 )
 
 // MockWallexExchange acts as a proxy for some functions and provides mock responses for orders
@@ -81,7 +81,7 @@ func (m *MockWallexExchange) SubmitOrder(ctx context.Context, req OrderRequest) 
 		}
 
 		// Log the mock order for debugging
-		log.Printf("MockWallexExchange | Mock order filled: OrderID=%s, Symbol=%s, Side=%s, Price=%.8f, Quantity=%.8f\n",
+		utils.GetLogger().Printf("MockWallexExchange | Mock order filled: OrderID=%s, Symbol=%s, Side=%s, Price=%.8f, Quantity=%.8f\n",
 			orderID, req.Symbol, req.Side, req.Price, req.Quantity)
 
 		return order, nil
@@ -100,7 +100,7 @@ func (m *MockWallexExchange) SubmitOrderWithRetry(ctx context.Context, req Order
 			return resp, nil
 		}
 
-		log.Printf("MockWallexExchange | Mock order submission failed (attempt %d/%d): %v\n", attempt, maxAttempts, err)
+		utils.GetLogger().Printf("MockWallexExchange | Mock order submission failed (attempt %d/%d): %v\n", attempt, maxAttempts, err)
 
 		if m.notifier != nil {
 			msg := fmt.Sprintf("Mock order submission failed (attempt %d/%d): %v", attempt, maxAttempts, err)

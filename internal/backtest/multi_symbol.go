@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -19,6 +18,7 @@ import (
 	"github.com/amirphl/simple-trader/internal/config"
 	"github.com/amirphl/simple-trader/internal/db"
 	"github.com/amirphl/simple-trader/internal/strategy"
+	"github.com/amirphl/simple-trader/internal/utils"
 )
 
 // BinanceSymbolInfo represents symbol information from Binance ticker API
@@ -78,7 +78,7 @@ func fetchTopBinanceSymbolsWithRetry(ctx context.Context, topN int, proxyURL str
 			return nil, fmt.Errorf("invalid proxy URL: %w", err)
 		}
 		transport.Proxy = http.ProxyURL(proxyParsed)
-		log.Printf("fetchTopBinanceSymbols | Using proxy: %s", proxyURL)
+		utils.GetLogger().Printf("fetchTopBinanceSymbols | Using proxy: %s", proxyURL)
 	}
 
 	client := &http.Client{
@@ -96,16 +96,16 @@ func fetchTopBinanceSymbolsWithRetry(ctx context.Context, topN int, proxyURL str
 		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
 		req.Header.Set("Accept", "application/json")
 
-		log.Printf("fetchTopBinanceSymbols | Attempt %d/%d", attempt+1, maxRetries)
+		utils.GetLogger().Printf("fetchTopBinanceSymbols | Attempt %d/%d", attempt+1, maxRetries)
 
 		resp, err := client.Do(req)
 		if err != nil {
 			lastErr = fmt.Errorf("network error on attempt %d: %w", attempt+1, err)
-			log.Printf("fetchTopBinanceSymbols | %v", lastErr)
+			utils.GetLogger().Printf("fetchTopBinanceSymbols | %v", lastErr)
 
 			if attempt < maxRetries-1 {
 				delay := calculateRetryDelay(attempt, baseDelay, maxDelay, backoffFactor, jitterRange)
-				log.Printf("fetchTopBinanceSymbols | Retrying in %v...", delay)
+				utils.GetLogger().Printf("fetchTopBinanceSymbols | Retrying in %v...", delay)
 
 				select {
 				case <-ctx.Done():
@@ -122,11 +122,11 @@ func fetchTopBinanceSymbolsWithRetry(ctx context.Context, topN int, proxyURL str
 			resp.Body.Close()
 
 			lastErr = fmt.Errorf("API returned status %d on attempt %d: %s", resp.StatusCode, attempt+1, string(body))
-			log.Printf("fetchTopBinanceSymbols | %v", lastErr)
+			utils.GetLogger().Printf("fetchTopBinanceSymbols | %v", lastErr)
 
 			if isRetryableHTTPStatus(resp.StatusCode) && attempt < maxRetries-1 {
 				delay := calculateRetryDelay(attempt, baseDelay, maxDelay, backoffFactor, jitterRange)
-				log.Printf("fetchTopBinanceSymbols | Retrying in %v...", delay)
+				utils.GetLogger().Printf("fetchTopBinanceSymbols | Retrying in %v...", delay)
 
 				select {
 				case <-ctx.Done():
@@ -143,11 +143,11 @@ func fetchTopBinanceSymbolsWithRetry(ctx context.Context, topN int, proxyURL str
 		if err := json.NewDecoder(resp.Body).Decode(&symbols); err != nil {
 			resp.Body.Close()
 			lastErr = fmt.Errorf("failed to decode response on attempt %d: %w", attempt+1, err)
-			log.Printf("fetchTopBinanceSymbols | %v", lastErr)
+			utils.GetLogger().Printf("fetchTopBinanceSymbols | %v", lastErr)
 
 			if attempt < maxRetries-1 {
 				delay := calculateRetryDelay(attempt, baseDelay, maxDelay, backoffFactor, jitterRange)
-				log.Printf("fetchTopBinanceSymbols | Retrying in %v...", delay)
+				utils.GetLogger().Printf("fetchTopBinanceSymbols | Retrying in %v...", delay)
 
 				select {
 				case <-ctx.Done():
@@ -203,7 +203,7 @@ func fetchTopBinanceSymbolsWithRetry(ctx context.Context, topN int, proxyURL str
 			}
 		}
 
-		log.Printf("fetchTopBinanceSymbols | Successfully fetched top %d USDT symbols on attempt %d", count, attempt+1)
+		utils.GetLogger().Printf("fetchTopBinanceSymbols | Successfully fetched top %d USDT symbols on attempt %d", count, attempt+1)
 		return result, nil
 	}
 
@@ -217,18 +217,20 @@ func RunMultiSymbolBacktest(
 	storage db.Storage,
 ) {
 	if len(cfg.Strategies) == 0 {
-		log.Fatal("No strategies specified in config")
+		// TODO: Return error
+		utils.GetLogger().Fatalf("No strategies specified in config")
 	}
 
 	strategyName := cfg.Strategies[0] // Use first strategy
 	// Fetch top N symbols from Binance
-	log.Printf("Fetching top %d symbols from Binance...", cfg.TopSymbolsCount)
+	utils.GetLogger().Printf("Fetching top %d symbols from Binance...", cfg.TopSymbolsCount)
 	symbols, err := fetchTopBinanceSymbols(ctx, cfg.TopSymbolsCount, cfg.ProxyURL)
 	if err != nil {
-		log.Fatalf("Failed to fetch top symbols: %v", err)
+		// TODO: Return error
+		utils.GetLogger().Fatalf("Failed to fetch top symbols: %v", err)
 	}
 
-	log.Printf("Running backtest for %d symbols: %v", len(symbols), symbols[:min(5, len(symbols))])
+	utils.GetLogger().Printf("Running backtest for %d symbols: %v", len(symbols), symbols[:min(5, len(symbols))])
 
 	// Initialize multi-symbol results
 	multiResults := MultiSymbolBacktestResults{
@@ -243,7 +245,7 @@ func RunMultiSymbolBacktest(
 	var allChartData []map[string]any
 
 	for i, symbol := range symbols {
-		log.Printf("[%d/%d] Running backtest for symbol: %s", i+1, len(symbols), symbol)
+		utils.GetLogger().Printf("[%d/%d] Running backtest for symbol: %s", i+1, len(symbols), symbol)
 
 		// Create strategy instance for this symbol
 		var strat strategy.Strategy
@@ -257,25 +259,25 @@ func RunMultiSymbolBacktest(
 		case "rsi":
 			strat = strategy.NewRSIStrategy(symbol, 14, 70, 30, storage)
 		default:
-			log.Printf("Unknown strategy: %s, using StochasticHeikinAshi", strategyName)
+			utils.GetLogger().Printf("Unknown strategy: %s, using StochasticHeikinAshi", strategyName)
 			strat = strategy.NewStochasticHeikinAshi(symbol, storage)
 		}
 
 		// Load candles for this symbol
 		candles, err := loadBacktestCandles(ctx, storage, symbol, strat.Timeframe(), cfg.BacktestFrom.Time, cfg.BacktestTo.Time, cfg)
 		if err != nil {
-			log.Printf("Error loading candles for %s: %v", symbol, err)
+			utils.GetLogger().Printf("Error loading candles for %s: %v", symbol, err)
 			multiResults.FailedRuns++
 			continue
 		}
 
 		if len(candles) == 0 {
-			log.Printf("No candles found for symbol %s, skipping", symbol)
+			utils.GetLogger().Printf("No candles found for symbol %s, skipping", symbol)
 			multiResults.FailedRuns++
 			continue
 		}
 
-		log.Printf("Loaded %d candles for %s [%s-%s]",
+		utils.GetLogger().Printf("Loaded %d candles for %s [%s-%s]",
 			len(candles), symbol,
 			cfg.BacktestFrom.Time.Format(time.RFC3339),
 			cfg.BacktestTo.Time.Format(time.RFC3339))
@@ -300,13 +302,13 @@ func RunMultiSymbolBacktest(
 					"results": backtestResults,
 				})
 			} else {
-				log.Printf("Error unmarshalling chart data for %s: %v", symbol, err)
+				utils.GetLogger().Printf("Error unmarshalling chart data for %s: %v", symbol, err)
 			}
 		}
 
 		// Print progress
 		if (i+1)%10 == 0 || i+1 == len(symbols) {
-			log.Printf("Progress: %d/%d symbols completed", i+1, len(symbols))
+			utils.GetLogger().Printf("Progress: %d/%d symbols completed", i+1, len(symbols))
 		}
 	}
 
@@ -370,26 +372,26 @@ func calculateOverallMetrics(results *MultiSymbolBacktestResults) {
 
 // printMultiSymbolSummary prints a summary of the multi-symbol backtest results
 func printMultiSymbolSummary(results MultiSymbolBacktestResults) {
-	log.Println("===== MULTI-SYMBOL BACKTEST SUMMARY =====")
-	log.Printf("Strategy: %s\n", results.Strategy)
-	log.Printf("Period: %s to %s\n", results.StartTime.Format("2006-01-02"), results.EndTime.Format("2006-01-02"))
-	log.Printf("Duration: %v\n", results.EndTime.Sub(results.StartTime).Round(time.Second))
-	log.Printf("Total Symbols: %d\n", results.TotalSymbols)
-	log.Printf("Successful Runs: %d\n", results.SuccessfulRuns)
-	log.Printf("Failed Runs: %d\n", results.FailedRuns)
-	log.Println()
+	utils.GetLogger().Println("===== MULTI-SYMBOL BACKTEST SUMMARY =====")
+	utils.GetLogger().Printf("Strategy: %s\n", results.Strategy)
+	utils.GetLogger().Printf("Period: %s to %s\n", results.StartTime.Format("2006-01-02"), results.EndTime.Format("2006-01-02"))
+	utils.GetLogger().Printf("Duration: %v\n", results.EndTime.Sub(results.StartTime).Round(time.Second))
+	utils.GetLogger().Printf("Total Symbols: %d\n", results.TotalSymbols)
+	utils.GetLogger().Printf("Successful Runs: %d\n", results.SuccessfulRuns)
+	utils.GetLogger().Printf("Failed Runs: %d\n", results.FailedRuns)
+	utils.GetLogger().Println()
 
-	log.Println("=== OVERALL METRICS ===")
-	log.Printf("Total Trades: %.0f\n", results.OverallMetrics["total_trades"])
-	log.Printf("Overall Win Rate: %.2f%%\n", results.OverallMetrics["overall_win_rate"]*100)
-	log.Printf("Total PnL: $%.2f\n", results.OverallMetrics["total_pnl"])
-	log.Printf("Average PnL per Symbol: $%.2f\n", results.OverallMetrics["avg_pnl_per_symbol"])
-	log.Printf("Average Max Drawdown: $%.2f\n", results.OverallMetrics["avg_max_drawdown"])
-	log.Printf("Profitable Symbols: %.0f/%.0f (%.1f%%)\n",
+	utils.GetLogger().Println("=== OVERALL METRICS ===")
+	utils.GetLogger().Printf("Total Trades: %.0f\n", results.OverallMetrics["total_trades"])
+	utils.GetLogger().Printf("Overall Win Rate: %.2f%%\n", results.OverallMetrics["overall_win_rate"]*100)
+	utils.GetLogger().Printf("Total PnL: $%.2f\n", results.OverallMetrics["total_pnl"])
+	utils.GetLogger().Printf("Average PnL per Symbol: $%.2f\n", results.OverallMetrics["avg_pnl_per_symbol"])
+	utils.GetLogger().Printf("Average Max Drawdown: $%.2f\n", results.OverallMetrics["avg_max_drawdown"])
+	utils.GetLogger().Printf("Profitable Symbols: %.0f/%.0f (%.1f%%)\n",
 		results.OverallMetrics["profitable_symbols_count"],
 		float64(results.SuccessfulRuns),
 		results.OverallMetrics["profitable_symbols_ratio"]*100)
-	log.Println()
+	utils.GetLogger().Println()
 
 	// Top performing symbols
 	type symbolPerf struct {
@@ -407,16 +409,16 @@ func printMultiSymbolSummary(results MultiSymbolBacktestResults) {
 		return performances[i].PnL > performances[j].PnL
 	})
 
-	log.Println("=== TOP 10 PERFORMING SYMBOLS ===")
+	utils.GetLogger().Println("=== TOP 10 PERFORMING SYMBOLS ===")
 	count := min(10, len(performances))
 	for i := 0; i < count; i++ {
-		log.Printf("%d. %s: $%.2f\n", i+1, performances[i].Symbol, performances[i].PnL)
+		utils.GetLogger().Printf("%d. %s: $%.2f\n", i+1, performances[i].Symbol, performances[i].PnL)
 	}
 
-	log.Println("\n=== BOTTOM 5 PERFORMING SYMBOLS ===")
+	utils.GetLogger().Println("\n=== BOTTOM 5 PERFORMING SYMBOLS ===")
 	start := max(0, len(performances)-5)
 	for i := start; i < len(performances); i++ {
-		log.Printf("%d. %s: $%.2f\n", len(performances)-i, performances[i].Symbol, performances[i].PnL)
+		utils.GetLogger().Printf("%d. %s: $%.2f\n", len(performances)-i, performances[i].Symbol, performances[i].PnL)
 	}
 
 }
@@ -434,7 +436,7 @@ func saveMultiSymbolBacktestData(results MultiSymbolBacktestResults, allChartDat
 	filename := "multi_symbol_backtest_data.json"
 	file, err := os.Create(filename)
 	if err != nil {
-		log.Printf("Failed to create JSON data file: %v", err)
+		utils.GetLogger().Printf("Failed to create JSON data file: %v", err)
 		return
 	}
 	defer file.Close()
@@ -442,12 +444,12 @@ func saveMultiSymbolBacktestData(results MultiSymbolBacktestResults, allChartDat
 	encoder := json.NewEncoder(file)
 	encoder.SetIndent("", "  ") // Pretty print
 	if err := encoder.Encode(reportData); err != nil {
-		log.Printf("Failed to encode JSON data: %v", err)
+		utils.GetLogger().Printf("Failed to encode JSON data: %v", err)
 		return
 	}
 
-	log.Printf("Multi-symbol backtest data saved to: %s", filename)
-	log.Printf("Open multi_symbol_backtest_report.html in your browser to view the interactive report")
+	utils.GetLogger().Printf("Multi-symbol backtest data saved to: %s", filename)
+	utils.GetLogger().Printf("Open multi_symbol_backtest_report.html in your browser to view the interactive report")
 }
 
 // saveComprehensiveMetrics saves detailed metrics for all symbols in multiple formats
@@ -626,7 +628,7 @@ func saveComprehensiveMetrics(results MultiSymbolBacktestResults) {
 	saveMetricsAsCSV(results, "comprehensive_metrics.csv")
 	saveMetricsAsHTML(comprehensiveMetrics, "comprehensive_metrics.html")
 
-	log.Printf("Comprehensive metrics saved in multiple formats")
+	utils.GetLogger().Printf("Comprehensive metrics saved in multiple formats")
 }
 
 // calculateMean calculates the mean of a slice of float64 values
@@ -645,7 +647,7 @@ func calculateMean(values []float64) float64 {
 func saveMetricsAsJSON(metrics map[string]interface{}, filename string) {
 	file, err := os.Create(filename)
 	if err != nil {
-		log.Printf("Failed to create JSON metrics file: %v", err)
+		utils.GetLogger().Printf("Failed to create JSON metrics file: %v", err)
 		return
 	}
 	defer file.Close()
@@ -653,18 +655,18 @@ func saveMetricsAsJSON(metrics map[string]interface{}, filename string) {
 	encoder := json.NewEncoder(file)
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(metrics); err != nil {
-		log.Printf("Failed to encode JSON metrics: %v", err)
+		utils.GetLogger().Printf("Failed to encode JSON metrics: %v", err)
 		return
 	}
 
-	log.Printf("Comprehensive metrics saved to: %s", filename)
+	utils.GetLogger().Printf("Comprehensive metrics saved to: %s", filename)
 }
 
 // saveMetricsAsCSV saves metrics as CSV file
 func saveMetricsAsCSV(results MultiSymbolBacktestResults, filename string) {
 	file, err := os.Create(filename)
 	if err != nil {
-		log.Printf("Failed to create CSV metrics file: %v", err)
+		utils.GetLogger().Printf("Failed to create CSV metrics file: %v", err)
 		return
 	}
 	defer file.Close()
@@ -703,7 +705,7 @@ func saveMetricsAsCSV(results MultiSymbolBacktestResults, filename string) {
 		file.WriteString(line)
 	}
 
-	log.Printf("CSV metrics saved to: %s", filename)
+	utils.GetLogger().Printf("CSV metrics saved to: %s", filename)
 }
 
 // saveMetricsAsHTML saves metrics as HTML report
@@ -754,11 +756,11 @@ func saveMetricsAsHTML(metrics map[string]interface{}, filename string) {
 
 	err := os.WriteFile(filename, []byte(htmlContent), 0644)
 	if err != nil {
-		log.Printf("Failed to create HTML metrics file: %v", err)
+		utils.GetLogger().Printf("Failed to create HTML metrics file: %v", err)
 		return
 	}
 
-	log.Printf("HTML metrics saved to: %s", filename)
+	utils.GetLogger().Printf("HTML metrics saved to: %s", filename)
 }
 
 // Helper functions

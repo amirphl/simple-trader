@@ -11,7 +11,6 @@ package exchange
 import (
 	"context"
 	"encoding/json"
-	"log"
 	"net/url"
 	"strings"
 	"sync"
@@ -19,6 +18,7 @@ import (
 
 	"fmt"
 
+	"github.com/amirphl/simple-trader/internal/utils"
 	"github.com/gorilla/websocket"
 )
 
@@ -135,7 +135,7 @@ func (w *WallexTradeChannel) Subscribe(subscriberID string, bufferSize int) (<-c
 	}
 	w.subscribers[subscriberID] = sub
 
-	log.Printf("WallexWebsocket | Subscriber %s added for symbol %s (use GetLastTick() to get latest data)", subscriberID, w.symbol)
+	utils.GetLogger().Printf("WallexWebsocket | Subscriber %s added for symbol %s (use GetLastTick() to get latest data)", subscriberID, w.symbol)
 	return sub.Chan, nil
 }
 
@@ -151,7 +151,7 @@ func (w *WallexTradeChannel) Unsubscribe(subscriberID string) error {
 
 	close(sub.Chan)
 	delete(w.subscribers, subscriberID)
-	log.Printf("WallexWebsocket | Subscriber %s removed for symbol %s", subscriberID, w.symbol)
+	utils.GetLogger().Printf("WallexWebsocket | Subscriber %s removed for symbol %s", subscriberID, w.symbol)
 	return nil
 }
 
@@ -203,7 +203,7 @@ func (w *WallexTradeChannel) broadcast(trade WallexTrade) {
 			// Successfully sent
 		default:
 			// Channel is full, skip this subscriber (don't close the channel)
-			log.Printf("WallexWebsocket | Subscriber %s channel is full, skipping trade", sub.ID)
+			utils.GetLogger().Printf("WallexWebsocket | Subscriber %s channel is full, skipping trade", sub.ID)
 		}
 	}
 
@@ -246,7 +246,7 @@ func (w *WallexTradeChannel) Close() {
 		w.conn.Close()
 	}
 
-	log.Printf("WallexWebsocket | Trade channel closed for symbol %s", w.symbol)
+	utils.GetLogger().Printf("WallexWebsocket | Trade channel closed for symbol %s", w.symbol)
 }
 
 // IsConnected returns true if the websocket is connected
@@ -337,7 +337,7 @@ func (w *WallexTradeChannel) Start(ctx context.Context, symbol string) {
 					w.state = Reconnecting
 					w.healthErr = err
 					w.mu.Unlock()
-					log.Printf("WallexWebsocket | Disconnected, retrying in %v: %v", retryDelay, err)
+					utils.GetLogger().Printf("WallexWebsocket | Disconnected, retrying in %v: %v", retryDelay, err)
 					time.Sleep(retryDelay)
 					if retryDelay < 60*time.Second {
 						retryDelay *= 2
@@ -391,7 +391,7 @@ func (w *WallexTradeChannel) connectAndStream(ctx context.Context) error {
 	w.lastPong = time.Now()
 	w.mu.Unlock()
 
-	log.Printf("WallexWebsocket | Connection established for symbol %s", w.symbol)
+	utils.GetLogger().Printf("WallexWebsocket | Connection established for symbol %s", w.symbol)
 	defer func() {
 		c.Close()
 		w.mu.Lock()
@@ -416,7 +416,7 @@ func (w *WallexTradeChannel) connectAndStream(ctx context.Context) error {
 		return err
 	}
 
-	log.Printf("WallexWebsocket | Subscribed to %s@trade channel", w.symbol)
+	utils.GetLogger().Printf("WallexWebsocket | Subscribed to %s@trade channel", w.symbol)
 
 	c.SetPongHandler(func(appData string) error {
 		w.setLastPong(time.Now())
@@ -463,7 +463,7 @@ func (w *WallexTradeChannel) connectAndStream(ctx context.Context) error {
 				if err := c.WriteMessage(websocket.TextMessage, []byte(socketIOMsg)); err != nil {
 					return err
 				}
-				log.Printf("WallexWebsocket | Subscribed to %s@trade channel", w.symbol)
+				utils.GetLogger().Printf("WallexWebsocket | Subscribed to %s@trade channel", w.symbol)
 				continue
 			}
 			// Handle Socket.IO event message (starts with "42")
@@ -635,7 +635,7 @@ func (w *WallexDepthWatcher) Close() {
 		}
 		w.closed = true
 		w.connState = Disconnected
-		log.Printf("WallexDepthWatcher | Closed connection for %s@%s", w.symbol, w.depthType)
+		utils.GetLogger().Printf("WallexDepthWatcher | Closed connection for %s@%s", w.symbol, w.depthType)
 	}
 }
 
@@ -811,7 +811,7 @@ func (w *WallexDepthWatcher) setClosed() {
 }
 
 func (w *WallexDepthWatcher) logState(format string, args ...interface{}) {
-	log.Printf("WallexDepthWatcher | "+format, args...)
+	utils.GetLogger().Printf("WallexDepthWatcher | "+format, args...)
 }
 
 // MarketCap represents the market cap data from Wallex
@@ -999,7 +999,7 @@ func (w *WallexMarketCapWatcher) Close() {
 		}
 		w.closed = true
 		w.connState = Disconnected
-		log.Printf("WallexMarketCapWatcher | Closed connection for %s@marketCap", w.symbol)
+		utils.GetLogger().Printf("WallexMarketCapWatcher | Closed connection for %s@marketCap", w.symbol)
 	}
 }
 
@@ -1179,5 +1179,5 @@ func (w *WallexMarketCapWatcher) setClosed() {
 }
 
 func (w *WallexMarketCapWatcher) logState(format string, args ...interface{}) {
-	log.Printf("WallexMarketCapWatcher | "+format, args...)
+	utils.GetLogger().Printf("WallexMarketCapWatcher | "+format, args...)
 }

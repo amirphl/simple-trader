@@ -3,7 +3,6 @@ package strategy
 
 import (
 	"context"
-	"log"
 	"math"
 	"sort"
 	"time"
@@ -11,6 +10,7 @@ import (
 	"github.com/amirphl/simple-trader/internal/candle"
 	"github.com/amirphl/simple-trader/internal/db"
 	"github.com/amirphl/simple-trader/internal/indicator"
+	"github.com/amirphl/simple-trader/internal/utils"
 )
 
 type StochasticHeikinAshi struct {
@@ -183,16 +183,16 @@ func (s *StochasticHeikinAshi) OnCandles(ctx context.Context, oneHourCandles []c
 		endTime := filteredCandles[0].Timestamp.Truncate(time.Hour)
 		startTime := endTime.Add(-24 * time.Hour) // Just 24 hours should be enough
 
-		log.Printf("Strategy | [%s Stochastic Heikin Ashi] Fetching historical 1h candles from %s to %s\n",
+		utils.GetLogger().Printf("Strategy | [%s Stochastic Heikin Ashi] Fetching historical 1h candles from %s to %s\n",
 			s.symbol, startTime.Format(time.RFC3339), endTime.Format(time.RFC3339))
 
 		// Fetch historical 1h candles
 		historicalCandles, err := s.Storage.GetCandles(ctx, s.symbol, "1h", "", startTime, endTime)
 		if err != nil {
-			log.Printf("Strategy | [%s Stochastic Heikin Ashi] Error fetching historical candles from database: %v\n", s.symbol, err)
+			utils.GetLogger().Printf("Strategy | [%s Stochastic Heikin Ashi] Error fetching historical candles from database: %v\n", s.symbol, err)
 			// Continue with the current candles even if historical fetch fails
 		} else if len(historicalCandles) > 0 {
-			log.Printf("Strategy | [%s Stochastic Heikin Ashi] Loaded %d historical candles from database\n", s.symbol, len(historicalCandles))
+			utils.GetLogger().Printf("Strategy | [%s Stochastic Heikin Ashi] Loaded %d historical candles from database\n", s.symbol, len(historicalCandles))
 
 			// Sort historical candles by timestamp
 			sort.Slice(historicalCandles, func(i, j int) bool {
@@ -206,7 +206,7 @@ func (s *StochasticHeikinAshi) OnCandles(ctx context.Context, oneHourCandles []c
 
 			stochasticResult, err := indicator.CalculateStochastic(cc, s.periodK, s.smoothK, s.periodD)
 			if err != nil {
-				log.Printf("Strategy | [%s Stochastic Heikin Ashi] Error calculating stochastic: %v\n", s.symbol, err)
+				utils.GetLogger().Printf("Strategy | [%s Stochastic Heikin Ashi] Error calculating stochastic: %v\n", s.symbol, err)
 			} else {
 				s.stochasticResult = stochasticResult
 			}
@@ -222,7 +222,7 @@ func (s *StochasticHeikinAshi) OnCandles(ctx context.Context, oneHourCandles []c
 	for _, c := range filteredCandles {
 		kValue, dValue, err := indicator.UpdateStochastic(s.stochasticResult, s.candles, c, s.periodK, s.smoothK, s.periodD)
 		if err != nil {
-			log.Printf("Strategy | [%s Stochastic Heikin Ashi] Error updating stochastic: %v\n", s.symbol, err)
+			utils.GetLogger().Printf("Strategy | [%s Stochastic Heikin Ashi] Error updating stochastic: %v\n", s.symbol, err)
 			// Continue with the current candles even if stochastic update fails
 		} else {
 			s.stochasticResult.K = append(s.stochasticResult.K, kValue)

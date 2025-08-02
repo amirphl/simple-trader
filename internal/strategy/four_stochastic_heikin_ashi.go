@@ -3,7 +3,6 @@ package strategy
 
 import (
 	"context"
-	"log"
 	"math"
 	"sort"
 	"time"
@@ -11,6 +10,7 @@ import (
 	"github.com/amirphl/simple-trader/internal/candle"
 	"github.com/amirphl/simple-trader/internal/db"
 	"github.com/amirphl/simple-trader/internal/indicator"
+	"github.com/amirphl/simple-trader/internal/utils"
 )
 
 // FourStochasticHeikinAshi implements a trading strategy using four stochastic indicators
@@ -230,16 +230,16 @@ func (s *FourStochasticHeikinAshi) OnCandles(ctx context.Context, oneHourCandles
 		endTime := filteredCandles[0].Timestamp.Truncate(time.Hour)
 		startTime := endTime.Add(-200 * time.Hour) // 200 hours for the longest stochastic
 
-		log.Printf("Strategy | [%s Four Stochastic Heikin Ashi] Fetching historical 1h candles from %s to %s\n",
+		utils.GetLogger().Printf("Strategy | [%s Four Stochastic Heikin Ashi] Fetching historical 1h candles from %s to %s\n",
 			s.symbol, startTime.Format(time.RFC3339), endTime.Format(time.RFC3339))
 
 		// Fetch historical 1h candles
 		historicalCandles, err := s.Storage.GetCandles(ctx, s.symbol, "1h", "", startTime, endTime)
 		if err != nil {
-			log.Printf("Strategy | [%s Four Stochastic Heikin Ashi] Error fetching historical candles from database: %v\n", s.symbol, err)
+			utils.GetLogger().Printf("Strategy | [%s Four Stochastic Heikin Ashi] Error fetching historical candles from database: %v\n", s.symbol, err)
 			// Continue with the current candles even if historical fetch fails
 		} else if len(historicalCandles) > 0 {
-			log.Printf("Strategy | [%s Four Stochastic Heikin Ashi] Loaded %d historical candles from database\n", s.symbol, len(historicalCandles))
+			utils.GetLogger().Printf("Strategy | [%s Four Stochastic Heikin Ashi] Loaded %d historical candles from database\n", s.symbol, len(historicalCandles))
 
 			// Sort historical candles by timestamp
 			sort.Slice(historicalCandles, func(i, j int) bool {
@@ -254,28 +254,28 @@ func (s *FourStochasticHeikinAshi) OnCandles(ctx context.Context, oneHourCandles
 			// Calculate all four stochastic indicators
 			stoch20, err := indicator.CalculateStochastic(cc, 20, 3, 3)
 			if err != nil {
-				log.Printf("Strategy | [%s Four Stochastic Heikin Ashi] Error calculating stochastic 20: %v\n", s.symbol, err)
+				utils.GetLogger().Printf("Strategy | [%s Four Stochastic Heikin Ashi] Error calculating stochastic 20: %v\n", s.symbol, err)
 			} else {
 				s.stochastic20 = stoch20
 			}
 
 			stoch40, err := indicator.CalculateStochastic(cc, 40, 3, 3)
 			if err != nil {
-				log.Printf("Strategy | [%s Four Stochastic Heikin Ashi] Error calculating stochastic 40: %v\n", s.symbol, err)
+				utils.GetLogger().Printf("Strategy | [%s Four Stochastic Heikin Ashi] Error calculating stochastic 40: %v\n", s.symbol, err)
 			} else {
 				s.stochastic40 = stoch40
 			}
 
 			stoch60, err := indicator.CalculateStochastic(cc, 60, 3, 3)
 			if err != nil {
-				log.Printf("Strategy | [%s Four Stochastic Heikin Ashi] Error calculating stochastic 60: %v\n", s.symbol, err)
+				utils.GetLogger().Printf("Strategy | [%s Four Stochastic Heikin Ashi] Error calculating stochastic 60: %v\n", s.symbol, err)
 			} else {
 				s.stochastic60 = stoch60
 			}
 
 			stoch100, err := indicator.CalculateStochastic(cc, 100, 3, 3)
 			if err != nil {
-				log.Printf("Strategy | [%s Four Stochastic Heikin Ashi] Error calculating stochastic 100: %v\n", s.symbol, err)
+				utils.GetLogger().Printf("Strategy | [%s Four Stochastic Heikin Ashi] Error calculating stochastic 100: %v\n", s.symbol, err)
 			} else {
 				s.stochastic100 = stoch100
 			}
@@ -292,7 +292,7 @@ func (s *FourStochasticHeikinAshi) OnCandles(ctx context.Context, oneHourCandles
 		// Update stochastic 20
 		k20, d20, err := indicator.UpdateStochastic(s.stochastic20, s.candles, c, 20, 3, 3)
 		if err != nil {
-			log.Printf("Strategy | [%s Four Stochastic Heikin Ashi] Error updating stochastic 20: %v\n", s.symbol, err)
+			utils.GetLogger().Printf("Strategy | [%s Four Stochastic Heikin Ashi] Error updating stochastic 20: %v\n", s.symbol, err)
 		} else {
 			s.stochastic20.K = append(s.stochastic20.K, k20)
 			s.stochastic20.D = append(s.stochastic20.D, d20)
@@ -301,7 +301,7 @@ func (s *FourStochasticHeikinAshi) OnCandles(ctx context.Context, oneHourCandles
 		// Update stochastic 40
 		k40, d40, err := indicator.UpdateStochastic(s.stochastic40, s.candles, c, 40, 3, 3)
 		if err != nil {
-			log.Printf("Strategy | [%s Four Stochastic Heikin Ashi] Error updating stochastic 40: %v\n", s.symbol, err)
+			utils.GetLogger().Printf("Strategy | [%s Four Stochastic Heikin Ashi] Error updating stochastic 40: %v\n", s.symbol, err)
 		} else {
 			s.stochastic40.K = append(s.stochastic40.K, k40)
 			s.stochastic40.D = append(s.stochastic40.D, d40)
@@ -310,7 +310,7 @@ func (s *FourStochasticHeikinAshi) OnCandles(ctx context.Context, oneHourCandles
 		// Update stochastic 60
 		k60, d60, err := indicator.UpdateStochastic(s.stochastic60, s.candles, c, 60, 3, 3)
 		if err != nil {
-			log.Printf("Strategy | [%s Four Stochastic Heikin Ashi] Error updating stochastic 60: %v\n", s.symbol, err)
+			utils.GetLogger().Printf("Strategy | [%s Four Stochastic Heikin Ashi] Error updating stochastic 60: %v\n", s.symbol, err)
 		} else {
 			s.stochastic60.K = append(s.stochastic60.K, k60)
 			s.stochastic60.D = append(s.stochastic60.D, d60)
@@ -319,7 +319,7 @@ func (s *FourStochasticHeikinAshi) OnCandles(ctx context.Context, oneHourCandles
 		// Update stochastic 100
 		k100, d100, err := indicator.UpdateStochastic(s.stochastic100, s.candles, c, 100, 3, 3)
 		if err != nil {
-			log.Printf("Strategy | [%s Four Stochastic Heikin Ashi] Error updating stochastic 100: %v\n", s.symbol, err)
+			utils.GetLogger().Printf("Strategy | [%s Four Stochastic Heikin Ashi] Error updating stochastic 100: %v\n", s.symbol, err)
 		} else {
 			s.stochastic100.K = append(s.stochastic100.K, k100)
 			s.stochastic100.D = append(s.stochastic100.D, d100)

@@ -4,7 +4,6 @@ package livetrading
 import (
 	"context"
 	"fmt"
-	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -19,6 +18,7 @@ import (
 	"github.com/amirphl/simple-trader/internal/position"
 	"github.com/amirphl/simple-trader/internal/strategy"
 	"github.com/amirphl/simple-trader/internal/tfutils"
+	"github.com/amirphl/simple-trader/internal/utils"
 )
 
 // runLiveTrading handles the live trading mode
@@ -51,7 +51,8 @@ func RunLiveTrading(
 		// Subscribe to the channel for this symbol
 		ch, err := tradeChan.Subscribe(symbol, 100)
 		if err != nil {
-			log.Fatalf("Failed to subscribe to %s websocket: %v", symbol, err)
+			// TODO: Return error
+			utils.GetLogger().Fatalf("Failed to subscribe to %s websocket: %v", symbol, err)
 		}
 		tickChans[symbol] = ch
 
@@ -77,14 +78,15 @@ func RunLiveTrading(
 	ingester := candle.NewCandleIngester(storage)
 	ingestionSvc := candle.NewIngestionService(ctx, ingester, ingestionCfg)
 	if err := ingestionSvc.Start(); err != nil {
-		log.Fatalf("runLiveTrading | Failed to start candle ingestion service: %v", err)
+		// TODO: Return error
+		utils.GetLogger().Fatalf("runLiveTrading | Failed to start candle ingestion service: %v", err)
 	}
-	log.Println("runLiveTrading | Candle ingestion service started")
+	utils.GetLogger().Println("runLiveTrading | Candle ingestion service started")
 
 	// Setup recovery in case of panic
 	defer func() {
 		if r := recover(); r != nil {
-			log.Printf("runLiveTrading | Recovered from panic in live trading: %v", r)
+			utils.GetLogger().Printf("runLiveTrading | Recovered from panic in live trading: %v", r)
 			// Try to notify about the panic
 			notifier.Send(fmt.Sprintf("PANIC in trading system: %v", r))
 			if ingestionSvc != nil {
@@ -108,7 +110,7 @@ func RunLiveTrading(
 		go func(s strategy.Strategy) {
 			defer wg.Done()
 			if err := runTradingLoop(ctx, cfg, s, storage, ex, notifier, websocketChannels, depthState, marketCapState); err != nil {
-				log.Printf("runLiveTrading | Error running trading loop for %s: %v", s.Name(), err)
+				utils.GetLogger().Printf("runLiveTrading | Error running trading loop for %s: %v", s.Name(), err)
 			}
 		}(strat)
 	}
@@ -123,18 +125,18 @@ func orderStatusChecker(ctx context.Context, storage db.Storage, ex exchange.Exc
 	ticker := time.NewTicker(checkInterval)
 	defer ticker.Stop()
 
-	log.Println("orderStatusChecker |Starting order status checker")
+	utils.GetLogger().Println("orderStatusChecker |Starting order status checker")
 
 	for {
 		select {
 		case <-ctx.Done():
-			log.Println("orderStatusChecker | Order status checker stopped")
+			utils.GetLogger().Println("orderStatusChecker | Order status checker stopped")
 			return
 		case <-ticker.C:
 			// Get all open orders from database
 			orders, err := storage.GetOpenOrders(ctx)
 			if err != nil {
-				log.Printf("orderStatusChecker | Failed to fetch open orders: %v", err)
+				utils.GetLogger().Printf("orderStatusChecker | Failed to fetch open orders: %v", err)
 				continue
 			}
 
@@ -142,18 +144,18 @@ func orderStatusChecker(ctx context.Context, storage db.Storage, ex exchange.Exc
 				continue
 			}
 
-			log.Printf("orderStatusChecker | Checking status of %d open orders", len(orders))
+			utils.GetLogger().Printf("orderStatusChecker | Checking status of %d open orders", len(orders))
 
 			for _, o := range orders {
 				orderResp, err := ex.GetOrderStatus(ctx, o.OrderID)
 				if err != nil {
-					log.Printf("orderStatusChecker | Error fetching order status for %s: %v", o.OrderID, err)
+					utils.GetLogger().Printf("orderStatusChecker | Error fetching order status for %s: %v", o.OrderID, err)
 					continue
 				}
 
 				switch orderResp.Status {
 				case "FILLED":
-					log.Printf("orderStatusChecker | Order %s filled", o.OrderID)
+					utils.GetLogger().Printf("orderStatusChecker | Order %s filled", o.OrderID)
 					// TODO: Tx
 					storage.LogEvent(ctx, db.Event{
 						Time:        time.Now(),
@@ -162,10 +164,10 @@ func orderStatusChecker(ctx context.Context, storage db.Storage, ex exchange.Exc
 						Data:        map[string]any{"order": orderResp},
 					})
 					if err := storage.CloseOrder(ctx, o.OrderID); err != nil {
-						log.Printf("orderStatusChecker | Failed to close order %s: %v", o.OrderID, err)
+						utils.GetLogger().Printf("orderStatusChecker | Failed to close order %s: %v", o.OrderID, err)
 					}
 				case "CANCELED", "EXPIRED", "REJECTED":
-					log.Printf("orderStatusChecker | Order %s %s", o.OrderID, orderResp.Status)
+					utils.GetLogger().Printf("orderStatusChecker | Order %s %s", o.OrderID, orderResp.Status)
 					// TODO: Tx
 					storage.LogEvent(ctx, db.Event{
 						Time:        time.Now(),
@@ -174,7 +176,7 @@ func orderStatusChecker(ctx context.Context, storage db.Storage, ex exchange.Exc
 						Data:        map[string]any{"order": orderResp},
 					})
 					if err := storage.CloseOrder(ctx, o.OrderID); err != nil {
-						log.Printf("orderStatusChecker | Failed to close order %s: %v", o.OrderID, err)
+						utils.GetLogger().Printf("orderStatusChecker | Failed to close order %s: %v", o.OrderID, err)
 					}
 				}
 			}
@@ -200,11 +202,11 @@ func monitorIngestionStats(ctx context.Context, ingestionSvc candle.IngestionSer
 // printIngestionStats prints the current ingestion statistics
 func printIngestionStats(ingestionSvc candle.IngestionService) {
 	stats := ingestionSvc.GetIngestionStats()
-	log.Println("monitorIngestionStats | Candle Ingestion Stats:")
+	utils.GetLogger().Println("monitorIngestionStats | Candle Ingestion Stats:")
 	for symbol, symbolStats := range stats {
-		log.Printf("  %s:", symbol)
+		utils.GetLogger().Printf("  %s:", symbol)
 		for timeframe, timeframeStats := range symbolStats {
-			log.Printf("    %s: %+v", timeframe, timeframeStats)
+			utils.GetLogger().Printf("    %s: %+v", timeframe, timeframeStats)
 		}
 	}
 }
@@ -221,24 +223,24 @@ func runTradingLoop(
 	depthState exchange.MarketDepthStateManager,
 	marketCapState exchange.MarketCapStateManager,
 ) error {
-	log.Printf("runTradingLoop | Starting trading loop with %s strategy", strat.Name())
+	utils.GetLogger().Printf("runTradingLoop | Starting trading loop with %s strategy", strat.Name())
 
 	// Load position manager
 	pos, err := position.Load(ctx, strat.Name(), strat.Symbol(), storage, ex, notifier)
 	if err != nil {
-		log.Printf("runTradingLoop | Failed to start trading loop with %s strategy: %v", strat.Name(), err)
+		utils.GetLogger().Printf("runTradingLoop | Failed to start trading loop with %s strategy: %v", strat.Name(), err)
 		return err
 	}
 
 	if pos.IsActive() {
-		log.Printf("runTradingLoop | Position is active, stopping trading loop with %s strategy", strat.Name())
+		utils.GetLogger().Printf("runTradingLoop | Position is active, stopping trading loop with %s strategy", strat.Name())
 		return fmt.Errorf("position is active, stopping trading loop with %s strategy", strat.Name())
 	}
 
 	symbol := strat.Symbol()
 	websocketChan, ok := websocketChannels[symbol]
 	if !ok {
-		log.Printf("runTradingLoop | No websocket channel found for symbol %s", symbol)
+		utils.GetLogger().Printf("runTradingLoop | No websocket channel found for symbol %s", symbol)
 		return fmt.Errorf("no websocket channel found for symbol %s", symbol)
 	}
 
@@ -246,7 +248,7 @@ func runTradingLoop(
 	// strategyID := fmt.Sprintf("%s-%s", strat.Name(), symbol)
 	// tickCh, err := websocketChan.Subscribe(strategyID, 100)
 	// if err != nil {
-	// 	log.Printf("runTradingLoop | Failed to subscribe to websocket for %s: %v", strategyID, err)
+	// 	utils.GetLogger().Printf("runTradingLoop | Failed to subscribe to websocket for %s: %v", strategyID, err)
 	// 	return fmt.Errorf("failed to subscribe to websocket for %s: %w", strategyID, err)
 	// }
 	// defer websocketChan.Unsubscribe(strategyID)
@@ -263,7 +265,7 @@ func runTradingLoop(
 				return
 			// case tick, ok := <-tickCh:
 			// 	if !ok {
-			// 		log.Printf("runTradingLoop | [%s] Tick channel closed", strat.Name())
+			// 		utils.GetLogger().Printf("runTradingLoop | [%s] Tick channel closed", strat.Name())
 			// 		return
 			// 	}
 			// 	// Create market depth state for this tick
@@ -357,7 +359,7 @@ func runTradingLoop(
 				}
 				if cfg.MaxDailyLoss > 0 && dailyPnL <= -cfg.MaxDailyLoss {
 					if !tradingDisabled {
-						log.Printf("runTradingLoop | [%s] Trading disabled due to max daily loss reached", strat.Name())
+						utils.GetLogger().Printf("runTradingLoop | [%s] Trading disabled due to max daily loss reached", strat.Name())
 						storage.LogEvent(ctx, db.Event{
 							Time:        time.Now(),
 							Type:        "state",
@@ -372,7 +374,7 @@ func runTradingLoop(
 				}
 				todayPnL, err := pos.DailyPnL()
 				if err != nil {
-					log.Printf("runTradingLoop | [%s] Error getting daily PnL: %v", strat.Name(), err)
+					utils.GetLogger().Printf("runTradingLoop | [%s] Error getting daily PnL: %v", strat.Name(), err)
 				} else {
 					dailyPnL = todayPnL
 				}
@@ -386,7 +388,7 @@ func runTradingLoop(
 				to := now
 				candles, err := storage.GetCandles(ctx, symbol, strat.Timeframe(), "", from, to)
 				if err != nil {
-					log.Printf("runTradingLoop | [%s] Error fetching new candles: %v", strat.Name(), err)
+					utils.GetLogger().Printf("runTradingLoop | [%s] Error fetching new candles: %v", strat.Name(), err)
 					continue
 				}
 				if len(candles) == 0 {
@@ -409,7 +411,7 @@ func runTradingLoop(
 
 				signal, err := strat.OnCandles(ctx, candle.DBCandlesToCandles(candles))
 				if err != nil {
-					log.Printf("runTradingLoop | [%s] Error processing candles: %v", strat.Name(), err)
+					utils.GetLogger().Printf("runTradingLoop | [%s] Error processing candles: %v", strat.Name(), err)
 					continue
 				}
 				pos.OnSignal(ctx, signal, posDepthState, marketCap)
@@ -427,7 +429,7 @@ func dataLogger(ctx context.Context, symbols []string, tickChans map[string]<-ch
 	// Create data directory if it doesn't exist
 	dataDir := "data"
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
-		log.Printf("Failed to create data directory: %v", err)
+		utils.GetLogger().Printf("Failed to create data directory: %v", err)
 		return
 	}
 
@@ -454,7 +456,7 @@ func dataLogger(ctx context.Context, symbols []string, tickChans map[string]<-ch
 		// Open file in append mode (O_APPEND ensures we append, not overwrite)
 		file, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 		if err != nil {
-			log.Printf("Failed to open file for %s: %v", symbol, err)
+			utils.GetLogger().Printf("Failed to open file for %s: %v", symbol, err)
 			continue
 		}
 		files[symbol] = file
@@ -463,11 +465,11 @@ func dataLogger(ctx context.Context, symbols []string, tickChans map[string]<-ch
 		if !fileExists {
 			header := "timestamp,price,quantity,is_buy_order,symbol,market_depth_buy,market_depth_sell,market_cap_last_price,market_cap_24h_volume,market_cap_bid_price,market_cap_ask_price\n"
 			if _, err := file.WriteString(header); err != nil {
-				log.Printf("Failed to write header for %s: %v", symbol, err)
+				utils.GetLogger().Printf("Failed to write header for %s: %v", symbol, err)
 			}
-			log.Printf("Created new trade log file: %s", filename)
+			utils.GetLogger().Printf("Created new trade log file: %s", filename)
 		} else {
-			log.Printf("Appending to existing trade log file: %s", filename)
+			utils.GetLogger().Printf("Appending to existing trade log file: %s", filename)
 		}
 	}
 
@@ -475,7 +477,7 @@ func dataLogger(ctx context.Context, symbols []string, tickChans map[string]<-ch
 	for {
 		select {
 		case <-ctx.Done():
-			log.Println("Data logger shutting down...")
+			utils.GetLogger().Println("Data logger shutting down...")
 			return
 		default:
 			// Check each symbol's trade channel
@@ -483,7 +485,7 @@ func dataLogger(ctx context.Context, symbols []string, tickChans map[string]<-ch
 				select {
 				case trade, ok := <-tickCh:
 					if !ok {
-						log.Printf("Trade channel closed for %s", symbol)
+						utils.GetLogger().Printf("Trade channel closed for %s", symbol)
 						continue
 					}
 
@@ -498,7 +500,7 @@ func dataLogger(ctx context.Context, symbols []string, tickChans map[string]<-ch
 					// Write to file
 					if file, exists := files[symbol]; exists {
 						if _, err := file.WriteString(line + "\n"); err != nil {
-							log.Printf("Failed to write trade data for %s: %v", symbol, err)
+							utils.GetLogger().Printf("Failed to write trade data for %s: %v", symbol, err)
 							continue
 						}
 						file.Sync() // Ensure data is written immediately
