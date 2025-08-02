@@ -11,8 +11,6 @@ import (
 	"syscall"
 	"time"
 
-	"math/rand"
-
 	"github.com/amirphl/simple-trader/internal/backtest"
 	"github.com/amirphl/simple-trader/internal/config"
 	"github.com/amirphl/simple-trader/internal/db"
@@ -26,9 +24,6 @@ import (
 )
 
 func main() {
-	// Initialize random seed for jitter in retry logic
-	rand.Seed(time.Now().UnixNano())
-
 	cfg := config.MustLoadConfig()
 	utils.GetLogger().Println("Starting Simple Trader in mode:", cfg.Mode)
 

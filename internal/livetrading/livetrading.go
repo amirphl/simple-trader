@@ -4,6 +4,7 @@ package livetrading
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -105,8 +106,8 @@ func RunLiveTrading(
 
 	// Start trading for each strategy
 	var wg sync.WaitGroup
+	wg.Add(len(strats))
 	for _, strat := range strats {
-		wg.Add(1)
 		go func(s strategy.Strategy) {
 			defer wg.Done()
 			if err := runTradingLoop(ctx, cfg, s, storage, ex, notifier, websocketChannels, depthState, marketCapState); err != nil {
@@ -114,8 +115,6 @@ func RunLiveTrading(
 			}
 		}(strat)
 	}
-
-	// Wait for all trading loops to complete
 	wg.Wait()
 }
 
@@ -192,6 +191,7 @@ func monitorIngestionStats(ctx context.Context, ingestionSvc candle.IngestionSer
 	for {
 		select {
 		case <-ctx.Done():
+			utils.GetLogger().Println("monitorIngestionStats | Candle ingestion stats monitor stopped")
 			return
 		case <-ticker.C:
 			stats := ingestionSvc.GetIngestionStats()
@@ -227,18 +227,20 @@ func runTradingLoop(
 		return err
 	}
 
-	if pos.IsActive() {
+	if pos != nil && pos.IsActive() {
 		utils.GetLogger().Printf("runTradingLoop | Position is active (but must be closed), %s strategy", strat.Name())
 		// TODO: Return error?
 		// return fmt.Errorf("position is active, stopping trading loop with %s strategy", strat.Name())
 	}
 
+	pos = position.New(cfg, strat.Name(), strat.Symbol(), storage, ex, notifier)
+
 	symbol := strat.Symbol()
-	websocketChan, ok := websocketChannels[symbol]
-	if !ok {
-		utils.GetLogger().Printf("runTradingLoop | No websocket channel found for symbol %s", symbol)
-		return fmt.Errorf("no websocket channel found for symbol %s", symbol)
-	}
+	// websocketChan, ok := websocketChannels[symbol]
+	// if !ok {
+	// 	utils.GetLogger().Printf("runTradingLoop | No websocket channel found for symbol %s", symbol)
+	// 	return fmt.Errorf("no websocket channel found for symbol %s", symbol)
+	// }
 
 	// Subscribe to the websocket channel for this strategy
 	// strategyID := fmt.Sprintf("%s-%s", strat.Name(), symbol)
@@ -250,18 +252,19 @@ func runTradingLoop(
 	// defer websocketChan.Unsubscribe(strategyID)
 
 	var wg sync.WaitGroup
-	wg.Add(1)
+	wg.Add(2)
 
 	// Goroutine for feeding ticks
 	go func() {
 		defer wg.Done()
 
-		ticker := time.NewTicker(1 * time.Second)
+		ticker := time.NewTicker(2 * time.Second)
 		defer ticker.Stop()
 
 		for {
 			select {
 			case <-ctx.Done():
+				utils.GetLogger().Printf("runTradingLoop | [%s, %s] Trading loop stopped", strat.Name(), symbol)
 				return
 			// case tick, ok := <-tickCh:
 			// 	if !ok {
@@ -289,42 +292,79 @@ func runTradingLoop(
 			// 	pos.OnTick(ctx, exchange.ToTick(tick, symbol), posDepthState, marketCap)
 			// }
 			case <-ticker.C:
-				if !websocketChan.HasFreshTick() {
-					continue
-				}
+				// if !websocketChan.HasFreshTick() {
+				// 	continue
+				// }
 
-				tick, _ := websocketChan.GetLastTick()
-				if tick == nil {
-					continue
-				}
+				// tick, _ := websocketChan.GetLastTick()
+				// if tick == nil {
+				// 	continue
+				// }
 
 				// Create market depth state for this tick
-				posDepthState := make(map[string]exchange.OrderBook)
+				// posDepthState := make(map[string]exchange.OrderBook)
 
-				// Get latest market depth data if available from exchange state
-				buyDepth, buyOk := depthState.Get(symbol, "buyDepth")
-				sellDepth, sellOk := depthState.Get(symbol, "sellDepth")
+				// // Get latest market depth data if available from exchange state
+				// buyDepth, buyOk := depthState.Get(symbol, "buyDepth")
+				// sellDepth, sellOk := depthState.Get(symbol, "sellDepth")
 
-				if buyOk && buyDepth != nil {
-					posDepthState[exchange.GetBuyDepthKey(symbol)] = *buyDepth
-				}
+				// if buyOk && buyDepth != nil {
+				// 	posDepthState[exchange.GetBuyDepthKey(symbol)] = *buyDepth
+				// }
 
-				if sellOk && sellDepth != nil {
-					posDepthState[exchange.GetSellDepthKey(symbol)] = *sellDepth
-				}
+				// if sellOk && sellDepth != nil {
+				// 	posDepthState[exchange.GetSellDepthKey(symbol)] = *sellDepth
+				// }
 
 				// Get latest market cap data if available
-				marketCap, _ := marketCapState.Get(symbol)
+				// marketCap, _ := marketCapState.Get(symbol)
 
-				utils.GetLogger().Printf("runTradingLoop | [%s, %s] Tick: %+v, Best Ask: %+v, Best Bid: %+v, Last Price: %+v, Best Ask from sellDepth: %+v, Best Bid from buyDepth: %+v", strat.Name(), strat.Symbol(), tick, marketCap.AskPrice, marketCap.BidPrice, marketCap.LastPrice, buyDepth.BestAsk(), sellDepth.BestBid())
+				orderbook, err := ex.FetchOrderBook(ctx, symbol)
+				if err != nil {
+					utils.GetLogger().Printf("runTradingLoop | [%s, %s] Error fetching orderbook: %v", strat.Name(), symbol, err)
+					continue
+				}
 
-				pos.OnTick(ctx, *tick, posDepthState, marketCap)
+				bestBid := 0.0
+				bestAsk := 0.0
+
+				buyDepth, buyOk := orderbook[exchange.GetBuyDepthKey(symbol)]
+				sellDepth, sellOk := orderbook[exchange.GetSellDepthKey(symbol)]
+
+				if buyOk && buyDepth != nil {
+					bestBid = buyDepth.BestBid()
+				}
+				if sellOk && sellDepth != nil {
+					bestAsk = sellDepth.BestAsk()
+				}
+
+				tick, err := ex.FetchLatestTick(ctx, symbol)
+				if err != nil {
+					utils.GetLogger().Printf("runTradingLoop | [%s, %s] Error fetching latest tick: %v", strat.Name(), symbol, err)
+					continue
+				}
+
+				marketStats, err := ex.FetchMarketStats(ctx)
+				if err != nil {
+					utils.GetLogger().Printf("runTradingLoop | [%s, %s] Error fetching market stats: %v", strat.Name(), symbol, err)
+					continue
+				}
+
+				normalizedSymbol := exchange.NormalizeSymbol(symbol)
+				marketCap, ok := marketStats[normalizedSymbol]
+				if !ok {
+					utils.GetLogger().Printf("runTradingLoop | [%s, %s] Market cap not found for symbol: %s", strat.Name(), symbol, normalizedSymbol)
+					continue
+				}
+
+				log.Printf("runTradingLoop | [%s, %s] Tick: %+v, Best Ask: %+v, Best Bid: %+v, Last Price: %+v, Best Ask from sellDepth: %+v, Best Bid from buyDepth: %+v", strat.Name(), strat.Symbol(), tick, marketCap.AskPrice, marketCap.BidPrice, marketCap.LastPrice, bestAsk, bestBid)
+
+				pos.OnTick(ctx, tick, orderbook, &marketCap)
 			}
 		}
 	}()
 
 	// Goroutine for feeding signals (candle/strategy)
-	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		// Existing signal/candle logic (statusTicker, candle fetching, etc.)
@@ -409,7 +449,7 @@ func runTradingLoop(
 					continue
 				}
 
-				utils.GetLogger().Printf("runTradingLoop | [%s, %s] TriggerPrice: %+v, Best Ask: %+v, Best Bid: %+v, Last Price: %+v, Best Ask from sellDepth: %+v, Best Bid from buyDepth: %+v", strat.Name(), strat.Symbol(), signal.TriggerPrice, marketCap.AskPrice, marketCap.BidPrice, marketCap.LastPrice, buyDepth.BestAsk(), sellDepth.BestBid())
+				log.Printf("runTradingLoop | [%s, %s] TriggerPrice: %+v, Best Ask: %+v, Best Bid: %+v, Last Price: %+v, Best Ask from sellDepth: %+v, Best Bid from buyDepth: %+v", strat.Name(), strat.Symbol(), signal.TriggerPrice, marketCap.AskPrice, marketCap.BidPrice, marketCap.LastPrice, buyDepth.BestAsk(), sellDepth.BestBid())
 
 				pos.OnSignal(ctx, signal, posDepthState, marketCap)
 				lastProcessed = candles[len(candles)-1].Timestamp
