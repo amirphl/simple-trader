@@ -280,6 +280,162 @@ func (w *WallexExchange) FetchBalances(ctx context.Context) (map[string]Balance,
 	}
 }
 
+// FetchOrderBook retrieves the current orderbook for a symbol
+func (w *WallexExchange) FetchOrderBook(ctx context.Context, symbol string) (map[string]OrderBook, error) {
+	select {
+	case <-ctx.Done():
+		utils.GetLogger().Printf("Exchange | %s FetchOrderBook timeout", w.Name())
+		return nil, ctx.Err()
+
+	default:
+		var asks []*wallex.MarketOrder
+		var bids []*wallex.MarketOrder
+		err := retry(3, 2*time.Second, func() error {
+			var err error
+			normalizedSymbol := NormalizeSymbol(symbol)
+			asks, bids, err = w.client.MarketOrders(normalizedSymbol)
+			if err != nil {
+				return fmt.Errorf("fetching orderbook: %w", err)
+			}
+			return nil
+		})
+		if err != nil {
+			return nil, fmt.Errorf("orderbook failed: %w", err)
+		}
+
+		orderbook := make(map[string]OrderBook)
+
+		// Process asks (sell orders) - sellers want to sell at these prices
+		sellOrderBook := make(OrderBook)
+		for _, ask := range asks {
+			price := string(ask.Price)
+			quantity := float64Ptr(&ask.Quantity)
+			sum := float64Ptr(&ask.Sum)
+
+			sellOrderBook[price] = OrderBookEntry{
+				Quantity: quantity,
+				Price:    price,
+				Sum:      sum,
+			}
+		}
+		orderbook[GetSellDepthKey(symbol)] = sellOrderBook
+
+		// Process bids (buy orders) - buyers want to buy at these prices
+		buyOrderBook := make(OrderBook)
+		for _, bid := range bids {
+			price := string(bid.Price)
+			quantity := float64Ptr(&bid.Quantity)
+			sum := float64Ptr(&bid.Sum)
+
+			buyOrderBook[price] = OrderBookEntry{
+				Quantity: quantity,
+				Price:    price,
+				Sum:      sum,
+			}
+		}
+		orderbook[GetBuyDepthKey(symbol)] = buyOrderBook
+
+		return orderbook, nil
+	}
+}
+
+// FetchLatestTick fetches the latest tick for a symbol
+func (w *WallexExchange) FetchLatestTick(ctx context.Context, symbol string) (Tick, error) {
+	select {
+	case <-ctx.Done():
+		utils.GetLogger().Printf("Exchange | %s FetchLatestTick timeout", w.Name())
+		return Tick{}, ctx.Err()
+
+	default:
+		var trades []*wallex.MarketTrade
+		err := retry(3, 2*time.Second, func() error {
+			var err error
+			normalizedSymbol := NormalizeSymbol(symbol)
+			trades, err = w.client.MarketTrades(normalizedSymbol)
+			if err != nil {
+				return fmt.Errorf("fetching latest tick: %w", err)
+			}
+			return nil
+		})
+		if err != nil {
+			return Tick{}, fmt.Errorf("latest tick failed: %w", err)
+		}
+
+		if len(trades) == 0 {
+			return Tick{}, fmt.Errorf("no trades found for symbol: %s", symbol)
+		}
+
+		trade := trades[0]
+		return Tick{
+			Symbol:    symbol,
+			Price:     float64Ptr(&trade.Price),
+			Quantity:  float64Ptr(&trade.Quantity),
+			Side:      "", // TODO: Get side from trade
+			Timestamp: trade.Timestamp.UTC(),
+		}, nil
+	}
+}
+
+// FetchMarketStats fetches the market stats
+func (w *WallexExchange) FetchMarketStats(ctx context.Context) (map[string]MarketCap, error) {
+	select {
+	case <-ctx.Done():
+		utils.GetLogger().Printf("Exchange | %s FetchMarketStats timeout", w.Name())
+		return nil, ctx.Err()
+
+	default:
+		var markets []*wallex.Market
+		err := retry(3, 2*time.Second, func() error {
+			var err error
+			markets, err = w.client.Markets()
+			if err != nil {
+				return fmt.Errorf("fetching market stats: %w", err)
+			}
+			return nil
+		})
+		if err != nil {
+			return nil, fmt.Errorf("market stats failed: %w", err)
+		}
+
+		if len(markets) == 0 {
+			return nil, fmt.Errorf("no markets found")
+		}
+
+		marketStats := make(map[string]MarketCap)
+		for _, market := range markets {
+			marketStats[market.Symbol] = MarketCap{
+				Symbol:         market.Symbol,
+				BidPrice:       string(market.Stats.BidPrice),
+				AskPrice:       string(market.Stats.AskPrice),
+				Ch24h:          float64Ptr(&market.Stats.Change24H),
+				Ch7d:           float64Ptr(&market.Stats.Change7D),
+				Volume24h:      string(market.Stats.Volume24H),
+				Volume7d:       string(market.Stats.Volume7D),
+				QuoteVolume24h: string(market.Stats.QuoteVolume24H),
+				HighPrice24h:   string(market.Stats.HighPrice24H),
+				LowPrice24h:    string(market.Stats.LowPrice24H),
+				LastPrice:      string(market.Stats.LastPrice),
+				LastQty:        string(market.Stats.LastQty),
+				LastTradeSide:  market.Stats.LastTradeSide,
+				BidVolume:      string(market.Stats.BidVolume),
+				AskVolume:      string(market.Stats.AskVolume),
+				BidCount:       int(float64Ptr(&market.Stats.BidCount)),
+				AskCount:       int(float64Ptr(&market.Stats.AskCount)),
+				Direction: struct {
+					SELL int "json:\"SELL\""
+					BUY  int "json:\"BUY\""
+				}{
+					SELL: market.Stats.Direction.Sell,
+					BUY:  market.Stats.Direction.Buy,
+				},
+				CreatedAt: market.CreatedAt.UTC().Format(time.RFC3339),
+			}
+		}
+
+		return marketStats, nil
+	}
+}
+
 // Helper to safely dereference *wallex.Number
 func float64Ptr(n *wallex.Number) float64 {
 	if n == nil {

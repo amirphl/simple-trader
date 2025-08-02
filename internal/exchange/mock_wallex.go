@@ -46,7 +46,34 @@ func (m *MockWallexExchange) GetOrderStatus(ctx context.Context, orderID string)
 }
 
 func (m *MockWallexExchange) FetchBalances(ctx context.Context) (map[string]Balance, error) {
-	return m.realExchange.FetchBalances(ctx)
+	balances := make(map[string]Balance)
+	balances["BTC"] = Balance{
+		Asset:     "BTC",
+		Available: 1.0,
+		Locked:    9.0,
+		Total:     10.0,
+		Fiat:      false,
+	}
+	balances["USDT"] = Balance{
+		Asset:     "USDT",
+		Available: 10000.0,
+		Locked:    0.0,
+		Total:     10000.0,
+		Fiat:      true,
+	}
+	return balances, nil
+}
+
+func (m *MockWallexExchange) FetchOrderBook(ctx context.Context, symbol string) (map[string]OrderBook, error) {
+	return m.realExchange.FetchOrderBook(ctx, symbol)
+}
+
+func (m *MockWallexExchange) FetchLatestTick(ctx context.Context, symbol string) (Tick, error) {
+	return m.realExchange.FetchLatestTick(ctx, symbol)
+}
+
+func (m *MockWallexExchange) FetchMarketStats(ctx context.Context) (map[string]MarketCap, error) {
+	return m.realExchange.FetchMarketStats(ctx)
 }
 
 // ===== MOCK FUNCTIONS - These provide mock responses =====

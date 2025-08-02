@@ -103,4 +103,7 @@ type Exchange interface {
 	CancelOrder(ctx context.Context, orderID string) error
 	GetOrderStatus(ctx context.Context, orderID string) (Order, error)
 	FetchBalances(ctx context.Context) (map[string]Balance, error)
+	FetchOrderBook(ctx context.Context, symbol string) (map[string]OrderBook, error)
+	FetchLatestTick(ctx context.Context, symbol string) (Tick, error)
+	FetchMarketStats(ctx context.Context) (map[string]MarketCap, error)
 }

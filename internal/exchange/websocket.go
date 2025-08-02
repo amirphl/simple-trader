@@ -11,6 +11,8 @@ package exchange
 import (
 	"context"
 	"encoding/json"
+	"log"
+	"math"
 	"net/url"
 	"strconv"
 	"strings"
@@ -469,6 +471,8 @@ func (w *WallexTradeChannel) connectAndStream(ctx context.Context) error {
 			}
 			// Handle Socket.IO event message (starts with "42")
 			if len(msgStr) >= 2 && msgStr[:2] == "42" {
+				log.Printf("WallexTradeChannel | [%s] Received message: %s", w.symbol, msgStr)
+
 				jsonPart := msgStr[2:]
 				var eventArray []interface{}
 				if err := json.Unmarshal([]byte(jsonPart), &eventArray); err != nil {
@@ -562,7 +566,7 @@ func (o *OrderBook) BestBid() float64 {
 }
 
 func (o *OrderBook) BestAsk() float64 {
-	bestAsk := 0.0
+	bestAsk := math.MaxFloat64
 	for _, entry := range *o {
 		price, err := strconv.ParseFloat(entry.Price, 64)
 		if err != nil {
