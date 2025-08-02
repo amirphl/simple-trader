@@ -485,6 +485,9 @@ func (p *position) DailyPnL() (float64, error) {
 func (p *position) exit(ctx context.Context, price float64, reason string) error {
 	orderReq := p.createExitOrder(price)
 	orderResp, err := p.Exchange.SubmitOrderWithRetry(ctx, orderReq, p.OrderSpec.MaxAttempts, p.OrderSpec.Delay)
+
+	// TODO: Handle order status properly
+
 	if err != nil {
 		p.handleOrderError(ctx, err, reason)
 		return fmt.Errorf("failed to submit [%s] order: %w", reason, err)
@@ -553,6 +556,9 @@ func (p *position) enter(ctx context.Context, signal strategy.Signal) error {
 	// Create entry order with calculated optimal parameters
 	orderReq := p.createEntryOrder(optimalPrice, optimalQuantity, side)
 	orderResp, err := p.Exchange.SubmitOrderWithRetry(ctx, orderReq, p.OrderSpec.MaxAttempts, p.OrderSpec.Delay)
+
+	// TODO: Handle order status properly
+
 	if err != nil {
 		p.handleOrderError(ctx, err, "entry_order_submission")
 		return fmt.Errorf("failed to submit entry order: %w", err)
