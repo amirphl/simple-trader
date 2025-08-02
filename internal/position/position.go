@@ -273,7 +273,7 @@ func Load(ctx context.Context, stratName, symbol string, storage db.Storage, exc
 	}
 
 	if dbPos == nil {
-		return nil, fmt.Errorf("position not found in database [%s %s]", stratName, symbol)
+		return nil, nil
 	}
 
 	// Convert db.Position to position
