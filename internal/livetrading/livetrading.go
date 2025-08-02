@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math/rand"
 	"os"
 	"strconv"
 	"strings"
@@ -258,7 +259,8 @@ func runTradingLoop(
 	go func() {
 		defer wg.Done()
 
-		ticker := time.NewTicker(2 * time.Second)
+		randomInterval := time.Duration(rand.Intn(10)+5) * time.Second
+		ticker := time.NewTicker(randomInterval)
 		defer ticker.Stop()
 
 		for {

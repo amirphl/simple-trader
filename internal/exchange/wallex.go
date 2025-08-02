@@ -295,12 +295,12 @@ func (w *WallexExchange) FetchOrderBook(ctx context.Context, symbol string) (map
 			normalizedSymbol := NormalizeSymbol(symbol)
 			asks, bids, err = w.client.MarketOrders(normalizedSymbol)
 			if err != nil {
-				return fmt.Errorf("fetching orderbook: %w", err)
+				return fmt.Errorf("fetching orderbook for %s: %w", normalizedSymbol, err)
 			}
 			return nil
 		})
 		if err != nil {
-			return nil, fmt.Errorf("orderbook failed: %w", err)
+			return nil, fmt.Errorf("orderbook failed for %s: %w", symbol, err)
 		}
 
 		orderbook := make(map[string]OrderBook)
