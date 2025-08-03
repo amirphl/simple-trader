@@ -2,11 +2,15 @@ package strategy
 
 import (
 	"context"
-	"time"
 
 	"github.com/amirphl/simple-trader/internal/candle"
 	"github.com/amirphl/simple-trader/internal/config"
 	"github.com/amirphl/simple-trader/internal/db"
+	"github.com/amirphl/simple-trader/internal/strategy/engulfing_heikin_ashi"
+	"github.com/amirphl/simple-trader/internal/strategy/four_stochastic_heikin_ashi"
+	"github.com/amirphl/simple-trader/internal/strategy/four_stochastic_heikin_ashi_scaled"
+	"github.com/amirphl/simple-trader/internal/strategy/signal"
+	"github.com/amirphl/simple-trader/internal/strategy/stochastic_heikin_ashi"
 )
 
 // Strategy is the interface for all trading strategies.
@@ -14,28 +18,9 @@ type Strategy interface {
 	Name() string
 	Symbol() string
 	Timeframe() string
-	OnCandles(ctx context.Context, oneMinCandles []candle.Candle) (Signal, error) // Accepts candles, returns a signal
-	PerformanceMetrics() map[string]float64                                       // Returns performance metrics after backtest
-	WarmupPeriod() int                                                            // Returns the number of candles needed for warm-up
-}
-
-type Position int8
-
-const (
-	LongBullish  Position = 1
-	LongBearish  Position = 2
-	ShortBullish Position = -2
-	ShortBearish Position = -1
-	Hold         Position = 0
-)
-
-type Signal struct {
-	Time         time.Time      `json:"time"`
-	Position     Position       `json:"position"`
-	Reason       string         `json:"reason"`        // indicator/pattern/price action
-	StrategyName string         `json:"strategy_name"` // TODO: FILL
-	TriggerPrice float64        `json:"trigger_price"` // TODO: FILL
-	Candle       *candle.Candle `json:"candle"`        // TODO: FILL
+	OnCandles(ctx context.Context, oneMinCandles []candle.Candle) (signal.Signal, error) // Accepts candles, returns a signal
+	PerformanceMetrics() map[string]float64                                              // Returns performance metrics after backtest
+	WarmupPeriod() int                                                                   // Returns the number of candles needed for warm-up
 }
 
 // TODO:
@@ -44,33 +29,21 @@ func New(cfg config.Config, storage db.Storage) []Strategy {
 
 	for _, stratName := range cfg.Strategies {
 		switch stratName {
-		case "ema":
-			// strat = strategy.NewEMACrossoverStrategy(10, 30)
-		case "rsi":
-			for _, symbol := range cfg.Symbols {
-				strats = append(strats, NewRSIStrategy(symbol, 14, 70, 30, storage)) // TODO: Make it configutable.
-			}
-		case "macd":
-			// strat = strategy.NewMACDStrategy(12, 26, 9)
-		case "composite":
-			// strat = strategy.NewCompositeStrategy(
-			// 	strategy.NewSMACrossoverStrategy(10, 30),
-			// 	strategy.NewRSIStrategy(14, 70, 30),
-			// 	strategy.NewMACDStrategy(12, 26, 9),
-			// )
-		case "rsi-obos":
-			// strat = strategy.NewRSIObOsStrategy(14, 70, 30)
 		case "Engulfing Heikin Ashi":
 			for _, symbol := range cfg.Symbols {
-				strats = append(strats, NewEngulfingHeikinAshi(symbol, storage))
+				strats = append(strats, engulfing_heikin_ashi.NewEngulfingHeikinAshi(symbol, storage))
 			}
 		case "Stochastic Heikin Ashi":
 			for _, symbol := range cfg.Symbols {
-				strats = append(strats, NewStochasticHeikinAshi(symbol, storage))
+				strats = append(strats, stochastic_heikin_ashi.NewStochasticHeikinAshi(symbol, storage))
 			}
 		case "Four Stochastic Heikin Ashi":
 			for _, symbol := range cfg.Symbols {
-				strats = append(strats, NewFourStochasticHeikinAshi(symbol, storage))
+				strats = append(strats, four_stochastic_heikin_ashi.NewFourStochasticHeikinAshi(symbol, storage))
+			}
+		case "Four Stochastic Heikin Ashi Scaled":
+			for _, symbol := range cfg.Symbols {
+				strats = append(strats, four_stochastic_heikin_ashi_scaled.NewFourStochasticHeikinAshiScaled(symbol, storage))
 			}
 		default:
 			// strat = strategy.NewSMACrossoverStrategy(10, 30)
