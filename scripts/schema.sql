@@ -90,12 +90,23 @@ CREATE TABLE IF NOT EXISTS positions (
     live_loss_pnls      JSONB NOT NULL DEFAULT '[]',
     live_equity_curve   JSONB NOT NULL DEFAULT '[]',
     live_trade_log      JSONB NOT NULL DEFAULT '[]',
+    entry_legs          JSONB NOT NULL DEFAULT '[]',
     risk_params         JSONB NOT NULL DEFAULT '{}',
     order_spec          JSONB NOT NULL DEFAULT '{}',
     created_at          TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at          TIMESTAMP NOT NULL DEFAULT NOW(),
     UNIQUE (id, strategy_name, symbol, active) -- Only one active position per strategy/symbol
 );
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name='positions' AND column_name='entry_legs'
+    ) THEN
+        ALTER TABLE positions ADD COLUMN entry_legs JSONB NOT NULL DEFAULT '[]';
+    END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS idx_positions_strategy_name ON positions(strategy_name);
 CREATE INDEX IF NOT EXISTS idx_positions_symbol ON positions(symbol);
