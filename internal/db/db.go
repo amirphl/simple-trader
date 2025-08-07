@@ -214,6 +214,7 @@ type Position struct {
 	LiveLossPnls    []float64              `json:"live_loss_pnls"`
 	LiveEquityCurve []float64              `json:"live_equity_curve"`
 	LiveTradeLog    []Trade                `json:"live_trade_log"`
+	EntryLegs       []EntryLeg             `json:"entry_legs"`
 	RiskParams      map[string]interface{} `json:"risk_params"`
 	OrderSpec       map[string]interface{} `json:"order_spec"`
 	CreatedAt       time.Time              `json:"created_at"`
@@ -227,6 +228,13 @@ type Trade struct {
 	PnL       float64   `json:"pnl"`
 	EntryTime time.Time `json:"entry_time"`
 	ExitTime  time.Time `json:"exit_time"`
+}
+
+// EntryLeg represents a single entry leg contributing to average entry
+type EntryLeg struct {
+	Price    float64   `json:"price"`
+	Quantity float64   `json:"quantity"`
+	Time     time.Time `json:"time"`
 }
 
 // PositionStorage defines the interface for position persistence operations
