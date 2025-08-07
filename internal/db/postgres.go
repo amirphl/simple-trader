@@ -1102,6 +1102,11 @@ func (p *Default) SavePosition(ctx context.Context, pos Position) (int64, error)
 			return fmt.Errorf("failed to marshal live_trade_log: %w", err)
 		}
 
+		entryLegs, err := json.Marshal(pos.EntryLegs)
+		if err != nil {
+			return fmt.Errorf("failed to marshal entry_legs: %w", err)
+		}
+
 		riskParams, err := json.Marshal(pos.RiskParams)
 		if err != nil {
 			return fmt.Errorf("failed to marshal risk_params: %w", err)
@@ -1119,16 +1124,16 @@ func (p *Default) SavePosition(ctx context.Context, pos Position) (int64, error)
 				balance, last_pnl, mean_pnl, std_pnl, sharpe, expectancy, trailing_stop,
 				live_equity, live_max_equity, live_max_drawdown, live_wins, live_losses, live_trades,
 				live_win_rate, profit_factor, live_win_pnls, live_loss_pnls, live_equity_curve,
-				live_trade_log, risk_params, order_spec, created_at, updated_at
+				live_trade_log, entry_legs, risk_params, order_spec, created_at, updated_at
 			) VALUES (
 				$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
-				$17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32
+				$17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33
 			) RETURNING id`,
 			pos.StrategyName, pos.Symbol, pos.Side, pos.Entry, pos.Size, pos.OrderID, pos.Time,
 			pos.Active, pos.TradingDisabled, pos.Balance, pos.LastPNL, pos.MeanPNL, pos.StdPNL,
 			pos.Sharpe, pos.Expectancy, pos.TrailingStop, pos.LiveEquity, pos.LiveMaxEquity,
 			pos.LiveMaxDrawdown, pos.LiveWins, pos.LiveLosses, pos.LiveTrades, pos.LiveWinRate,
-			pos.ProfitFactor, liveWinPnls, liveLossPnls, liveEquityCurve, liveTradeLog,
+			pos.ProfitFactor, liveWinPnls, liveLossPnls, liveEquityCurve, liveTradeLog, entryLegs,
 			riskParams, orderSpec, now, now).Scan(&id)
 		if err != nil {
 			return fmt.Errorf("failed to save position [%s %s]: %w", pos.StrategyName, pos.Symbol, err)
@@ -1162,6 +1167,11 @@ func (p *Default) UpdatePosition(ctx context.Context, pos Position) error {
 			return fmt.Errorf("failed to marshal live_trade_log: %w", err)
 		}
 
+		entryLegs, err := json.Marshal(pos.EntryLegs)
+		if err != nil {
+			return fmt.Errorf("failed to marshal entry_legs: %w", err)
+		}
+
 		riskParams, err := json.Marshal(pos.RiskParams)
 		if err != nil {
 			return fmt.Errorf("failed to marshal risk_params: %w", err)
@@ -1180,13 +1190,13 @@ func (p *Default) UpdatePosition(ctx context.Context, pos Position) error {
 				trailing_stop=$14, live_equity=$15, live_max_equity=$16, live_max_drawdown=$17,
 				live_wins=$18, live_losses=$19, live_trades=$20, live_win_rate=$21, profit_factor=$22,
 				live_win_pnls=$23, live_loss_pnls=$24, live_equity_curve=$25, live_trade_log=$26,
-				risk_params=$27, order_spec=$28, updated_at=$29
-			WHERE id=$30`,
+				entry_legs=$27, risk_params=$28, order_spec=$29, updated_at=$30
+			WHERE id=$31`,
 			pos.Side, pos.Entry, pos.Size, pos.OrderID, pos.Time, pos.Active, pos.TradingDisabled,
 			pos.Balance, pos.LastPNL, pos.MeanPNL, pos.StdPNL, pos.Sharpe, pos.Expectancy,
 			pos.TrailingStop, pos.LiveEquity, pos.LiveMaxEquity, pos.LiveMaxDrawdown,
 			pos.LiveWins, pos.LiveLosses, pos.LiveTrades, pos.LiveWinRate, pos.ProfitFactor,
-			liveWinPnls, liveLossPnls, liveEquityCurve, liveTradeLog, riskParams, orderSpec, now,
+			liveWinPnls, liveLossPnls, liveEquityCurve, liveTradeLog, entryLegs, riskParams, orderSpec, now,
 			pos.ID)
 		if err != nil {
 			return fmt.Errorf("failed to update position [ID %d]: %w", pos.ID, err)
@@ -1212,7 +1222,7 @@ func (p *Default) GetPosition(ctx context.Context, strategyName, symbol string) 
 			balance, last_pnl, mean_pnl, std_pnl, sharpe, expectancy, trailing_stop,
 			live_equity, live_max_equity, live_max_drawdown, live_wins, live_losses, live_trades,
 			live_win_rate, profit_factor, live_win_pnls, live_loss_pnls, live_equity_curve,
-			live_trade_log, risk_params, order_spec, created_at, updated_at
+			live_trade_log, entry_legs, risk_params, order_spec, created_at, updated_at
 		FROM positions WHERE strategy_name=$1 AND symbol=$2 AND active=true`,
 		strategyName, symbol)
 	if err != nil {
@@ -1225,13 +1235,13 @@ func (p *Default) GetPosition(ctx context.Context, strategyName, symbol string) 
 
 	var pos Position
 	if rows.Next() {
-		var liveWinPnls, liveLossPnls, liveEquityCurve, liveTradeLog, riskParams, orderSpec []byte
+		var liveWinPnls, liveLossPnls, liveEquityCurve, liveTradeLog, entryLegs, riskParams, orderSpec []byte
 		if err := rows.Scan(
 			&pos.ID, &pos.StrategyName, &pos.Symbol, &pos.Side, &pos.Entry, &pos.Size, &pos.OrderID, &pos.Time,
 			&pos.Active, &pos.TradingDisabled, &pos.Balance, &pos.LastPNL, &pos.MeanPNL, &pos.StdPNL,
 			&pos.Sharpe, &pos.Expectancy, &pos.TrailingStop, &pos.LiveEquity, &pos.LiveMaxEquity,
 			&pos.LiveMaxDrawdown, &pos.LiveWins, &pos.LiveLosses, &pos.LiveTrades, &pos.LiveWinRate,
-			&pos.ProfitFactor, &liveWinPnls, &liveLossPnls, &liveEquityCurve, &liveTradeLog,
+			&pos.ProfitFactor, &liveWinPnls, &liveLossPnls, &liveEquityCurve, &liveTradeLog, &entryLegs,
 			&riskParams, &orderSpec, &pos.CreatedAt, &pos.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("failed to scan position: %w", err)
 		}
@@ -1240,23 +1250,21 @@ func (p *Default) GetPosition(ctx context.Context, strategyName, symbol string) 
 		if err := json.Unmarshal(liveWinPnls, &pos.LiveWinPnls); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal live_win_pnls: %w", err)
 		}
-
 		if err := json.Unmarshal(liveLossPnls, &pos.LiveLossPnls); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal live_loss_pnls: %w", err)
 		}
-
 		if err := json.Unmarshal(liveEquityCurve, &pos.LiveEquityCurve); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal live_equity_curve: %w", err)
 		}
-
 		if err := json.Unmarshal(liveTradeLog, &pos.LiveTradeLog); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal live_trade_log: %w", err)
 		}
-
+		if err := json.Unmarshal(entryLegs, &pos.EntryLegs); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal entry_legs: %w", err)
+		}
 		if err := json.Unmarshal(riskParams, &pos.RiskParams); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal risk_params: %w", err)
 		}
-
 		if err := json.Unmarshal(orderSpec, &pos.OrderSpec); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal order_spec: %w", err)
 		}
@@ -1279,7 +1287,7 @@ func (p *Default) GetPositionByID(ctx context.Context, id int64) (*Position, err
 			balance, last_pnl, mean_pnl, std_pnl, sharpe, expectancy, trailing_stop,
 			live_equity, live_max_equity, live_max_drawdown, live_wins, live_losses, live_trades,
 			live_win_rate, profit_factor, live_win_pnls, live_loss_pnls, live_equity_curve,
-			live_trade_log, risk_params, order_spec, created_at, updated_at
+			live_trade_log, entry_legs, risk_params, order_spec, created_at, updated_at
 		FROM positions WHERE id=$1`,
 		id)
 	if err != nil {
@@ -1292,18 +1300,16 @@ func (p *Default) GetPositionByID(ctx context.Context, id int64) (*Position, err
 
 	var pos Position
 	if rows.Next() {
-		var liveWinPnls, liveLossPnls, liveEquityCurve, liveTradeLog, riskParams, orderSpec []byte
+		var liveWinPnls, liveLossPnls, liveEquityCurve, liveTradeLog, entryLegs, riskParams, orderSpec []byte
 		if err := rows.Scan(
 			&pos.ID, &pos.StrategyName, &pos.Symbol, &pos.Side, &pos.Entry, &pos.Size, &pos.OrderID, &pos.Time,
 			&pos.Active, &pos.TradingDisabled, &pos.Balance, &pos.LastPNL, &pos.MeanPNL, &pos.StdPNL,
 			&pos.Sharpe, &pos.Expectancy, &pos.TrailingStop, &pos.LiveEquity, &pos.LiveMaxEquity,
 			&pos.LiveMaxDrawdown, &pos.LiveWins, &pos.LiveLosses, &pos.LiveTrades, &pos.LiveWinRate,
-			&pos.ProfitFactor, &liveWinPnls, &liveLossPnls, &liveEquityCurve, &liveTradeLog,
+			&pos.ProfitFactor, &liveWinPnls, &liveLossPnls, &liveEquityCurve, &liveTradeLog, &entryLegs,
 			&riskParams, &orderSpec, &pos.CreatedAt, &pos.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("failed to scan position: %w", err)
 		}
-
-		// Unmarshal JSON fields
 		if err := json.Unmarshal(liveWinPnls, &pos.LiveWinPnls); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal live_win_pnls: %w", err)
 		}
@@ -1316,21 +1322,20 @@ func (p *Default) GetPositionByID(ctx context.Context, id int64) (*Position, err
 		if err := json.Unmarshal(liveTradeLog, &pos.LiveTradeLog); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal live_trade_log: %w", err)
 		}
+		if err := json.Unmarshal(entryLegs, &pos.EntryLegs); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal entry_legs: %w", err)
+		}
 		if err := json.Unmarshal(riskParams, &pos.RiskParams); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal risk_params: %w", err)
 		}
 		if err := json.Unmarshal(orderSpec, &pos.OrderSpec); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal order_spec: %w", err)
 		}
-
-		// Convert timestamps to UTC
 		pos.Time = pos.Time.UTC()
 		pos.CreatedAt = pos.CreatedAt.UTC()
 		pos.UpdatedAt = pos.UpdatedAt.UTC()
-
 		return &pos, nil
 	}
-
 	return nil, nil
 }
 
@@ -1341,7 +1346,7 @@ func (p *Default) GetAllPositions(ctx context.Context) ([]Position, error) {
 			balance, last_pnl, mean_pnl, std_pnl, sharpe, expectancy, trailing_stop,
 			live_equity, live_max_equity, live_max_drawdown, live_wins, live_losses, live_trades,
 			live_win_rate, profit_factor, live_win_pnls, live_loss_pnls, live_equity_curve,
-			live_trade_log, risk_params, order_spec, created_at, updated_at
+			live_trade_log, entry_legs, risk_params, order_spec, created_at, updated_at
 		FROM positions ORDER BY strategy_name, symbol`)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query positions: %w", err)
@@ -1350,54 +1355,45 @@ func (p *Default) GetAllPositions(ctx context.Context) ([]Position, error) {
 		return nil, nil
 	}
 	defer rows.Close()
-
 	var positions []Position
 	for rows.Next() {
 		var pos Position
-		var liveWinPnls, liveLossPnls, liveEquityCurve, liveTradeLog, riskParams, orderSpec []byte
+		var liveWinPnls, liveLossPnls, liveEquityCurve, liveTradeLog, entryLegs, riskParams, orderSpec []byte
 		if err := rows.Scan(
 			&pos.ID, &pos.StrategyName, &pos.Symbol, &pos.Side, &pos.Entry, &pos.Size, &pos.OrderID, &pos.Time,
 			&pos.Active, &pos.TradingDisabled, &pos.Balance, &pos.LastPNL, &pos.MeanPNL, &pos.StdPNL,
 			&pos.Sharpe, &pos.Expectancy, &pos.TrailingStop, &pos.LiveEquity, &pos.LiveMaxEquity,
 			&pos.LiveMaxDrawdown, &pos.LiveWins, &pos.LiveLosses, &pos.LiveTrades, &pos.LiveWinRate,
-			&pos.ProfitFactor, &liveWinPnls, &liveLossPnls, &liveEquityCurve, &liveTradeLog,
+			&pos.ProfitFactor, &liveWinPnls, &liveLossPnls, &liveEquityCurve, &liveTradeLog, &entryLegs,
 			&riskParams, &orderSpec, &pos.CreatedAt, &pos.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("failed to scan position: %w", err)
 		}
-
-		// Unmarshal JSON fields
 		if err := json.Unmarshal(liveWinPnls, &pos.LiveWinPnls); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal live_win_pnls: %w", err)
 		}
-
 		if err := json.Unmarshal(liveLossPnls, &pos.LiveLossPnls); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal live_loss_pnls: %w", err)
 		}
-
 		if err := json.Unmarshal(liveEquityCurve, &pos.LiveEquityCurve); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal live_equity_curve: %w", err)
 		}
-
 		if err := json.Unmarshal(liveTradeLog, &pos.LiveTradeLog); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal live_trade_log: %w", err)
 		}
-
+		if err := json.Unmarshal(entryLegs, &pos.EntryLegs); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal entry_legs: %w", err)
+		}
 		if err := json.Unmarshal(riskParams, &pos.RiskParams); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal risk_params: %w", err)
 		}
-
 		if err := json.Unmarshal(orderSpec, &pos.OrderSpec); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal order_spec: %w", err)
 		}
-
-		// Convert timestamps to UTC
 		pos.Time = pos.Time.UTC()
 		pos.CreatedAt = pos.CreatedAt.UTC()
 		pos.UpdatedAt = pos.UpdatedAt.UTC()
-
 		positions = append(positions, pos)
 	}
-
 	return positions, nil
 }
 
@@ -1408,7 +1404,7 @@ func (p *Default) GetActivePositions(ctx context.Context) ([]Position, error) {
 			balance, last_pnl, mean_pnl, std_pnl, sharpe, expectancy, trailing_stop,
 			live_equity, live_max_equity, live_max_drawdown, live_wins, live_losses, live_trades,
 			live_win_rate, profit_factor, live_win_pnls, live_loss_pnls, live_equity_curve,
-			live_trade_log, risk_params, order_spec, created_at, updated_at
+			live_trade_log, entry_legs, risk_params, order_spec, created_at, updated_at
 		FROM positions WHERE active=true ORDER BY strategy_name, symbol`)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query active positions: %w", err)
@@ -1417,54 +1413,45 @@ func (p *Default) GetActivePositions(ctx context.Context) ([]Position, error) {
 		return nil, nil
 	}
 	defer rows.Close()
-
 	var positions []Position
 	for rows.Next() {
 		var pos Position
-		var liveWinPnls, liveLossPnls, liveEquityCurve, liveTradeLog, riskParams, orderSpec []byte
+		var liveWinPnls, liveLossPnls, liveEquityCurve, liveTradeLog, entryLegs, riskParams, orderSpec []byte
 		if err := rows.Scan(
 			&pos.ID, &pos.StrategyName, &pos.Symbol, &pos.Side, &pos.Entry, &pos.Size, &pos.OrderID, &pos.Time,
 			&pos.Active, &pos.TradingDisabled, &pos.Balance, &pos.LastPNL, &pos.MeanPNL, &pos.StdPNL,
 			&pos.Sharpe, &pos.Expectancy, &pos.TrailingStop, &pos.LiveEquity, &pos.LiveMaxEquity,
 			&pos.LiveMaxDrawdown, &pos.LiveWins, &pos.LiveLosses, &pos.LiveTrades, &pos.LiveWinRate,
-			&pos.ProfitFactor, &liveWinPnls, &liveLossPnls, &liveEquityCurve, &liveTradeLog,
+			&pos.ProfitFactor, &liveWinPnls, &liveLossPnls, &liveEquityCurve, &liveTradeLog, &entryLegs,
 			&riskParams, &orderSpec, &pos.CreatedAt, &pos.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("failed to scan position: %w", err)
 		}
-
-		// Unmarshal JSON fields
 		if err := json.Unmarshal(liveWinPnls, &pos.LiveWinPnls); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal live_win_pnls: %w", err)
 		}
-
 		if err := json.Unmarshal(liveLossPnls, &pos.LiveLossPnls); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal live_loss_pnls: %w", err)
 		}
-
 		if err := json.Unmarshal(liveEquityCurve, &pos.LiveEquityCurve); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal live_equity_curve: %w", err)
 		}
-
 		if err := json.Unmarshal(liveTradeLog, &pos.LiveTradeLog); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal live_trade_log: %w", err)
 		}
-
+		if err := json.Unmarshal(entryLegs, &pos.EntryLegs); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal entry_legs: %w", err)
+		}
 		if err := json.Unmarshal(riskParams, &pos.RiskParams); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal risk_params: %w", err)
 		}
-
 		if err := json.Unmarshal(orderSpec, &pos.OrderSpec); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal order_spec: %w", err)
 		}
-
-		// Convert timestamps to UTC
 		pos.Time = pos.Time.UTC()
 		pos.CreatedAt = pos.CreatedAt.UTC()
 		pos.UpdatedAt = pos.UpdatedAt.UTC()
-
 		positions = append(positions, pos)
 	}
-
 	return positions, nil
 }
 
